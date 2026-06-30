@@ -1,0 +1,127 @@
+import { useMemo } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
+import { PageHeader } from '../components/PageHeader';
+import { StatusBadge } from '../components/StatusBadge';
+import {
+  StudentCertificate,
+  useStudentCertificates
+} from '../features/student/useStudentCertificates';
+
+function asPositiveInteger(value: string | null, defaultValue: number) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
+}
+
+function formatDate(value: string | undefined) {
+  if (!value) {
+    return 'Not set';
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function formatOption(value: string) {
+  return value.replace(/_/g, ' ');
+}
+
+function buildPageLink(page: number) {
+  const params = new URLSearchParams();
+  params.set('page', String(page));
+  return `?${params.toString()}`;
+}
+
+function certificateTone(certificate: StudentCertificate) {
+  return certificate.status === 'issued' && certificate.generationStatus === 'ready' ? 'safe' : certificate.generationStatus === 'failed' || certificate.generationStatus === 'expired' ? 'warning' : 'neutral';
+}
+
+function CertificateCard({ certificate }: { certificate: StudentCertificate }) {
+  const title = certificate.certificateType === 'live_project' ? certificate.projectTitle : certificate.programName ?? certificate.programKey;
+  const shouldShowProjectTitle = certificate.certificateType === 'live_project' && Boolean(certificate.projectTitle);
+  const programLabel = certificate.programName ?? certificate.programKey;
+
+  return (
+    <article className="certificate-card">
+      <div className="certificate-card__body">
+        {shouldShowProjectTitle ? <span className="eyebrow">Live Project</span> : null}
+        <h2>{title ?? 'Certificate'}</h2>
+        <StatusBadge tone={certificateTone(certificate)}>{formatOption(certificate.status)}</StatusBadge>
+        {shouldShowProjectTitle && programLabel ? <p>{programLabel}</p> : null}
+        <p>
+          Certificate ID: <strong>{certificate.certificateId}</strong>
+        </p>
+        <p>Issued: {formatDate(certificate.issueDate)}</p>
+      </div>
+    </article>
+  );
+}
+
+export function StudentCertificatesPage() {
+  const [searchParams] = useSearchParams();
+  const page = asPositiveInteger(searchParams.get('page'), 1);
+  const certificatesQuery = useStudentCertificates({ page });
+  const data = certificatesQuery.data;
+  const totalPages = data?.totalPages ?? 1;
+  const hasPagination = useMemo(() => Boolean(data && (data.hasPreviousPage || data.hasNextPage || totalPages > 1)), [data, totalPages]);
+
+  if (certificatesQuery.isLoading) {
+    return (
+      <div className="page-stack">
+        <PageHeader description="Loading certificates linked to your student profile." eyebrow="Student certificates" title="Certificates" />
+        <LoadingState />
+      </div>
+    );
+  }
+
+  if (certificatesQuery.isError) {
+    return (
+      <div className="page-stack">
+        <PageHeader description="Certificates could not be loaded right now." eyebrow="Student certificates" title="Certificates unavailable" />
+        <ErrorState />
+      </div>
+    );
+  }
+
+  return (
+    <div className="page-stack">
+      <PageHeader
+        description="Verify your issued certificates and track certificate readiness."
+        eyebrow="Verified achievements"
+        title="My Certificates"
+      />
+
+      {data && data.items.length > 0 ? (
+        <section className="certificate-card-grid" aria-label="Certificate records">
+          {data.items.map((certificate) => (
+            <CertificateCard certificate={certificate} key={certificate.id} />
+          ))}
+        </section>
+      ) : (
+        <EmptyState />
+      )}
+
+      {hasPagination ? (
+        <nav className="pagination-bar" aria-label="Certificate pagination">
+          {data?.hasPreviousPage ? (
+            <Link className="pagination-link" to={buildPageLink(page - 1)}>
+              Previous page
+            </Link>
+          ) : (
+            <span className="pagination-link pagination-link--disabled">Previous page</span>
+          )}
+          <span>
+            Page {page} of {totalPages}
+          </span>
+          {data?.hasNextPage ? (
+            <Link className="pagination-link" to={buildPageLink(page + 1)}>
+              Next page
+            </Link>
+          ) : (
+            <span className="pagination-link pagination-link--disabled">Next page</span>
+          )}
+        </nav>
+      ) : null}
+    </div>
+  );
+}

@@ -1,0 +1,580 @@
+# API Domains
+
+## Auth
+
+- Supabase session verification.
+- Password and recovery flows remain with Supabase Auth unless a server workflow is required.
+
+## Students
+
+- Student profile.
+- Dashboard bundle.
+- Course and cohort access.
+- Resource visibility.
+
+### Implemented First Slice
+
+- `GET /api/v1/students/me`
+  - Requires Supabase bearer token.
+  - Resolves the active student by `auth_user_id` or normalized email.
+  - Returns only the canonical Supabase student profile.
+- `GET /api/v1/students/me/dashboard`
+  - Requires Supabase bearer token.
+  - Resolves the active student once.
+  - Loads bounded dashboard sections through Supabase RPCs:
+    - `student_dashboard_bundle`
+    - `student_resources_view`
+    - `student_projects_bundle`
+    - `student_certificates_bundle`
+- `GET /api/v1/students/me/announcements`
+  - Requires Supabase bearer token.
+  - Returns the authenticated student's bounded paginated announcements from `student_dashboard_bundle`.
+  - Supports `page`, `limit`, `priority`, and `search`.
+  - Preserves the existing Supabase active-date and audience visibility rules.
+  - Excludes raw status and internal/admin-only fields from the student response.
+- `GET /api/v1/students/me/certificates`
+  - Requires Supabase bearer token.
+  - Returns the authenticated student's bounded paginated non-revoked certificate list.
+  - Supports `page`, `limit`, `status`, `generationStatus`, `certificateType`, and `search`.
+  - Excludes `student_email`, student-name echo fields, private PDF storage fields, and revoked certificates from the student response.
+- `GET /api/v1/students/me/cohorts`
+  - Requires Supabase bearer token.
+  - Returns the authenticated student's bounded paginated visible cohorts from `student_dashboard_bundle`.
+  - Supports `page`, `limit`, `status`, and `search`.
+  - Preserves the existing Supabase audience visibility rules.
+  - Excludes Google Group and internal/admin-only cohort fields from the student response.
+- `GET /api/v1/students/me/support-tickets`
+  - Requires Supabase bearer token.
+  - Returns the authenticated student's bounded paginated support ticket list.
+  - Excludes ticket descriptions, attachment storage internals, admin assignment fields, and tickets owned by other students.
+- `GET /api/v1/students/me/payment-orders`
+  - Requires Supabase bearer token.
+  - Returns the authenticated student's bounded paginated payment order history.
+  - Supports `page`, `limit`, `status`, `itemType`, and `search`.
+  - Excludes `student_email` and Razorpay signature material from the student response.
+- `GET /api/v1/students/me/paid-access`
+  - Requires Supabase bearer token.
+  - Returns the authenticated student's bounded paginated paid-access grants.
+  - Supports `page`, `limit`, `status`, `itemType`, and `search`.
+  - Excludes `student_email` and internal notes from the student response.
+  - Includes `activeNow` so the UI can handle expired grants consistently.
+- `GET /api/v1/students/me/project-submissions`
+  - Requires Supabase bearer token.
+  - Returns the authenticated student's bounded paginated project submission history.
+  - Supports `page`, `limit`, `status`, `programKey`, `cohortName`, and `search`.
+  - Excludes `student_email`, student-name echo fields, raw payloads, and storage internals from the student response.
+- `GET /api/v1/students/me/projects`
+  - Requires Supabase bearer token.
+  - Returns the authenticated student's bounded paginated visible project catalog from `student_projects_bundle`.
+  - Supports `page`, `limit`, `roleId`, `programKey`, and `search`.
+  - Parses project tasks, documents, and deliverables into stable arrays.
+  - Excludes internal/admin-only project fields from the student response.
+- `GET /api/v1/students/me/recordings`
+  - Requires Supabase bearer token.
+  - Returns the authenticated student's bounded paginated completed workshop recordings from `student_dashboard_bundle`.
+  - Supports `page`, `limit`, `accessType`, `source`, and `search`.
+  - Includes only completed workshops with a final published YouTube or Zoom recording URL.
+  - Excludes Zoom/admin fields and omits `recordingUrl` for locked paid recordings.
+- `GET /api/v1/students/me/resources`
+  - Requires Supabase bearer token.
+  - Returns the authenticated student's bounded paginated resource library from `student_resources_view`.
+  - Supports `page`, `limit`, `accessType`, `resourceType`, and `search`.
+  - Preserves the existing Supabase audience and paid-resource lock behavior, including null URLs for locked resources.
+- `GET /api/v1/students/me/schedule`
+  - Requires Supabase bearer token.
+  - Returns the authenticated student's bounded paginated upcoming schedule from `student_schedule_view`.
+  - Supports `page`, `limit`, `accessType`, `status`, and `search`.
+  - Preserves existing Supabase audience and paid-workshop lock behavior.
+  - Excludes Zoom/admin fields and omits `joinUrl` for locked workshops.
+- `GET /api/v1/students/me/support-tickets/:ticketId`
+  - Requires Supabase bearer token.
+  - Returns one authenticated-student-owned support ticket plus a bounded public message thread.
+  - Excludes internal support messages and author email addresses from the student response.
+
+## Admins
+
+- Admin identity.
+- Role checks.
+- Operational dashboards.
+
+### Implemented First Slice
+
+- `GET /api/v1/admins/me`
+  - Requires Supabase bearer token.
+  - Resolves the active admin by `auth_user_id` or normalized email.
+  - Returns canonical Supabase admin profile.
+- `GET /api/v1/admins/dashboard`
+  - Requires Supabase bearer token and active admin profile.
+  - Loads the overview aggregate through `lms_admin_dashboard_summary`.
+- `GET /api/v1/admins/announcements`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated announcement list.
+  - Supports `page`, `limit`, `status`, `priority`, `audience`, and `search`.
+  - Excludes internal/admin-only fields not needed by the announcement list UI.
+- `GET /api/v1/admins/students`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated student list.
+  - Supports `page`, `limit`, `status`, and `search`.
+  - Maximum page size is 100.
+- `GET /api/v1/admins/cohorts`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated cohort list.
+  - Supports `page`, `limit`, `status`, and `search`.
+  - Excludes legacy/non-LMS operational fields from the API response.
+- `GET /api/v1/admins/programs`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated program list.
+  - Supports `page`, `limit`, `status`, and `search`.
+- `GET /api/v1/admins/projects`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated live project catalog.
+  - Supports `page`, `limit`, `status`, `roleId`, `programKey`, and `search`.
+  - Parses project tasks, documents, and deliverables into stable arrays while excluding internal notes or write-only fields.
+- `GET /api/v1/admins/project-roles`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated live project role catalog.
+  - Supports `page`, `limit`, `status`, `programKey`, and `search`.
+  - Excludes role mapping internals and write-only fields from the API response.
+- `GET /api/v1/admins/resources`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated resource list.
+  - Supports `page`, `limit`, `status`, `accessType`, and `search`.
+- `GET /api/v1/admins/workshops`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated workshop/meeting list.
+  - Supports `page`, `limit`, `status`, `accessType`, and `search`.
+  - Includes operational Zoom IDs/accounts and published recording URLs, but excludes private Zoom start URLs and raw provider payloads.
+- `GET /api/v1/admins/recording-candidates`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated Zoom recording candidate list for completed workshops.
+  - Supports `page`, `limit`, `status`, `workshopId`, `zoomAccount`, and `search`.
+  - Exposes draft/review metadata for admins only; students continue to see only final published recordings.
+- `GET /api/v1/admins/certificates`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated certificate registry list.
+  - Supports `page`, `limit`, `status`, `generationStatus`, `certificateType`, and `search`.
+  - Excludes private PDF storage internals from the API response.
+- `GET /api/v1/admins/certificate-requests`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated certificate request queue.
+  - Supports `page`, `limit`, `moderatorStatus`, `adminStatus`, and `search`.
+  - Excludes submission token and private review-note internals from the list response.
+- `GET /api/v1/admins/enrollment-requests`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated enrollment request queue.
+  - Supports `page`, `limit`, `paymentStatus`, `requestType`, `careerLevel`, `personalMentor`, and `search`.
+  - Excludes raw payload, mapped field, and custom field blobs from the list response.
+- `GET /api/v1/admins/enrollment-requests/:requestId`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns one enrollment request plus bounded request items and status history.
+  - Caps request items and status history at 100 rows each.
+  - Excludes raw payload and status-history detail blobs from the response.
+- `GET /api/v1/admins/enrollment-exceptions`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated enrollment exception queue.
+  - Supports `page`, `limit`, `status`, `exceptionType`, and `search`.
+  - Excludes raw payload and suggested mapping blobs from the list response.
+- `GET /api/v1/admins/enrollment-webhook-events`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated enrollment webhook event queue.
+  - Supports `page`, `limit`, `status`, and `search`.
+  - Excludes raw webhook payload blobs from the list response.
+- `GET /api/v1/admins/payment-orders`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated Razorpay payment order list.
+  - Supports `page`, `limit`, `status`, `itemType`, and `search`.
+  - Excludes Razorpay signature material from the API response.
+- `GET /api/v1/admins/paid-access`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated paid-access grant list.
+  - Supports `page`, `limit`, `status`, `itemType`, and `search`.
+  - Includes `activeNow` so the admin UI can distinguish active-but-expired grants.
+- `GET /api/v1/admins/project-submissions`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated project submission review queue.
+  - Supports `page`, `limit`, `status`, `roleId`, `programKey`, `cohortName`, `submittedDate`, and `search`.
+  - Excludes raw payload or storage internals and annotates repeat submissions within the returned page.
+- `PATCH /api/v1/admins/project-submissions/:requestId/approve`
+  - Requires Supabase bearer token and active admin profile.
+  - Runs the guarded project submission review workflow and transitions eligible submissions to `approved`.
+  - Writes only when `PROJECT_SUBMISSION_REVIEW_WRITES_ENABLED=true`.
+- `PATCH /api/v1/admins/project-submissions/:requestId/reject`
+  - Requires Supabase bearer token and active admin profile.
+  - Requires `reviewNote` in the JSON body and transitions eligible submissions to `rejected`.
+  - Writes only when `PROJECT_SUBMISSION_REVIEW_WRITES_ENABLED=true`.
+- `GET /api/v1/admins/support-tickets`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns a bounded paginated support ticket queue.
+  - Supports `page`, `limit`, `status`, `priority`, `category`, and `search`.
+  - Excludes ticket body and attachment storage internals from the list response.
+- `GET /api/v1/admins/support-tickets/:ticketId`
+  - Requires Supabase bearer token and active admin profile.
+  - Returns one support ticket plus a bounded message thread.
+  - Caps messages at 100 and reports whether more messages exist.
+  - Does not create replies, update status, or expose attachment storage internals.
+
+## Enrollments
+
+- Enrollment queue.
+- Activation workflow.
+- Exceptions and review state.
+
+### Implemented Foundation
+
+- Local enrollment activation planner.
+  - Requires a paid payment order.
+  - Requires an activation-ready enrollment request status.
+  - Requires a normalized student email.
+  - Refuses already activated requests.
+  - Produces idempotency keys for student profile, program links, cohort links, paid-access grants, status history, and audit events.
+- Enrollment activation executor.
+  - Guarded by `ENROLLMENT_ACTIVATION_ENABLED=false`.
+  - Runs student profile, student program, student cohort, paid-access, status-history, enrollment-status, and audit writes only when explicitly enabled and called by a future approved workflow.
+  - Is not wired to a live activation endpoint yet.
+- Enrollment activation source loader.
+  - Loads payment order, enrollment request, and enrollment request items into the local activation planner.
+  - Returns `not_found` for missing source identity or missing matching rows.
+  - Throws service-unavailable errors for source loading failures.
+  - Is not wired to a live activation endpoint yet.
+- Enrollment activation workflow.
+  - Composes the source loader and gated executor behind an internal `activateFromPayment` boundary.
+  - Does not decide whether activation is triggered by webhook, admin approval, or a job.
+  - Is not wired to any controller or webhook flow yet.
+- Enrollment activation trigger decision.
+  - Allows activation attempts only after a newly persisted, processable Razorpay webhook updates a payment order to `paid`.
+  - Blocks duplicate webhooks, skipped webhooks, failed/non-paid transitions, missing payment identity, and blocked payment-order updates.
+  - Is returned in the Razorpay webhook response for observability.
+  - Does not call the activation workflow yet.
+
+## Payments
+
+- Razorpay checkout.
+- Razorpay webhook intake.
+- Idempotent event processing.
+- Enrollment request creation from verified payment events.
+
+### Implemented Foundation
+
+- `POST /api/v1/payments/razorpay/webhook`
+  - Verifies `x-razorpay-signature` with HMAC SHA-256 using the raw request body.
+  - Fails closed when `RAZORPAY_WEBHOOK_SECRET` is missing.
+  - Extracts event name, event idempotency key, payment ID, and order ID.
+  - Normalizes amount, currency, student email, and phone from Razorpay payment/order/notes fields.
+  - Classifies events as processable or skipped.
+  - Produces an `enrollment_webhook_events` persistence plan and processing decision.
+  - Produces a deterministic `payment_orders` transition plan for paid, failed, authorized, skipped, and missing-identity events.
+  - Includes a duplicate-safe persistence adapter for verified events.
+  - Leaves persistence disabled by default through `RAZORPAY_WEBHOOK_PERSISTENCE_ENABLED=false`.
+  - Includes a payment-order transition writer guarded by `RAZORPAY_PAYMENT_ORDER_TRANSITIONS_ENABLED=false`.
+  - Executes payment-order transitions only after a webhook event is newly persisted and the transition gate is explicitly enabled.
+  - Records final webhook event state as `processed`, `processed_with_exceptions`, skipped variants, or `failed` after local processing.
+  - Reports `activationTriggerDecision` without executing activation.
+  - Does not activate enrollment or create paid access yet.
+
+## Certificates
+
+- Request review.
+- PDF generation jobs.
+- Supabase Storage persistence.
+- Public verification backed by Supabase records.
+
+## Projects
+
+- Student submissions.
+- Admin review.
+- Attempt limits.
+
+### Implemented Foundation
+
+- Local project submission planner.
+  - Requires the project to be visible to the student.
+  - Requires a secure HTTPS submission link.
+  - Computes the next attempt number server-side.
+  - Enforces the configured attempt limit.
+  - Produces deterministic idempotency keys for submission, student limit, and audit writes.
+- Project submission source loader.
+  - Loads active student, active project, and existing submissions into the local planner.
+  - Returns `not_found` for missing source identity or missing matching rows.
+  - Throws service-unavailable errors for source loading failures.
+  - Is not wired to a live submission endpoint yet.
+- Project submission executor.
+  - Guarded by `PROJECT_SUBMISSION_WRITES_ENABLED=false`.
+  - Runs project submission, student attempt-limit, and audit writes only when explicitly enabled and called by a future approved workflow.
+  - Is not wired to a live submission endpoint yet.
+- Local admin project submission review planner.
+  - Supports start-review, approve, and reject decisions.
+  - Blocks missing admin identity, missing rejection notes, repeated target-state transitions, and unsafe transitions from terminal states.
+  - Produces deterministic idempotency and audit intent for future review writes.
+- Admin project submission review source loader.
+  - Loads one project submission by request ID into the local review planner.
+  - Returns `not_found` for missing source identity or missing matching rows.
+  - Throws service-unavailable errors for source loading failures.
+  - Is not wired to a live review endpoint yet.
+- Admin project submission review executor.
+  - Guarded by `PROJECT_SUBMISSION_REVIEW_WRITES_ENABLED=false`.
+  - Runs project submission review update and audit writes only when explicitly enabled and called by a future approved workflow.
+  - Is not wired to a live review endpoint yet.
+- Admin project submission review workflow.
+  - Composes the source loader and gated executor behind an internal `reviewSubmission` boundary.
+  - Does not decide whether review is triggered by an admin route, job, or other future workflow.
+  - Is not wired to any controller yet.
+
+## Support
+
+- Tickets.
+- Replies.
+- Notifications.
+
+### Implemented Foundation
+
+- Local student support ticket creation planner.
+  - Requires normalized student email, category, subject, and first message body.
+  - Defaults priority to `normal` and validates allowed priority values.
+  - Produces deterministic idempotency keys for ticket, first public message, and audit writes.
+- Support ticket creation source loader.
+  - Loads an active student by normalized email into the local creation planner.
+  - Returns `not_found` for missing source identity or missing matching rows.
+  - Throws service-unavailable errors for source loading failures.
+  - Is not wired to a live support ticket creation endpoint yet.
+- Support ticket creation executor.
+  - Guarded by `SUPPORT_TICKET_CREATION_WRITES_ENABLED=false`.
+  - Runs support ticket, first public message, and audit writes only when explicitly enabled and called by a future approved workflow.
+  - Is not wired to a live support ticket creation endpoint yet.
+- Support ticket creation workflow.
+  - Composes the source loader and gated executor behind an internal `createTicket` boundary.
+  - Does not decide whether creation is triggered by a student route, job, or other future workflow.
+  - Is not wired to any controller yet.
+- Local support ticket reply planner.
+  - Supports student public replies, admin public replies, and admin internal notes.
+  - Blocks student internal replies, closed-ticket replies, and student replies to admin-only or resolved tickets.
+  - Produces deterministic idempotency, ticket update intent, message row intent, and audit intent.
+- Support ticket reply executor.
+  - Guarded by `SUPPORT_TICKET_REPLY_WRITES_ENABLED=false`.
+  - Runs reply message, support ticket status/last-message update, and audit writes only when explicitly enabled and called by a future approved workflow.
+  - Is not wired to a live support ticket reply endpoint yet.
+- Support ticket reply source loader.
+  - Loads one support ticket by ID into the local reply planner.
+  - Enforces student ticket ownership before building a student reply plan.
+  - Returns `not_found` for missing source identity, missing matching rows, or mismatched student ownership.
+  - Is not wired to a live support ticket reply endpoint yet.
+- Support ticket reply workflow.
+  - Composes the source loader and gated executor behind an internal `replyToTicket` boundary.
+  - Does not decide whether replies are triggered by student routes, admin routes, jobs, or other future workflows.
+  - Is not wired to any controller yet.
+- Local support ticket status transition planner.
+  - Supports admin transitions across open, in-review, waiting-for-student, resolved, and closed states.
+  - Requires a resolution note for resolved and closed targets.
+  - Blocks missing admin identity, no-op transitions, and invalid terminal-state transitions.
+  - Produces ticket update intent and audit intent without executing writes.
+- Support ticket status transition source loader.
+  - Loads one support ticket by ID into the local status transition planner.
+  - Returns `not_found` for missing source identity or missing matching rows.
+  - Throws service-unavailable errors for source loading failures.
+  - Is not wired to a live support ticket status endpoint yet.
+- Support ticket status transition executor.
+  - Guarded by `SUPPORT_TICKET_STATUS_WRITES_ENABLED=false`.
+  - Runs support ticket status update and audit writes only when explicitly enabled and called by a future approved workflow.
+  - Is not wired to a live support ticket status endpoint yet.
+- Support ticket status transition workflow.
+  - Composes the source loader and gated executor behind an internal `transitionStatus` boundary.
+  - Does not decide whether status changes are triggered by admin routes, jobs, or other future workflows.
+  - Is not wired to any controller yet.
+
+## Certificates
+
+- Local certificate request approval planner.
+  - Supports admin approve and reject decisions for moderator-approved live-project certificate requests.
+  - Blocks missing admin identity, requests not approved by a moderator, already-final admin states, and rejections without a note.
+  - Produces certificate request update intent, generation-job intent for approvals, and audit intent without executing writes.
+  - Does not generate PDFs, write storage objects, or update Supabase.
+- Certificate request approval source loader.
+  - Loads one certificate request by request ID into the local approval planner.
+  - Returns `not_found` for missing source identity or missing matching rows.
+  - Throws service-unavailable errors for source loading failures.
+  - Is not wired to a live certificate approval endpoint yet.
+- Certificate request approval executor.
+  - Guarded by `CERTIFICATE_REQUEST_APPROVAL_WRITES_ENABLED=false`.
+  - Runs certificate request update, approval generation-job intent, and audit writes only when explicitly enabled and called by a future approved workflow.
+  - Does not generate PDFs, write storage objects, or run background jobs.
+  - Is not wired to a live certificate approval endpoint yet.
+- Certificate request approval workflow.
+  - Composes the source loader and gated executor behind an internal `reviewCertificateRequest` boundary.
+  - Does not decide whether approval is triggered by admin routes, jobs, or other future workflows.
+  - Is not wired to any controller yet.
+- Local certificate generation finalization planner.
+  - Plans how a completed private-storage PDF result becomes a certificate record, generation-job update, and audit event.
+  - Blocks missing worker identity, already-final or failed generation jobs, and incomplete storage result metadata.
+  - Does not render PDFs, write storage objects, update Supabase, or run background jobs.
+- Certificate generation finalization source loader.
+  - Loads one certificate generation job by idempotency key into the local finalization planner.
+  - Returns `not_found` for missing source identity or missing matching rows.
+  - Throws service-unavailable errors for source loading failures.
+  - Is not wired to a live certificate generation job runner yet.
+- Certificate generation finalization executor.
+  - Guarded by `CERTIFICATE_GENERATION_FINALIZATION_WRITES_ENABLED=false`.
+  - Runs certificate upsert, generation-job update, and audit writes only when explicitly enabled and called by a future approved workflow.
+  - Does not render PDFs, write storage objects, or run background jobs.
+  - Is not wired to a live certificate generation job runner yet.
+- Certificate generation finalization workflow.
+  - Composes the source loader and gated executor behind an internal `finalizeCertificate` boundary.
+  - Does not decide whether finalization is triggered by a job runner, admin route, or other future workflow.
+  - Is not wired to any controller or job runner yet.
+- Local certificate PDF render planner.
+  - Builds a render document model, private storage target, generation-job update intent, and audit intent for a future PDF renderer.
+  - Blocks missing worker identity, invalid job states, missing certificate identity, and missing student identity.
+  - Does not render PDFs, write storage objects, update Supabase, or run background jobs.
+- Certificate PDF render source loader.
+  - Loads one certificate generation job by idempotency key into the local PDF render planner.
+  - Returns `not_found` for missing source identity or missing matching rows.
+  - Throws service-unavailable errors for source loading failures.
+  - Is not wired to a live certificate PDF renderer or job runner yet.
+- Certificate PDF render-start executor.
+  - Guarded by `CERTIFICATE_PDF_RENDER_START_WRITES_ENABLED=false`.
+  - Runs generation-job status update and audit writes only when explicitly enabled and called by a future approved renderer or job runner.
+  - Does not render PDFs or write storage objects.
+  - Is not wired to a live certificate PDF renderer or job runner yet.
+- Certificate PDF renderer service.
+  - Renders a deterministic PDF buffer and SHA-256 hash from an already-approved local render plan.
+  - Does not read from Supabase, write to Supabase, write storage objects, or run background jobs.
+  - Is not wired to a live certificate PDF job runner yet.
+- Certificate PDF storage writer.
+  - Guarded by `CERTIFICATE_PDF_STORAGE_WRITES_ENABLED=false`.
+  - Uploads rendered PDF bytes to the planned private Supabase Storage target only when explicitly enabled and called by a future approved job runner.
+  - Uses non-upsert uploads to avoid silently replacing existing certificate PDFs.
+  - Is not wired to a live certificate PDF job runner yet.
+- Certificate PDF generation workflow.
+  - Composes source loading, render-start execution, local PDF rendering, gated storage upload, and certificate finalization behind an internal boundary.
+  - Calls certificate finalization only after storage upload succeeds.
+  - Is not wired to any controller, scheduler, or live job runner yet.
+
+## Audit
+
+- Immutable event capture for sensitive workflows.
+
+## Workshops
+
+- Local workshop status transition planner.
+  - Supports conservative admin status movement for `Upcoming`, `Scheduled`, and `Live` workshops.
+  - Blocks missing admin identity, missing workshop identity, no-op transitions, final-state changes, and unsafe status skips.
+  - Produces workshop update intent and audit intent without executing writes.
+  - Does not schedule Zoom meetings, publish recordings, update Supabase, or run background jobs.
+- Workshop status transition source loader.
+  - Loads one workshop by row ID into the local status transition planner.
+  - Returns `not_found` for missing source identity or missing matching rows.
+  - Throws service-unavailable errors for source loading failures.
+  - Is not wired to a live workshop status endpoint yet.
+- Workshop status transition executor.
+  - Guarded by `WORKSHOP_STATUS_WRITES_ENABLED=false`.
+  - Runs workshop status update and audit writes only when explicitly enabled and called by a future approved workflow.
+  - Does not schedule Zoom meetings, publish recordings, or run background jobs.
+  - Is not wired to a live workshop status endpoint yet.
+- Workshop status transition workflow.
+  - Composes the source loader and gated executor behind an internal `transitionStatus` boundary.
+  - Does not decide whether status changes are triggered by admin routes, jobs, or other future workflows.
+  - Is not wired to any controller yet.
+- Local recording candidate review planner.
+  - Supports admin review and rejection for draft recording candidates.
+  - Blocks missing admin identity, missing candidate identity, already-final candidates, and candidates without any recording reference.
+  - Produces recording-candidate update intent and audit intent without executing writes.
+  - Does not publish recordings to student-facing workshop fields.
+- Recording candidate review source loader.
+  - Loads one recording candidate by ID into the local review planner.
+  - Returns `not_found` for missing source identity or missing matching rows.
+  - Throws service-unavailable errors for source loading failures.
+  - Is not wired to a live recording candidate review endpoint yet.
+- Recording candidate review executor.
+  - Guarded by `RECORDING_CANDIDATE_REVIEW_WRITES_ENABLED=false`.
+  - Runs recording-candidate review update and audit writes only when explicitly enabled and called by a future approved workflow.
+  - Does not publish recordings to student-facing workshop fields.
+  - Is not wired to a live recording candidate review endpoint yet.
+- Recording candidate review workflow.
+  - Composes the source loader and gated executor behind an internal `reviewCandidate` boundary.
+  - Does not decide whether candidate review is triggered by admin routes, jobs, or other future workflows.
+  - Is not wired to any controller yet.
+- Local recording publication planner.
+  - Publishes only reviewed candidates onto completed workshops.
+  - Blocks missing admin identity, candidate/workshop mismatches, non-completed workshops, unreviewed candidates, existing published recordings, and missing or non-HTTPS recording URLs.
+  - Produces workshop recording update intent and audit intent without executing writes.
+  - Does not call Zoom, YouTube, Supabase, or any controller.
+- Recording publication source loader.
+  - Loads one workshop and one recording candidate into the local publication planner.
+  - Returns `not_found` for missing source identity or missing matching rows.
+  - Throws service-unavailable errors for source loading failures.
+  - Is not wired to a live recording publication endpoint yet.
+- Recording publication executor.
+  - Guarded by `RECORDING_PUBLICATION_WRITES_ENABLED=false`.
+  - Runs workshop recording URL update and audit writes only when explicitly enabled and called by a future approved workflow.
+  - Does not call Zoom, YouTube, or any controller.
+  - Is not wired to a live recording publication endpoint yet.
+- Recording publication workflow.
+  - Composes the source loader and gated executor behind an internal `publishRecording` boundary.
+  - Does not decide whether recording publication is triggered by admin routes, jobs, or other future workflows.
+  - Is not wired to any controller yet.
+
+## Notifications And Email
+
+- Local email outbox planner.
+  - Builds deterministic pending email job rows from a template, recipient, business entity, and requester.
+  - Renders template variables server-side before enqueue planning.
+  - Escapes rendered values before storing subject/body content.
+  - Associates every email with a business entity and audit intent.
+  - Does not send email, call an email provider, write Supabase, or expose provider credentials.
+- Email outbox source loader.
+  - Loads one active email template by key into the local outbox planner.
+  - Returns `not_found` for missing template key, missing template row, inactive templates, or malformed template rows.
+  - Throws service-unavailable errors for template loading failures.
+  - Does not enqueue email, send email, call an email provider, or write Supabase.
+- Email outbox executor.
+  - Guarded by `EMAIL_OUTBOX_WRITES_ENABLED=false`.
+  - Writes pending email outbox rows and audit rows only when explicitly enabled and called by a future approved workflow.
+  - Does not send email or call an email provider.
+  - Is not wired to a live email enqueue endpoint or worker yet.
+- Email outbox workflow.
+  - Composes the source loader and gated executor behind an internal `enqueueEmail` boundary.
+  - Does not decide whether email enqueue is triggered by payments, support, certificates, workshops, jobs, or admin actions.
+  - Does not send email or call an email provider.
+  - Is not wired to any controller or worker yet.
+- Local email dispatch planner.
+  - Builds a provider-neutral dispatch payload from a pending email outbox job.
+  - Plans the `sending` lock/update with worker ID, attempt count, lock expiry, and timestamp.
+  - Blocks non-pending jobs, missing required email content, future retry windows, active locks, and attempt-limit exhaustion.
+  - Does not call an email provider, write Supabase, run retries, or select jobs from the outbox.
+- Email dispatch source loader.
+  - Loads one email outbox job by idempotency key into the local dispatch planner.
+  - Returns `not_found` for missing source identity, missing rows, or malformed outbox rows.
+  - Returns `ready` with a blocked plan when the outbox row exists but is not dispatchable.
+  - Throws service-unavailable errors for outbox loading failures.
+  - Does not call an email provider, acquire the send lock, write Supabase, run retries, or select batches.
+- Email dispatch executor.
+  - Guarded by `EMAIL_DISPATCH_WRITES_ENABLED=false`.
+  - Writes only the email outbox `sending` lock/update when explicitly enabled and called by a future approved worker.
+  - Filters the update by `idempotency_key` and current `pending` status.
+  - Does not call an email provider, mark send success/failure, run retries, select batches, or expose provider credentials.
+- Email dispatch workflow.
+  - Composes the dispatch source loader and gated dispatch executor behind an internal `prepareDispatch` boundary.
+  - Does not decide batch selection, worker scheduling, or provider-send behavior.
+  - Does not call an email provider, mark send success/failure, run retries, or expose provider credentials.
+  - Is not wired to any controller or worker yet.
+- Local email delivery result planner.
+  - Builds sent or failed/pending-retry update intent from a future provider result.
+  - Releases dispatch locks in both success and failure result paths.
+  - Creates error-log intent for provider failures.
+  - Blocks result recording for missing worker identity, non-sending jobs, worker mismatches, missing provider message IDs, and missing error messages.
+  - Does not call an email provider, write Supabase, run retries, or select jobs.
+- Email delivery result source loader.
+  - Loads one email outbox job by idempotency key into the local delivery result planner.
+  - Returns `not_found` for missing source identity, missing rows, or malformed outbox rows.
+  - Returns `ready` with a blocked plan when the outbox row exists but is not recordable.
+  - Throws service-unavailable errors for outbox loading failures.
+  - Does not call an email provider, write Supabase, run retries, mark sent/failed, or select batches.
+- Email delivery result executor.
+  - Guarded by `EMAIL_DELIVERY_RESULT_WRITES_ENABLED=false`.
+  - Writes email outbox sent/failed/pending-retry result updates only when explicitly enabled and called by a future approved worker.
+  - Writes provider failure error-log rows when the local result plan includes error-log intent.
+  - Filters outbox result updates by `idempotency_key` and current `sending` status.
+  - Does not call an email provider, run retries, select batches, or expose provider credentials.
+- Email delivery result workflow.
+  - Composes the delivery result source loader and gated result executor behind an internal `recordDeliveryResult` boundary.
+  - Does not decide provider-send behavior, worker scheduling, or retry batch selection.
+  - Does not call an email provider, run retries, or expose provider credentials.
+  - Is not wired to any controller or worker yet.

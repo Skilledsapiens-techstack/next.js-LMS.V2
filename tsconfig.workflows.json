@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "Node",
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@app/*": ["workflows/domain/*"]
+    }
+  },
+  "include": ["workflows/**/*.ts", "test/**/*.ts"]
+}
