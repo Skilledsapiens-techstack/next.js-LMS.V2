@@ -35,7 +35,7 @@ The current app is a Vite React frontend that calls Supabase directly through `s
 | `/admin/announcements` | `useAdminAnnouncements` | `/admins/announcements` | `announcements` | `audience`, `priority`, `status`, `search`, pagination | Wired | Smoke-test filters against real columns. |
 | `/admin/recording-candidates` | `useAdminRecordingCandidates` | `/admins/recording-candidates` | `workshop_recording_candidates` | `status`, `workshopId`, `zoomAccount`, `search`, pagination | Wired | Phase 1 migration captures required read access. |
 | `/admin/workshops` | `useAdminWorkshops` | `/admins/workshops` | `workshops` | `accessType`, `status`, `search`, pagination | Wired | `status` maps to `workshop_status`; smoke-test `accessType`. |
-| `/admin/resources` | `useAdminResources` | `/admins/resources` | `resources` | `accessType`, `status`, `search`, pagination | Wired | Search no longer references nonexistent `program_key`; array-backed program filtering still needs a dedicated design. |
+| `/admin/resources` | `useAdminResources` | `/admins/resources` | `resources` | `accessType`, `status`, `search`, pagination | Wired + write-enabled | URL-based resources support create, update, archive/restore, cohort tagging, and manual program tagging. |
 | `/admin/students` | `useAdminStudents` | `/admins/students` | `students` | `status`, `cohortName`, `search`, pagination | Wired | `status` maps to boolean `active`; Active/Inactive filter smoke-tested. |
 | `/admin/cohorts` | `useAdminCohorts` | `/admins/cohorts` | `cohorts` | `program`, `status`, `sort`, `search`, pagination | Wired | `program` maps to `program_key`; sort aliases are implemented. |
 | `/admin/programs` | `useAdminPrograms` | `/admins/programs` | `programs` | `status`, `search`, pagination | Wired | Smoke-test `status`. |
@@ -93,6 +93,10 @@ The current app is a Vite React frontend that calls Supabase directly through `s
 | `usePublishAdminWorkshopRecording` | `zoom-meetings:publish-recording` | Zoom-backed and deployed | Publishes the selected candidate `play_url` to the workshop recording URL. |
 | `useUpdateAdminWorkshopRecording` | `PATCH /admins/workshops/:id/recording` | Wired and RLS-tested | Saves manual final recording URLs as a fallback and audits `admin_workshop_recording_updated`. |
 | `useMarkAdminWorkshopCompleted` | `zoom-meetings:complete-meeting` | Deployed | Marks workshops completed through the Edge Function. |
+| `useSaveAdminResource` | `POST /admins/resources` | Browser-tested and audited | Creates URL/Google Drive resources; supports free/paid, cohorts, and manual program tags. |
+| `useUpdateAdminResource` | `PATCH /admins/resources/:id` | Browser-tested and audited | Updates resource metadata, URL, pricing, audience tags, and status. |
+| `useArchiveAdminResource` | `PATCH /admins/resources/:id/archive` | Browser-tested and audited | Sets `status = inactive` instead of deleting, hiding the resource from students. |
+| `useRestoreAdminResource` | `PATCH /admins/resources/:id/restore` | Browser-tested and audited | Restores archived resources by setting `status = active`. |
 | `useReviewAdminProjectSubmission` | `PATCH /admins/project-submissions/:id/approve|reject` | Unsupported | Hook exists, but `supabaseApi.ts` does not implement this route. |
 
 ## Immediate Findings

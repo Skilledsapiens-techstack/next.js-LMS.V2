@@ -14,6 +14,7 @@ export type StudentResource = {
   id: string;
   locked: boolean;
   lockReason?: string;
+  paymentLink?: string;
   phase?: string;
   price?: number;
   programKeys: string[];
@@ -27,8 +28,10 @@ export type StudentResource = {
 
 export type StudentResourcesQuery = {
   accessType?: StudentResourceAccessType | 'all';
+  locked?: boolean | 'all';
   limit?: number;
   page?: number;
+  programKey?: string;
   resourceType?: string;
   search?: string;
 };
@@ -37,7 +40,9 @@ export function useStudentResources(query: StudentResourcesQuery) {
   const { accessToken } = useAuth();
   const accessType = query.accessType ?? 'all';
   const limit = query.limit ?? 25;
+  const locked = query.locked ?? 'all';
   const page = query.page ?? 1;
+  const programKey = query.programKey?.trim();
   const resourceType = query.resourceType?.trim();
   const search = query.search?.trim();
 
@@ -49,12 +54,14 @@ export function useStudentResources(query: StudentResourcesQuery) {
         query: {
           accessType,
           limit,
+          locked,
           page,
+          programKey,
           resourceType,
           search
         }
       }),
-    queryKey: ['student-resources', accessToken, page, limit, accessType, resourceType, search],
+    queryKey: ['student-resources', accessToken, page, limit, accessType, locked, programKey, resourceType, search],
     staleTime: 60_000
   });
 }
