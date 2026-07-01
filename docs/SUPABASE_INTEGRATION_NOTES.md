@@ -84,3 +84,31 @@ Remaining follow-up:
 
 - Project-submission `duplicates` needs a product/data model decision; the current table does not expose duplicate-group columns.
 - Resource program filtering needs a proper array-field strategy for `resources.program_keys`.
+
+## Phase 4: Student Read Integration Hardening
+
+Status: started locally on 2026-07-01.
+
+Code fixes applied:
+
+- RPC-backed student list responses now apply query filters after row normalization.
+- `/students/me/announcements` honors `priority`.
+- `/students/me/cohorts` honors `status`.
+- `/students/me/recordings` honors `accessType` and `source`.
+- `/students/me/schedule` honors `accessType` and `status`.
+- `/students/me/resources` honors `accessType` and `resourceType`.
+- `/students/me/projects` honors `programKey` and `roleId`.
+
+Supabase audit findings:
+
+- Active linked student Auth users exist for browser QA.
+- Student RPCs are executable by `authenticated`, `postgres`, and `service_role`.
+- Student RPCs are `SECURITY DEFINER`, but they use helper functions that resolve authenticated requests from the JWT email instead of trusting `p_student_email`.
+- `service_role` can still pass `p_student_email`, which is appropriate only for server/admin access.
+- `student_resources_view` nulls locked paid-resource URLs before returning data.
+
+Remaining follow-up:
+
+- Browser-smoke the student portal with a real student session.
+- Modernize `lms_request_email()` because it still uses deprecated `auth.role()` internally.
+- Include the student RPCs in the broader `SECURITY DEFINER` hardening phase.

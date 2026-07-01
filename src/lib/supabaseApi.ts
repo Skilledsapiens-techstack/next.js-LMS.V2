@@ -375,9 +375,33 @@ function paginate(rawItems: unknown[], query: ApiClientOptions['query']) {
   const filtered = rawItems
     .map(enrichRow)
     .map(camelize)
+    .filter((item) => matchesClientFilters(item, query))
     .filter((item) => !search || JSON.stringify(item).toLowerCase().includes(search));
   const start = (page - 1) * limit;
   return createPaginatedResponse(filtered.slice(start, start + limit), filtered.length, page, limit);
+}
+
+function matchesClientFilters(item: unknown, query: ApiClientOptions['query']) {
+  if (!isRecord(item)) return true;
+
+  const ignored = new Set(['limit', 'page', 'search', 'sort']);
+  return Object.entries(query ?? {}).every(([key, value]) => {
+    if (ignored.has(key) || value === undefined || value === '' || value === 'all' || value === 'any') return true;
+
+    const expected = String(value);
+    const camelKey = toCamelCase(key);
+    const actual = item[camelKey] ?? item[key];
+
+    if (key === 'programKey' && Array.isArray(item.programKeys)) {
+      return item.programKeys.some((entry) => String(entry) === expected) || String(actual ?? '') === expected;
+    }
+
+    if (Array.isArray(actual)) {
+      return actual.some((entry) => String(entry) === expected);
+    }
+
+    return String(actual ?? '') === expected;
+  });
 }
 
 function createPaginatedResponse(items: unknown[], total: number, page: number, limit: number) {
