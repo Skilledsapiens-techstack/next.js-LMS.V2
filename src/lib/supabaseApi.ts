@@ -1,4 +1,4 @@
-import { getSupabaseClient } from './supabaseClient';
+import { getSupabaseClient, getSupabaseClientForAccessToken } from './supabaseClient';
 import { webEnv } from '../config/env';
 
 export type ApiClientOptions = {
@@ -23,6 +23,7 @@ export class ApiClientError extends Error {
 type SupabaseQuery = {
   eq: (column: string, value: unknown) => SupabaseQuery;
   or: (filters: string) => SupabaseQuery;
+  order: (column: string, options?: { ascending?: boolean }) => SupabaseQuery;
 };
 
 // Keeps existing feature hooks stable while the data layer moves from HTTP routes to Supabase tables/RPCs.
@@ -38,11 +39,31 @@ const RPC_LIST_ENDPOINTS: Record<string, { functionName: string; section?: strin
   '/students/me/schedule': { functionName: 'student_schedule_view', section: ['schedule', 'items'] }
 };
 
-const TABLE_ENDPOINTS: Record<string, { table: string; searchColumns: string[]; studentOwned?: boolean }> = {
+type TableEndpoint = {
+  filterColumns?: Record<string, string>;
+  searchColumns: string[];
+  sortColumns?: Record<string, { ascending: boolean; column: string }>;
+  studentOwned?: boolean;
+  table: string;
+};
+
+const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/announcements': { table: 'announcements', searchColumns: ['title', 'message', 'audience'] },
   '/admins/certificate-requests': { table: 'certificate_requests', searchColumns: ['student_email', 'student_name', 'program_name'] },
   '/admins/certificates': { table: 'certificates', searchColumns: ['student_email', 'student_name', 'program_name', 'project_title'] },
-  '/admins/cohorts': { table: 'cohorts', searchColumns: ['name', 'program_key', 'domain_key'] },
+  '/admins/cohorts': {
+    table: 'cohorts',
+    filterColumns: { program: 'program_key' },
+    searchColumns: ['name', 'program_key', 'domain_key'],
+    sortColumns: {
+      name: { column: 'name', ascending: true },
+      program: { column: 'program_key', ascending: true },
+      start_newest: { column: 'start_date', ascending: false },
+      start_oldest: { column: 'start_date', ascending: true },
+      students_asc: { column: 'student_count', ascending: true },
+      students_desc: { column: 'student_count', ascending: false }
+    }
+  },
   '/admins/enrollment-exceptions': { table: 'enrollment_exceptions', searchColumns: ['student_email', 'exception_type', 'notes'] },
   '/admins/enrollment-requests': { table: 'enrollment_requests', searchColumns: ['student_email', 'student_name', 'request_id'] },
   '/admins/enrollment-webhook-events': { table: 'enrollment_webhook_events', searchColumns: ['event_id', 'payment_id', 'order_id'] },
@@ -56,7 +77,7 @@ const TABLE_ENDPOINTS: Record<string, { table: string; searchColumns: string[]; 
   '/admins/resources': { table: 'resources', searchColumns: ['title', 'resource_type', 'program_key'] },
   '/admins/students': { table: 'students', searchColumns: ['full_name', 'email', 'student_id', 'cohort_name', 'program_name'] },
   '/admins/support-tickets': { table: 'support_tickets', searchColumns: ['subject', 'student_email', 'category_name'] },
-  '/admins/workshops': { table: 'workshops', searchColumns: ['title', 'program_key', 'workshop_id', 'zoom_id'] },
+  '/admins/workshops': { table: 'workshops', filterColumns: { status: 'workshop_status' }, searchColumns: ['title', 'program_key', 'workshop_id', 'zoom_id'] },
   '/students/me/certificates': { table: 'certificates', searchColumns: ['program_name', 'project_title'], studentOwned: true },
   '/students/me/paid-access': { table: 'paid_access', searchColumns: ['item_id', 'item_type'], studentOwned: true },
   '/students/me/payment-orders': { table: 'payment_orders', searchColumns: ['item_id', 'item_type', 'razorpay_order_id'], studentOwned: true },
@@ -142,8 +163,11 @@ async function createContext(accessToken?: string) {
   const { data, error } = await supabase.auth.getUser(accessToken);
   if (error || !data.user?.email) throw new ApiClientError('Supabase session is invalid.', 401);
 
+  const userSupabase = getSupabaseClientForAccessToken(accessToken);
+  if (!userSupabase) throw new ApiClientError('Supabase is not configured.', 503);
+
   const email = normalizeEmail(data.user.email);
-  return { accessToken, email, supabase, userId: data.user.id };
+  return { accessToken, email, supabase: userSupabase, userId: data.user.id };
 }
 
 async function getStudentProfile(context: Awaited<ReturnType<typeof createContext>>) {
@@ -216,7 +240,7 @@ async function getRpcList(context: Awaited<ReturnType<typeof createContext>>, en
   return paginate(extractItems(data, endpoint.section ?? ['items']), query);
 }
 
-async function getTableList(context: Awaited<ReturnType<typeof createContext>>, endpoint: { table: string; searchColumns: string[]; studentOwned?: boolean }, query: ApiClientOptions['query']) {
+async function getTableList(context: Awaited<ReturnType<typeof createContext>>, endpoint: TableEndpoint, query: ApiClientOptions['query']) {
   const page = Number(query?.page ?? 1);
   const limit = Math.min(Number(query?.limit ?? 25), 100);
   const from = (page - 1) * limit;
@@ -227,7 +251,8 @@ async function getTableList(context: Awaited<ReturnType<typeof createContext>>, 
     request = request.eq('student_email', context.email);
   }
 
-  request = applyCommonFilters(request, query, endpoint.searchColumns);
+  request = applyCommonFilters(request, query, endpoint);
+  request = applyCommonSort(request, query, endpoint);
   const { count, data, error } = await request.range(from, to);
   if (error) throw new ApiClientError(error.message, 503);
 
@@ -296,20 +321,26 @@ async function callRpc(context: Awaited<ReturnType<typeof createContext>>, funct
   return camelize(data);
 }
 
-function applyCommonFilters<TQuery extends SupabaseQuery>(request: TQuery, query: ApiClientOptions['query'], searchColumns: string[]): TQuery {
-  const ignored = new Set(['limit', 'page', 'search']);
+function applyCommonFilters<TQuery extends SupabaseQuery>(request: TQuery, query: ApiClientOptions['query'], endpoint: TableEndpoint): TQuery {
+  const ignored = new Set(['limit', 'page', 'search', 'sort']);
   Object.entries(query ?? {}).forEach(([key, value]) => {
     if (ignored.has(key) || value === undefined || value === '' || value === 'all') return;
-    request = request.eq(toSnakeCase(key), value) as TQuery;
+    request = request.eq(endpoint.filterColumns?.[key] ?? toSnakeCase(key), value) as TQuery;
   });
 
   const search = String(query?.search ?? '').trim();
   if (search) {
     const safeSearch = search.replace(/[%(),]/g, '');
-    request = request.or(searchColumns.map((column) => `${column}.ilike.%${safeSearch}%`).join(',')) as TQuery;
+    request = request.or(endpoint.searchColumns.map((column) => `${column}.ilike.%${safeSearch}%`).join(',')) as TQuery;
   }
 
   return request;
+}
+
+function applyCommonSort<TQuery extends SupabaseQuery>(request: TQuery, query: ApiClientOptions['query'], endpoint: TableEndpoint): TQuery {
+  const sort = String(query?.sort ?? '').trim();
+  const order = sort ? endpoint.sortColumns?.[sort] : undefined;
+  return order ? (request.order(order.column, { ascending: order.ascending }) as TQuery) : request;
 }
 
 function paginate(rawItems: unknown[], query: ApiClientOptions['query']) {
@@ -365,6 +396,9 @@ function enrichRow(row: unknown) {
   return {
     active_now: computeActiveNow(row),
     id: row.id ?? row.request_id ?? row.ticket_id ?? row.student_id ?? row.workshop_id,
+    self_paced_resources: row.self_paced_resources ?? row.sp_resources,
+    self_paced_sessions: row.self_paced_sessions ?? row.sp_sessions,
+    status: row.status ?? row.workshop_status,
     ...row
   };
 }
