@@ -10,9 +10,9 @@ The current app is a Vite React frontend that calls Supabase directly through `s
 | --- | --- | --- |
 | Auth session validation | Wired | `createContext()` validates the Supabase access token and creates a token-scoped client for RLS-aware data calls. |
 | Admin profile | Wired | `/admins/me` reads `admin_users`; Phase 1 migration captures required read grant and self-profile RLS policy. |
-| Student profile | Wired, needs account QA | `/students/me` reads `students`; needs verification with a real student Auth account. |
+| Student profile | Wired and browser-smoked | `/students/me` reads `students`; Phase 6 adds own-profile RLS for authenticated students. |
 | Admin read lists | Mostly wired | Table endpoints exist for the primary admin modules. Filters still need route-by-route smoke testing. |
-| Student read lists | Mostly wired | Mix of student bundle RPCs, student view RPCs, and student-owned table reads. Needs real student QA. |
+| Student read lists | Wired and browser-smoked | Mix of student bundle RPCs, student view RPCs, and student-owned table reads; Phase 6 smoke-tested with a real student Auth account. |
 | Detail reads | Partially wired | Support ticket detail and enrollment request detail are wired. Other detail routes are not present. |
 | Frontend writes | Intentionally gated | `VITE_WRITE_ACTIONS_ENABLED=false` keeps writes disabled locally. |
 | Write route coverage | Partial | Only admin students and cohorts create/update paths are implemented in `supabaseApi.ts`; several hook mutations remain unsupported. |
@@ -23,9 +23,9 @@ The current app is a Vite React frontend that calls Supabase directly through `s
 
 | UI route | Hook / caller | Supabase route | Source | State | Follow-up |
 | --- | --- | --- | --- | --- | --- |
-| `/login` | `LoginPage` | `/admins/me`, `/students/me` | `admin_users`, `students` | Wired | Confirm student-first/admin-first portal behavior once student QA account is available. |
+| `/login` | `LoginPage` | `/admins/me`, `/students/me` | `admin_users`, `students` | Wired and browser-smoked | Student login checks student-first; admin login checks admin-first. Missing profiles no longer silently navigate. |
 | `/admin/*` | `ProtectedPortalRoute` | `/admins/me` | `admin_users` | Wired | Covered by Phase 1 admin policy migration. |
-| `/student/*` | `ProtectedPortalRoute` | `/students/me` | `students` | Wired, unverified | Verify RLS and profile linking with a real student user. |
+| `/student/*` | `ProtectedPortalRoute` | `/students/me` | `students` | Wired and browser-smoked | Phase 6 added own-student read policy and verified profile linking with a real student user. |
 
 ## Admin Read Routes
 
@@ -57,18 +57,18 @@ The current app is a Vite React frontend that calls Supabase directly through `s
 
 | UI route | Hook | Supabase route | Source | Query params used | State | Follow-up |
 | --- | --- | --- | --- | --- | --- | --- |
-| `/student` | `useStudentDashboard` | `/students/me/dashboard` | `students`, `student_dashboard_bundle`, `student_resources_view`, `student_projects_bundle`, `student_certificates_bundle` | none | Wired, unverified | Real student QA required; advisor warns student RPCs are `SECURITY DEFINER`. |
-| `/student/announcements` | `useStudentAnnouncements` | `/students/me/announcements` | `student_dashboard_bundle` section | `priority`, `search`, pagination | Wired, needs browser QA | RPC/bundle client filtering now honors `priority`. |
-| `/student/cohorts` | `useStudentCohorts` | `/students/me/cohorts` | `student_dashboard_bundle` section | `status`, `search`, pagination | Wired, needs browser QA | RPC/bundle client filtering now honors `status`. |
-| `/student/recordings` | `useStudentRecordings` | `/students/me/recordings` | `student_dashboard_bundle` section | `accessType`, `source`, `search`, pagination | Wired, needs browser QA | RPC/bundle client filtering now honors `accessType` and `source`. |
-| `/student/schedule` | `useStudentSchedule` | `/students/me/schedule` | `student_schedule_view` RPC | `accessType`, `status`, `search`, pagination | Wired, needs browser QA | RPC client filtering now honors `accessType` and `status`. |
-| `/student/resources` | `useStudentResources` | `/students/me/resources` | `student_resources_view` RPC | `accessType`, `resourceType`, `search`, pagination | Wired, needs browser QA | RPC client filtering now honors `accessType` and `resourceType`; locked resource URLs are nulled by the RPC. |
-| `/student/projects` | `useStudentProjects` | `/students/me/projects` | `student_projects_bundle` RPC | `programKey`, `roleId`, `search`, pagination | Wired, needs browser QA | RPC client filtering now honors `programKey` and `roleId`. |
-| `/student/project-submissions` | `useStudentProjectSubmissions` | `/students/me/project-submissions` | `project_submission_requests` | `status`, `programKey`, `cohortName`, `search`, pagination | Wired, unverified | Uses `student_email = auth email`; verify RLS and column names. |
-| `/student/certificates` | `useStudentCertificates` | `/students/me/certificates` | `certificates` | `certificateType`, `generationStatus`, `status`, `search`, pagination | Wired, unverified | Uses `student_email = auth email`; verify student-only RLS. |
-| `/student/payments` | `useStudentPaymentOrders` | `/students/me/payment-orders` | `payment_orders` | `itemType`, `status`, `search`, pagination | Wired, unverified | Uses `student_email = auth email`; verify student-only RLS. |
-| `/student/access` | `useStudentPaidAccess` | `/students/me/paid-access` | `paid_access` | `itemType`, `status`, `search`, pagination | Wired, unverified | Uses `student_email = auth email`; `activeNow` derived client-side. |
-| `/student/support` | `useStudentSupportTickets` | `/students/me/support-tickets` | `support_tickets` | `status`, `search`, pagination | Wired, unverified | Uses `student_email = auth email`; verify `canReply` shape. |
+| `/student` | `useStudentDashboard` | `/students/me/dashboard` | `students`, `student_dashboard_bundle`, `student_resources_view`, `student_projects_bundle`, `student_certificates_bundle` | none | Wired and browser-smoked | Advisor warns student RPCs are `SECURITY DEFINER`; broader hardening remains pending. |
+| `/student/announcements` | `useStudentAnnouncements` | `/students/me/announcements` | `student_dashboard_bundle` section | `priority`, `search`, pagination | Wired and browser-smoked | Loaded empty for current test data; RPC/bundle client filtering honors `priority`. |
+| `/student/cohorts` | `useStudentCohorts` | `/students/me/cohorts` | `student_dashboard_bundle` section | `status`, `search`, pagination | Wired and browser-smoked | RPC/bundle client filtering honors `status`. |
+| `/student/recordings` | `useStudentRecordings` | `/students/me/recordings` | `student_dashboard_bundle` section | `accessType`, `source`, `search`, pagination | Wired and browser-smoked | Uses `workshops` bundle section; adapter derives source and hides locked recording URLs. |
+| `/student/schedule` | `useStudentSchedule` | `/students/me/schedule` | `student_schedule_view` RPC | `accessType`, `status`, `search`, pagination | Wired and browser-smoked | Loaded empty for current test data; adapter hides locked join URLs. |
+| `/student/resources` | `useStudentResources` | `/students/me/resources` | `student_resources_view` RPC | `accessType`, `resourceType`, `search`, pagination | Wired and browser-smoked | RPC client filtering honors `accessType` and `resourceType`; locked resource URLs are nulled by the RPC. |
+| `/student/projects` | `useStudentProjects` | `/students/me/projects` | `student_projects_bundle` RPC | `programKey`, `roleId`, `search`, pagination | Wired and browser-smoked | Adapter normalizes null/string project task, document, and deliverable fields into arrays. |
+| `/student/project-submissions` | `useStudentProjectSubmissions` | `/students/me/project-submissions` | `project_submission_requests` | `status`, `programKey`, `cohortName`, `search`, pagination | Wired and browser-smoked | Phase 6 adds student-owned read policy. |
+| `/student/certificates` | `useStudentCertificates` | `/students/me/certificates` | `certificates` | `certificateType`, `generationStatus`, `status`, `search`, pagination | Wired and browser-smoked | Phase 6 adds student-owned read policy. |
+| `/student/payments` | `useStudentPaymentOrders` | `/students/me/payment-orders` | `payment_orders` | `itemType`, `status`, `search`, pagination | Wired and browser-smoked | Phase 6 adds student-owned read policy. |
+| `/student/access` | `useStudentPaidAccess` | `/students/me/paid-access` | `paid_access` | `itemType`, `status`, `search`, pagination | Wired and browser-smoked | Loaded empty for current test data; Phase 6 adds student-owned read policy. |
+| `/student/support` | `useStudentSupportTickets` | `/students/me/support-tickets` | `support_tickets` | `status`, `search`, pagination | Wired and browser-smoked | Loaded empty for current test data; existing student support RLS is in place. |
 | `/student/support/:ticketId` | `useStudentSupportTicketDetail` | `/students/me/support-tickets/:ticketId` | `support_tickets`, `support_ticket_messages` | none | Partially wired | Student detail filters messages to `visibility = public`. |
 | `/student/community` | `ModulePlaceholderPage` | none | none | none | Placeholder | Community route exists in nav but has no page integration. |
 
@@ -91,7 +91,7 @@ The current app is a Vite React frontend that calls Supabase directly through `s
 ## Immediate Findings
 
 1. Admin read routes have been smoke-tested in the browser with the active admin session.
-2. Student routes should be treated as unverified until a real student Auth account is tested.
+2. Student routes were browser-smoked with a real student Auth account in Phase 6.
 3. The direct browser-to-Supabase approach depends on exact grants/RLS for every table and RPC listed here.
 4. Some hook mutations are already visible in code but will fail as unsupported once write gates are enabled.
 5. Existing public `SECURITY DEFINER` RPC warnings should be resolved before expanding privileged access.
@@ -138,6 +138,37 @@ Phase 4 Supabase audit notes:
 
 Remaining Phase 4 follow-ups:
 
-1. Browser-smoke the student portal with a real student Auth session.
-2. Modernize `lms_request_email()` away from deprecated `auth.role()` usage.
-3. Continue security-definer RPC hardening as part of the broader RLS/security phase.
+1. Continue security-definer RPC hardening as part of the broader RLS/security phase.
+
+## Phase 5 Student RPC Helper Hardening
+
+Completed Phase 5 fixes:
+
+- Added `supabase/migrations/20260701102314_harden_student_rpc_request_email.sql`.
+- Replaced deprecated `auth.role()` usage in `public.lms_request_email()`.
+- Preserved service-role-only `p_student_email` override behavior.
+- Preserved browser/authenticated behavior where the caller JWT email is authoritative.
+
+Verification:
+
+- Linked project `public.lms_request_email()` no longer contains `auth.role()`.
+- No ordinary `public` functions currently contain `auth.role()`.
+- Broader Supabase advisor warnings remain for other public `SECURITY DEFINER` functions and mutable `search_path` functions.
+
+## Phase 6 Student Browser QA And RLS Policies
+
+Completed Phase 6 fixes:
+
+- Added `supabase/migrations/20260701161458_student_owned_read_policies.sql`.
+- Added student-owned select policies for `students`, `certificates`, `paid_access`, `payment_orders`, and `project_submission_requests`.
+- Fixed login portal probing order and missing-profile handling.
+- Added `workshops` as a supported student recordings bundle section.
+- Normalized project tasks/documents/deliverables from null, strings, arrays, or nested objects.
+- Hid locked recording and schedule URLs in the direct Supabase adapter.
+
+Verification:
+
+- Authenticated test student can read their own profile row.
+- Browser-smoked the main student routes from `/student` through support, payments, certificates, projects, recordings, resources, cohorts, and schedule.
+- `/student/projects` no longer crashes on null/string project metadata.
+- `/student/recordings` renders workshop recording rows from the dashboard bundle.

@@ -32,8 +32,8 @@ async function resolveSignedInPortal(accessToken: string, requestedPortal: Login
           { path: '/students/me', portal: 'student' }
         ]
       : [
-          { path: '/admins/me', portal: 'admin' },
-          { path: '/students/me', portal: 'student' }
+          { path: '/students/me', portal: 'student' },
+          { path: '/admins/me', portal: 'admin' }
         ];
 
   for (const check of portalChecks) {
@@ -42,7 +42,7 @@ async function resolveSignedInPortal(accessToken: string, requestedPortal: Login
     }
   }
 
-  return requestedPortal;
+  throw new ApiClientError(`No active ${requestedPortal} profile is linked to this Supabase user.`, 404);
 }
 
 export function LoginPage() {
