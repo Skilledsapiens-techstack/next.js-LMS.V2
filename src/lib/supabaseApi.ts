@@ -277,13 +277,15 @@ async function getEnrollmentDetail(context: Awaited<ReturnType<typeof createCont
 }
 
 async function updateById(context: Awaited<ReturnType<typeof createContext>>, table: string, id: string, body: unknown) {
-  const { data, error } = await context.supabase.from(table).update(snakify(body)).eq('id', id).select('*').single();
+  const payload = snakifyMutationBody(body);
+  const { data, error } = await context.supabase.from(table).update(payload).eq('id', id).select('*').single();
   if (error) throw new ApiClientError(error.message, 503);
   return camelize(data);
 }
 
 async function insertRow(context: Awaited<ReturnType<typeof createContext>>, table: string, body: unknown) {
-  const { data, error } = await context.supabase.from(table).insert(snakify(body)).select('*').single();
+  const payload = snakifyMutationBody(body);
+  const { data, error } = await context.supabase.from(table).insert(payload).select('*').single();
   if (error) throw new ApiClientError(error.message, 503);
   return camelize(data);
 }
@@ -385,6 +387,14 @@ function snakify(value: unknown): unknown {
   if (!isRecord(value)) return value;
 
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [toSnakeCase(key), snakify(item)]));
+}
+
+function snakifyMutationBody(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new ApiClientError('Supabase write payload must be an object.', 400);
+  }
+
+  return snakify(value) as Record<string, unknown>;
 }
 
 function toCamelCase(value: string) {

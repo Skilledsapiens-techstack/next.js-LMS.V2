@@ -31,11 +31,13 @@ const gateNames = [
 ];
 
 const filesToCheck = [
-  'src/config/configuration.ts',
+  'workflows/domain/config/configuration.ts',
   '.env.example',
   'docs/PHASE_4_LOCAL_FOUNDATION_CHECKPOINT.md',
   'docs/PHASE_4_SUPABASE_WRITE_READINESS.md'
 ];
+
+const configPath = 'workflows/domain/config/configuration.ts';
 
 const failures = [];
 
@@ -60,7 +62,7 @@ for (const gateName of gateNames) {
   }
 }
 
-const config = fs.readFileSync(path.join(rootDir, 'src/config/configuration.ts'), 'utf8');
+const config = fs.readFileSync(path.join(rootDir, configPath), 'utf8');
 
 for (const gateName of gateNames) {
   const gateIndex = config.indexOf(gateName);
@@ -71,7 +73,7 @@ for (const gateName of gateNames) {
     .sort((a, b) => a - b)[0];
 
   if (gateIndex === -1 || defaultIndex === -1 || (nextGateIndex !== undefined && defaultIndex > nextGateIndex)) {
-    failures.push(`configuration.ts must default ${gateName} to false`);
+    failures.push(`${configPath} must default ${gateName} to false`);
   }
 }
 
