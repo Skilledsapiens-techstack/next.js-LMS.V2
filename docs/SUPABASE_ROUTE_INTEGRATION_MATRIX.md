@@ -58,12 +58,12 @@ The current app is a Vite React frontend that calls Supabase directly through `s
 | UI route | Hook | Supabase route | Source | Query params used | State | Follow-up |
 | --- | --- | --- | --- | --- | --- | --- |
 | `/student` | `useStudentDashboard` | `/students/me/dashboard` | `students`, `student_dashboard_bundle`, `student_resources_view`, `student_projects_bundle`, `student_certificates_bundle` | none | Wired, unverified | Real student QA required; advisor warns student RPCs are `SECURITY DEFINER`. |
-| `/student/announcements` | `useStudentAnnouncements` | `/students/me/announcements` | `student_dashboard_bundle` section | `priority`, `search`, pagination | Wired, unverified | `priority` currently filters after bundle extraction only if field names match. |
-| `/student/cohorts` | `useStudentCohorts` | `/students/me/cohorts` | `student_dashboard_bundle` section | `status`, `search`, pagination | Wired, unverified | Confirm bundle section shape. |
-| `/student/recordings` | `useStudentRecordings` | `/students/me/recordings` | `student_dashboard_bundle` section | `accessType`, `source`, `search`, pagination | Wired, unverified | Confirm bundle includes `source` and access flags. |
-| `/student/schedule` | `useStudentSchedule` | `/students/me/schedule` | `student_schedule_view` RPC | `accessType`, `status`, `search`, pagination | Wired, unverified | Confirm RPC filtering is currently client-side only. |
-| `/student/resources` | `useStudentResources` | `/students/me/resources` | `student_resources_view` RPC | `accessType`, `resourceType`, `search`, pagination | Wired, unverified | Confirm RPC output columns. |
-| `/student/projects` | `useStudentProjects` | `/students/me/projects` | `student_projects_bundle` RPC | `programKey`, `roleId`, `search`, pagination | Wired, unverified | Confirm bundle section path `projects.items`. |
+| `/student/announcements` | `useStudentAnnouncements` | `/students/me/announcements` | `student_dashboard_bundle` section | `priority`, `search`, pagination | Wired, needs browser QA | RPC/bundle client filtering now honors `priority`. |
+| `/student/cohorts` | `useStudentCohorts` | `/students/me/cohorts` | `student_dashboard_bundle` section | `status`, `search`, pagination | Wired, needs browser QA | RPC/bundle client filtering now honors `status`. |
+| `/student/recordings` | `useStudentRecordings` | `/students/me/recordings` | `student_dashboard_bundle` section | `accessType`, `source`, `search`, pagination | Wired, needs browser QA | RPC/bundle client filtering now honors `accessType` and `source`. |
+| `/student/schedule` | `useStudentSchedule` | `/students/me/schedule` | `student_schedule_view` RPC | `accessType`, `status`, `search`, pagination | Wired, needs browser QA | RPC client filtering now honors `accessType` and `status`. |
+| `/student/resources` | `useStudentResources` | `/students/me/resources` | `student_resources_view` RPC | `accessType`, `resourceType`, `search`, pagination | Wired, needs browser QA | RPC client filtering now honors `accessType` and `resourceType`; locked resource URLs are nulled by the RPC. |
+| `/student/projects` | `useStudentProjects` | `/students/me/projects` | `student_projects_bundle` RPC | `programKey`, `roleId`, `search`, pagination | Wired, needs browser QA | RPC client filtering now honors `programKey` and `roleId`. |
 | `/student/project-submissions` | `useStudentProjectSubmissions` | `/students/me/project-submissions` | `project_submission_requests` | `status`, `programKey`, `cohortName`, `search`, pagination | Wired, unverified | Uses `student_email = auth email`; verify RLS and column names. |
 | `/student/certificates` | `useStudentCertificates` | `/students/me/certificates` | `certificates` | `certificateType`, `generationStatus`, `status`, `search`, pagination | Wired, unverified | Uses `student_email = auth email`; verify student-only RLS. |
 | `/student/payments` | `useStudentPaymentOrders` | `/students/me/payment-orders` | `payment_orders` | `itemType`, `status`, `search`, pagination | Wired, unverified | Uses `student_email = auth email`; verify student-only RLS. |
@@ -115,3 +115,29 @@ Remaining Phase 3 follow-ups:
 1. Decide the data model for project-submission `duplicates`, because the current table does not expose duplicate-group columns.
 2. Decide how resource/program filtering should work for array-backed `resources.program_keys`.
 3. Continue targeted filter QA for enrollments, certificates, payments, and support once representative data is available.
+
+## Phase 4 Student Read Hardening
+
+Completed Phase 4 fixes:
+
+- RPC-backed student lists now apply non-search filters client-side after row normalization.
+- Student announcements honor `priority`.
+- Student cohorts honor `status`.
+- Student recordings honor `accessType` and `source`.
+- Student schedule honors `accessType` and `status`.
+- Student resources honor `accessType` and `resourceType`.
+- Student projects honor `programKey` and `roleId`, including array-backed `programKeys`.
+
+Phase 4 Supabase audit notes:
+
+- Student RPCs are granted to `authenticated`, `postgres`, and `service_role`.
+- Student RPCs are `SECURITY DEFINER`, but they use `lms_request_email()` / `lms_student_id_for_request()`.
+- For authenticated users, `p_student_email` is ignored and the JWT email is used.
+- For `service_role`, `p_student_email` can be used for admin/server-side access.
+- `student_resources_view` nulls locked resource URLs.
+
+Remaining Phase 4 follow-ups:
+
+1. Browser-smoke the student portal with a real student Auth session.
+2. Modernize `lms_request_email()` away from deprecated `auth.role()` usage.
+3. Continue security-definer RPC hardening as part of the broader RLS/security phase.
