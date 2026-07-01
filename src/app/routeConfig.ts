@@ -47,7 +47,7 @@ export const adminNavItems: NavItem[] = [
   { label: 'Dashboard', path: '/admin', moduleId: 'dashboard', icon: LayoutDashboard, mode: 'read-only' },
   { label: 'Recordings', path: '/admin/recording-candidates', moduleId: 'recording-candidates', icon: Video, mode: 'read-only' },
   { label: 'Schedule Meeting', path: '/admin/workshops', moduleId: 'workshops', icon: CalendarDays, mode: 'read-only' },
-  { label: 'Resources', path: '/admin/resources', moduleId: 'resources', icon: Library, mode: 'read-only' },
+  { label: 'Resources', path: '/admin/resources', moduleId: 'resources', icon: Library, mode: 'write' },
   { label: 'Students', path: '/admin/students', moduleId: 'students', icon: Users, mode: 'read-only' },
   { label: 'Cohorts', path: '/admin/cohorts', moduleId: 'cohorts', icon: GraduationCap, mode: 'read-only' },
   { label: 'Programs', path: '/admin/programs', moduleId: 'programs', icon: BookOpen, mode: 'read-only' },

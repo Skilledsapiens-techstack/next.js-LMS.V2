@@ -83,7 +83,45 @@ Verified in browser:
 Remaining follow-up:
 
 - Project-submission `duplicates` needs a product/data model decision; the current table does not expose duplicate-group columns.
-- Resource program filtering needs a proper array-field strategy for `resources.program_keys`.
+
+## Phase 7: Admin Resources Write Integration
+
+Status: started locally on 2026-07-01.
+
+Scope decision:
+
+- Resources remain URL/Google Drive link based in this phase.
+- Supabase Storage file upload is intentionally deferred.
+- Remove is reversible archive (`status = inactive`), not permanent delete.
+- Inactive resources remain hidden from students through `student_resources_view`.
+- Paid locked resources can still show payment details while protected resource URLs stay hidden.
+
+Code fixes applied:
+
+- Added resource create/update/archive/restore routes to the Supabase API adapter.
+- Added admin resource mutation hooks.
+- Enabled the Admin Resources editor Save/Update controls.
+- Enabled reversible Archive/Restore controls in the resource library.
+- Added manual program tagging in addition to cohort tagging.
+- Preserved cohort-derived program keys and domain keys.
+- Loaded all active/upcoming cohorts for resource tagging instead of only the first cohort page.
+- Added CTA loading/press states for resource refresh, edit, archive, restore, save, cohort select, cohort clear, and form clear.
+- Added student paid-resource payment CTA when a locked paid resource includes `payment_link`.
+
+Database changes applied:
+
+- Added audit policy for `admin_resource_created`, `admin_resource_updated`, `admin_resource_archived`, and `admin_resource_status_changed`.
+- Updated `student_resources_view` so resources may target either programs or cohorts while still requiring at least one audience selector.
+
+Verified:
+
+- `npm run typecheck`
+- `npm run lint`
+- `npm run build`
+- Browser-created URL-only program-tagged resource.
+- Browser-updated the resource title.
+- Browser-archived, restored, and archived the test resource again for cleanup.
+- Verified resource audit logs for created, updated, archived, and status-changed actions.
 
 ## Phase 4: Student Read Integration Hardening
 

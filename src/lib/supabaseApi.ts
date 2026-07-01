@@ -113,8 +113,31 @@ const WORKSHOP_WRITE_COLUMNS = new Set([
   'zoom_recording_url'
 ]);
 
+const RESOURCE_WRITE_COLUMNS = new Set([
+  'access_type',
+  'cohort_names',
+  'currency',
+  'description',
+  'domain_key',
+  'payment_link',
+  'price',
+  'program_keys',
+  'resource_id',
+  'resource_mode',
+  'resource_type',
+  'status',
+  'title',
+  'url'
+]);
+
 const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/announcements': { table: 'announcements', searchColumns: ['title', 'message', 'audience'] },
+  '/admins/audit-logs': {
+    table: 'audit_logs',
+    filterColumns: { entityId: 'entity_id', entityType: 'entity_type' },
+    searchColumns: ['action', 'actor_email', 'entity_type'],
+    sortColumns: { newest: { column: 'created_at', ascending: false } }
+  },
   '/admins/certificate-requests': { table: 'certificate_requests', searchColumns: ['student_email', 'student_name', 'program_name'] },
   '/admins/certificates': { table: 'certificates', searchColumns: ['student_email', 'student_name', 'program_name', 'project_title'] },
   '/admins/cohorts': {
@@ -178,6 +201,12 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     normalizeBody: normalizeWorkshopWriteBody,
     table: 'workshops',
     validateBody: validateWorkshopWriteBody
+  },
+  resources: {
+    columns: RESOURCE_WRITE_COLUMNS,
+    normalizeBody: normalizeResourceWriteBody,
+    table: 'resources',
+    validateBody: validateResourceWriteBody
   }
 };
 
@@ -249,6 +278,15 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
   const workshopUpdate = cleanPath.match(/^\/admins\/workshops\/([^/]+)$/);
   if (workshopUpdate) return updateById(context, 'workshops', decodeURIComponent(workshopUpdate[1]), options.body, 'updated') as Promise<TResponse>;
 
+  const resourceArchive = cleanPath.match(/^\/admins\/resources\/([^/]+)\/archive$/);
+  if (resourceArchive) return updateById(context, 'resources', decodeURIComponent(resourceArchive[1]), { status: 'inactive' }, 'archived') as Promise<TResponse>;
+
+  const resourceRestore = cleanPath.match(/^\/admins\/resources\/([^/]+)\/restore$/);
+  if (resourceRestore) return updateById(context, 'resources', decodeURIComponent(resourceRestore[1]), { status: 'active' }, 'status_changed') as Promise<TResponse>;
+
+  const resourceUpdate = cleanPath.match(/^\/admins\/resources\/([^/]+)$/);
+  if (resourceUpdate) return updateById(context, 'resources', decodeURIComponent(resourceUpdate[1]), options.body, 'updated') as Promise<TResponse>;
+
   throw new ApiClientError(`Unsupported Supabase write route: ${cleanPath}`, 404);
 }
 
@@ -264,6 +302,7 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/students') return insertRow(context, 'students', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/cohorts') return insertRow(context, 'cohorts', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/workshops') return insertRow(context, 'workshops', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/resources') return insertRow(context, 'resources', options.body, 'created') as Promise<TResponse>;
 
   throw new ApiClientError(`Unsupported Supabase write route: ${cleanPath}`, 404);
 }
@@ -863,6 +902,27 @@ function normalizeWorkshopWriteBody(payload: Record<string, unknown>) {
   };
 }
 
+function normalizeResourceWriteBody(payload: Record<string, unknown>) {
+  const accessType = typeof payload.access_type === 'string' ? payload.access_type.toLowerCase() : payload.access_type;
+  const cohortNames = payload.cohort_names === undefined ? undefined : asStringArray(payload.cohort_names);
+  const programKeys = payload.program_keys === undefined ? undefined : asStringArray(payload.program_keys);
+  const paymentLink = payload.payment_link === '' ? null : payload.payment_link;
+  const url = payload.url === '' ? null : payload.url;
+
+  return {
+    ...payload,
+    access_type: accessType,
+    cohort_names: cohortNames,
+    currency: typeof payload.currency === 'string' ? payload.currency.trim().toUpperCase() : payload.currency,
+    payment_link: paymentLink,
+    price: payload.price === '' || payload.price === undefined ? null : Number(payload.price),
+    program_keys: programKeys,
+    resource_mode: typeof payload.resource_mode === 'string' ? payload.resource_mode.trim().toLowerCase() : payload.resource_mode,
+    resource_type: typeof payload.resource_type === 'string' ? payload.resource_type.trim().toLowerCase() : payload.resource_type,
+    url
+  };
+}
+
 function validateCohortWriteBody(payload: Record<string, unknown>, inserting: boolean) {
   const name = typeof payload.name === 'string' ? payload.name.trim() : '';
   const status = typeof payload.status === 'string' ? payload.status : undefined;
@@ -913,6 +973,37 @@ function validateWorkshopWriteBody(payload: Record<string, unknown>, inserting: 
   if (zoomRecordingUrl && !isHttpUrl(zoomRecordingUrl)) throw new ApiClientError('Alternate recording URL must start with http:// or https://.', 400);
 }
 
+function validateResourceWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+  const resourceId = typeof payload.resource_id === 'string' ? payload.resource_id.trim() : '';
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  const accessType = typeof payload.access_type === 'string' ? payload.access_type : undefined;
+  const price = payload.price;
+  const currency = typeof payload.currency === 'string' ? payload.currency.trim() : '';
+  const paymentLink = typeof payload.payment_link === 'string' ? payload.payment_link.trim() : '';
+  const url = typeof payload.url === 'string' ? payload.url.trim() : '';
+  const cohortNames = payload.cohort_names;
+  const programKeys = payload.program_keys;
+
+  if (inserting && !resourceId) throw new ApiClientError('Resource ID is required.', 400);
+  if (inserting && !title) throw new ApiClientError('Resource title is required.', 400);
+  if (status && !['active', 'inactive'].includes(status)) throw new ApiClientError('Resource status is invalid.', 400);
+  if (accessType && !['free', 'paid'].includes(accessType)) throw new ApiClientError('Resource access type is invalid.', 400);
+  if (cohortNames !== undefined && !Array.isArray(cohortNames)) throw new ApiClientError('Resource cohorts must be a list.', 400);
+  if (programKeys !== undefined && !Array.isArray(programKeys)) throw new ApiClientError('Resource programs must be a list.', 400);
+  if (Array.isArray(cohortNames) && Array.isArray(programKeys) && cohortNames.length === 0 && programKeys.length === 0) {
+    throw new ApiClientError('Select at least one cohort or one program.', 400);
+  }
+  if (url && !isHttpUrl(url)) throw new ApiClientError('Resource URL must start with http:// or https://.', 400);
+  if (paymentLink && !isHttpUrl(paymentLink)) throw new ApiClientError('Payment link must start with http:// or https://.', 400);
+  if (price !== null && price !== undefined && Number(price) < 0) throw new ApiClientError('Resource price cannot be negative.', 400);
+  if (accessType === 'paid') {
+    if (price === null || price === undefined || Number(price) <= 0) throw new ApiClientError('Paid resources require a positive price.', 400);
+    if (!paymentLink) throw new ApiClientError('Paid resources require a payment link.', 400);
+  }
+  if (currency && currency.length > 10) throw new ApiClientError('Currency must be 10 characters or fewer.', 400);
+}
+
 function validateStudentWriteBody(payload: Record<string, unknown>, inserting: boolean) {
   const fullName = typeof payload.full_name === 'string' ? payload.full_name.trim() : '';
   const email = typeof payload.email === 'string' ? payload.email.trim() : '';
@@ -939,8 +1030,8 @@ async function writeAuditLog(
   row: Record<string, unknown>,
   payload: Record<string, unknown>
 ) {
-  if (table !== 'cohorts' && table !== 'students' && table !== 'workshops') return;
-  const entityType = table === 'cohorts' ? 'cohort' : table === 'workshops' ? 'workshop' : 'student';
+  if (table !== 'cohorts' && table !== 'students' && table !== 'workshops' && table !== 'resources') return;
+  const entityType = table === 'cohorts' ? 'cohort' : table === 'workshops' ? 'workshop' : table === 'resources' ? 'resource' : 'student';
 
   const auditRow = {
     action: `admin_${entityType}_${action}`,
@@ -953,7 +1044,7 @@ async function writeAuditLog(
   };
 
   const { error } = await context.supabase.from('audit_logs').insert(auditRow);
-  if (error) throw new ApiClientError(`${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : 'Student'} was saved, but audit logging failed: ${error.message}`, 503);
+  if (error) throw new ApiClientError(`${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : 'Student'} was saved, but audit logging failed: ${error.message}`, 503);
 }
 
 function buildAuditDetails(table: string, row: Record<string, unknown>, payload: Record<string, unknown>) {
@@ -980,6 +1071,16 @@ function buildAuditDetails(table: string, row: Record<string, unknown>, payload:
     };
   }
 
+  if (table === 'resources') {
+    return {
+      ...base,
+      accessType: row.access_type,
+      resourceId: row.resource_id,
+      status: row.status,
+      title: row.title
+    };
+  }
+
   return {
     ...base,
     active: row.active,
@@ -993,6 +1094,7 @@ function mutationError(error: { code?: string; message: string }, table: string)
   if (error.code === '23505') {
     if (table === 'cohorts') return new ApiClientError('A cohort with this name or cohort ID already exists.', 409);
     if (table === 'students') return new ApiClientError('A student with this email already exists.', 409);
+    if (table === 'resources') return new ApiClientError('A resource with this Resource ID already exists.', 409);
     return new ApiClientError('A record with this unique value already exists.', 409);
   }
 
