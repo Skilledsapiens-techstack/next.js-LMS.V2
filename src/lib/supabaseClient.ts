@@ -22,3 +22,21 @@ export function getSupabaseClient() {
 
   return supabaseClient;
 }
+
+export function getSupabaseClientForAccessToken(accessToken: string) {
+  if (!isSupabaseAuthConfigured()) {
+    return null;
+  }
+
+  return createClient(webEnv.supabaseUrl, webEnv.supabaseAnonKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    }
+  });
+}
