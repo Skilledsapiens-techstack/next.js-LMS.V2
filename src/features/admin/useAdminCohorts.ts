@@ -25,6 +25,7 @@ export type AdminCohort = {
 };
 
 export type AdminCohortsQuery = {
+  enabled?: boolean;
   limit?: number;
   page?: number;
   program?: string;
@@ -62,7 +63,7 @@ export function useAdminCohorts(query: AdminCohortsQuery) {
   const status = query.status ?? 'all';
 
   return useQuery({
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && query.enabled !== false,
     queryFn: () =>
       apiGet<PaginatedResponse<AdminCohort>>('/admins/cohorts', {
         accessToken: accessToken ?? undefined,

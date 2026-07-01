@@ -1,10 +1,23 @@
-import { CalendarDays, CheckCircle2, Clapperboard, Clock3, Copy, Edit3, Link as LinkIcon, Plus, Radio, Search, Video } from 'lucide-react';
-import { ChangeEvent, useEffect, useMemo, useState } from 'react';
+import { CalendarDays, Check, CheckCircle2, Clapperboard, Clock3, Copy, Edit3, Link as LinkIcon, Loader2, Plus, Radio, Save, Search, Trash2, Video, X } from 'lucide-react';
+import { ChangeEvent, FormEvent, useMemo, useState } from 'react';
 import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { AdminCohort, useAdminCohorts } from '../features/admin/useAdminCohorts';
-import { AdminWorkshop, AdminWorkshopStatus, useAdminWorkshops, useMarkAdminWorkshopCompleted } from '../features/admin/useAdminWorkshops';
+import {
+  AdminWorkshop,
+  AdminWorkshopStatus,
+  useCancelAdminWorkshop,
+  useFetchAdminWorkshopRecordings,
+  useAdminWorkshops,
+  useMarkAdminWorkshopCompleted,
+  usePublishAdminWorkshopRecording,
+  useRescheduleAdminWorkshop,
+  useSaveAdminWorkshop,
+  useUpdateAdminWorkshop,
+  useUpdateAdminWorkshopRecording
+} from '../features/admin/useAdminWorkshops';
+import { useAdminRecordingCandidates } from '../features/admin/useAdminRecordingCandidates';
 
 type WorkshopTab = 'upcoming' | 'past' | 'completed';
 
@@ -53,6 +66,8 @@ const defaultWorkshopTopics = [
   'How to think like a Consultant & Marketer',
   'Introduction to Equity Research, Financial Modeling & Excel'
 ];
+
+const customWorkshopTopicValue = '__custom_workshop_topic__';
 
 function uniqueTitles(values: string[]) {
   const seen = new Set<string>();
@@ -158,24 +173,59 @@ function workshopToForm(item: AdminWorkshop): WorkshopForm {
   };
 }
 
-function activeCohorts(cohorts: AdminCohort[]) {
-  return cohorts.filter((cohort) => cohort.status === 'active' || cohort.status === 'upcoming');
+function dedupeCohorts(pages: Array<AdminCohort[] | undefined>) {
+  const cohorts = new Map<string, AdminCohort>();
+  pages.forEach((page) => {
+    page?.forEach((cohort) => cohorts.set(cohort.id, cohort));
+  });
+  return Array.from(cohorts.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function readableError(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function isHttpUrl(value: string) {
+  return /^https?:\/\//i.test(value);
 }
 
 export function AdminWorkshopsPage() {
   const workshopsQuery = useAdminWorkshops({ limit: 100, page: 1, status: 'all' });
-  const cohortsQuery = useAdminCohorts({ limit: 100, page: 1, sort: 'name', status: 'all' });
+  const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, sort: 'name', status: 'all' });
+  const cohortsPageTwoQuery = useAdminCohorts({ enabled: (cohortsPageOneQuery.data?.totalPages ?? 1) >= 2, limit: 100, page: 2, sort: 'name', status: 'all' });
+  const cohortsPageThreeQuery = useAdminCohorts({ enabled: (cohortsPageOneQuery.data?.totalPages ?? 1) >= 3, limit: 100, page: 3, sort: 'name', status: 'all' });
+  const saveWorkshopMutation = useSaveAdminWorkshop();
+  const updateWorkshopMutation = useUpdateAdminWorkshop();
+  const rescheduleWorkshopMutation = useRescheduleAdminWorkshop();
+  const updateRecordingMutation = useUpdateAdminWorkshopRecording();
+  const fetchRecordingsMutation = useFetchAdminWorkshopRecordings();
+  const publishRecordingMutation = usePublishAdminWorkshopRecording();
   const markCompletedMutation = useMarkAdminWorkshopCompleted();
+  const cancelWorkshopMutation = useCancelAdminWorkshop();
   const [form, setForm] = useState<WorkshopForm>(emptyWorkshopForm);
   const [recordingForm, setRecordingForm] = useState<RecordingForm>({ alternateUrl: '', selectedWorkshopId: '', youtubeUrl: '' });
   const [cohortSearch, setCohortSearch] = useState('');
   const [activeTab, setActiveTab] = useState<WorkshopTab>('upcoming');
-  const [postponedWorkshopIds, setPostponedWorkshopIds] = useState<string[]>([]);
   const [savedWorkshopTopics, setSavedWorkshopTopics] = useState<string[]>(loadSavedWorkshopTopics);
   const [topicDrafts, setTopicDrafts] = useState<WorkshopTopicDraft[]>(() => loadSavedWorkshopTopics().map((title) => createTopicDraft(title, false)));
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [pendingCancelWorkshop, setPendingCancelWorkshop] = useState<AdminWorkshop | null>(null);
+  const [customTitleMode, setCustomTitleMode] = useState(false);
+  const [isSavingTopics, setIsSavingTopics] = useState(false);
+  const [isAddingTopic, setIsAddingTopic] = useState(false);
+  const [isClearingCohorts, setIsClearingCohorts] = useState(false);
+  const [isClearingForm, setIsClearingForm] = useState(false);
+  const [isRefreshingMeetings, setIsRefreshingMeetings] = useState(false);
+  const [isSelectingCohorts, setIsSelectingCohorts] = useState(false);
+  const [copiedWorkshopId, setCopiedWorkshopId] = useState<string | null>(null);
+  const [editingWorkshopId, setEditingWorkshopId] = useState<string | null>(null);
 
   const workshops = workshopsQuery.data?.items ?? [];
-  const cohorts = useMemo(() => activeCohorts(cohortsQuery.data?.items ?? []), [cohortsQuery.data?.items]);
+  const cohorts = useMemo(
+    () => dedupeCohorts([cohortsPageOneQuery.data?.items, cohortsPageTwoQuery.data?.items, cohortsPageThreeQuery.data?.items]).filter((cohort) => cohort.status === 'active' || cohort.status === 'upcoming'),
+    [cohortsPageOneQuery.data?.items, cohortsPageTwoQuery.data?.items, cohortsPageThreeQuery.data?.items]
+  );
   const filteredCohorts = useMemo(() => {
     const query = cohortSearch.trim().toLowerCase();
     if (!query) return cohorts;
@@ -193,22 +243,24 @@ export function AdminWorkshopsPage() {
   const pastCount = pastWorkshops.length;
   const completedCount = completedWorkshops.length;
   const pendingMarkCompleted = pastCount;
-  const existingWorkshopTopics = useMemo(() => uniqueTitles(workshops.map((item) => item.title)), [workshops]);
-  const workshopTopicOptions = useMemo(() => uniqueTitles([...savedWorkshopTopics, ...existingWorkshopTopics, form.title]), [existingWorkshopTopics, form.title, savedWorkshopTopics]);
+  const workshopTopicOptions = useMemo(() => uniqueTitles(savedWorkshopTopics), [savedWorkshopTopics]);
+  const selectedTopicValue = customTitleMode || (form.title && !workshopTopicOptions.includes(form.title)) ? customWorkshopTopicValue : form.title;
 
   const selectedRecording = completedWorkshops.find((item) => item.id === recordingForm.selectedWorkshopId) ?? completedWorkshops[0];
-
-  useEffect(() => {
-    if (existingWorkshopTopics.length === 0) return;
-    setTopicDrafts((drafts) => {
-      const current = new Set(drafts.map((draft) => draft.title.trim().toLowerCase()).filter(Boolean));
-      const missingTopics = existingWorkshopTopics.filter((topic) => !current.has(topic.toLowerCase()));
-      return missingTopics.length > 0 ? [...drafts, ...missingTopics.map((topic) => createTopicDraft(topic, false))] : drafts;
-    });
-  }, [existingWorkshopTopics]);
+  const recordingCandidatesQuery = useAdminRecordingCandidates({
+    limit: 20,
+    page: 1,
+    status: 'all',
+    workshopId: selectedRecording?.workshopId
+  });
 
   function updateForm<K extends keyof WorkshopForm>(key: K, value: WorkshopForm[K]) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function pulse(setter: (value: boolean) => void, duration = 650) {
+    setter(true);
+    window.setTimeout(() => setter(false), duration);
   }
 
   function toggleCohort(name: string) {
@@ -222,39 +274,142 @@ export function AdminWorkshopsPage() {
   }
 
   function selectAllVisibleCohorts() {
+    pulse(setIsSelectingCohorts);
     setForm((current) => ({
       ...current,
       cohortNames: Array.from(new Set([...current.cohortNames, ...filteredCohorts.map((cohort) => cohort.name)]))
     }));
   }
 
+  function clearSelectedCohorts() {
+    pulse(setIsClearingCohorts);
+    updateForm('cohortNames', []);
+  }
+
+  function clearWorkshopForm() {
+    pulse(setIsClearingForm);
+    setForm(emptyWorkshopForm);
+    setCustomTitleMode(false);
+  }
+
   function copyJoinUrl(item: AdminWorkshop) {
     if (item.joinUrl) {
       void navigator.clipboard?.writeText(item.joinUrl);
+      setCopiedWorkshopId(item.id);
+      window.setTimeout(() => setCopiedWorkshopId((current) => (current === item.id ? null : current)), 900);
     }
   }
 
-  function markWorkshopPostponed(item: AdminWorkshop) {
-    setPostponedWorkshopIds((current) => (current.includes(item.id) ? current : [...current, item.id]));
+  function handleTopicSelect(value: string) {
+    if (value === customWorkshopTopicValue) {
+      setCustomTitleMode(true);
+      updateForm('title', '');
+      return;
+    }
+    setCustomTitleMode(false);
+    updateForm('title', value);
+  }
+
+  async function confirmCancelWorkshop() {
+    if (!pendingCancelWorkshop) return;
+    setActionMessage(null);
+    try {
+      await cancelWorkshopMutation.mutateAsync(pendingCancelWorkshop.id);
+      setPendingCancelWorkshop(null);
+      setActionMessage('Meeting cancelled in Zoom and archived in LMS.');
+    } catch (error) {
+      setActionMessage(readableError(error, 'Meeting could not be cancelled.'));
+    }
+  }
+
+  async function refreshMeetings() {
+    setIsRefreshingMeetings(true);
+    try {
+      await workshopsQuery.refetch();
+    } finally {
+      setIsRefreshingMeetings(false);
+    }
+  }
+
+  async function saveWorkshop(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError(null);
+    setActionMessage(null);
+
+    const title = form.title.trim();
+    const durationMinutes = Number(form.durationMinutes);
+
+    if (!title) {
+      setFormError('Session title is required.');
+      return;
+    }
+    if (!form.date) {
+      setFormError('Meeting date is required.');
+      return;
+    }
+    if (form.durationMinutes && (!Number.isInteger(durationMinutes) || durationMinutes <= 0)) {
+      setFormError('Duration must be a positive whole number.');
+      return;
+    }
+    if (form.cohortNames.length === 0) {
+      setFormError('Select at least one cohort.');
+      return;
+    }
+
+    const payload = {
+      cohortNames: form.cohortNames,
+      date: form.date,
+      durationMinutes: durationMinutes || undefined,
+      time: form.time || undefined,
+      title,
+      workshopStatus: 'Scheduled' as AdminWorkshopStatus,
+      zoomAccount: form.zoomAccount || undefined
+    };
+
+    try {
+      if (form.selectedWorkshopId) {
+        const original = workshops.find((item) => item.id === form.selectedWorkshopId);
+        const isReschedule = Boolean(original && (toDateInput(original.date) !== form.date || (original.time ?? '') !== (form.time || '')));
+        const mutation = isReschedule ? rescheduleWorkshopMutation : updateWorkshopMutation;
+        await mutation.mutateAsync({ body: payload, workshopId: form.selectedWorkshopId });
+        setActionMessage('Meeting updated.');
+      } else {
+        await saveWorkshopMutation.mutateAsync(payload);
+        setActionMessage('Meeting scheduled.');
+      }
+      setForm(emptyWorkshopForm);
+      setCustomTitleMode(false);
+    } catch (error) {
+      setFormError(readableError(error, 'Meeting could not be saved.'));
+    }
   }
 
   async function markWorkshopCompleted(item: AdminWorkshop) {
-    await markCompletedMutation.mutateAsync(item.id);
-    setRecordingForm({
-      alternateUrl: item.zoomRecordingUrl ?? '',
-      selectedWorkshopId: item.id,
-      youtubeUrl: item.youtubeVideoUrl ?? ''
-    });
-    setActiveTab('completed');
+    setActionMessage(null);
+    try {
+      await markCompletedMutation.mutateAsync(item.id);
+      setRecordingForm({
+        alternateUrl: item.zoomRecordingUrl ?? '',
+        selectedWorkshopId: item.id,
+        youtubeUrl: item.youtubeVideoUrl ?? ''
+      });
+      setActiveTab('completed');
+      setActionMessage('Workshop marked completed.');
+    } catch (error) {
+      setActionMessage(readableError(error, 'Workshop could not be marked completed.'));
+    }
   }
 
   function editWorkshop(item: AdminWorkshop) {
+    setEditingWorkshopId(item.id);
+    setCustomTitleMode(!workshopTopicOptions.includes(item.title));
     setForm(workshopToForm(item));
     setRecordingForm({
       alternateUrl: item.zoomRecordingUrl ?? '',
       selectedWorkshopId: item.id,
       youtubeUrl: item.youtubeVideoUrl ?? ''
     });
+    window.setTimeout(() => setEditingWorkshopId((current) => (current === item.id ? null : current)), 650);
   }
 
   function updateTopicDraft(id: string, title: string) {
@@ -265,11 +420,28 @@ export function AdminWorkshopsPage() {
     setTopicDrafts((drafts) => drafts.map((draft) => (draft.id === id ? { ...draft, isEditing: !draft.isEditing } : draft)));
   }
 
+  function removeTopicDraft(id: string) {
+    setTopicDrafts((drafts) => (drafts.length > 1 ? drafts.filter((draft) => draft.id !== id) : [createTopicDraft()]));
+  }
+
   function saveTopicDrafts() {
     const nextTopics = uniqueTitles(topicDrafts.map((topic) => topic.title));
+    setIsSavingTopics(true);
     setSavedWorkshopTopics(nextTopics);
     setTopicDrafts(nextTopics.length > 0 ? nextTopics.map((title) => createTopicDraft(title, false)) : [createTopicDraft()]);
     saveWorkshopTopics(nextTopics);
+    if (form.title && !nextTopics.includes(form.title)) {
+      setCustomTitleMode(false);
+      setForm((current) => ({ ...current, title: '' }));
+    }
+    setActionMessage('Workshop topic dropdown updated.');
+    window.setTimeout(() => setIsSavingTopics(false), 700);
+  }
+
+  function addTopicDraft() {
+    setIsAddingTopic(true);
+    setTopicDrafts((drafts) => [createTopicDraft(), ...drafts]);
+    window.setTimeout(() => setIsAddingTopic(false), 650);
   }
 
   function handleRecordingWorkshopChange(event: ChangeEvent<HTMLSelectElement>) {
@@ -281,7 +453,70 @@ export function AdminWorkshopsPage() {
     });
   }
 
-  if (workshopsQuery.isLoading || cohortsQuery.isLoading) {
+  async function saveRecordingLinks() {
+    setActionMessage(null);
+    const selectedWorkshopId = recordingForm.selectedWorkshopId || selectedRecording?.id;
+    const youtubeUrl = recordingForm.youtubeUrl.trim();
+    const alternateUrl = recordingForm.alternateUrl.trim();
+
+    if (!selectedWorkshopId) {
+      setActionMessage('Select a completed workshop before saving recording links.');
+      return;
+    }
+    if (!youtubeUrl && !alternateUrl) {
+      setActionMessage('Add at least one recording link.');
+      return;
+    }
+    if (youtubeUrl && !isHttpUrl(youtubeUrl)) {
+      setActionMessage('YouTube URL must start with http:// or https://.');
+      return;
+    }
+    if (alternateUrl && !isHttpUrl(alternateUrl)) {
+      setActionMessage('Alternate recording URL must start with http:// or https://.');
+      return;
+    }
+
+    try {
+      await updateRecordingMutation.mutateAsync({
+        body: {
+          youtubeVideoUrl: youtubeUrl || null,
+          zoomRecordingUrl: alternateUrl || null
+        },
+        workshopId: selectedWorkshopId
+      });
+      setActionMessage('Recording links saved.');
+    } catch (error) {
+      setActionMessage(readableError(error, 'Recording links could not be saved.'));
+    }
+  }
+
+  async function fetchZoomRecordings(workshop = selectedRecording) {
+    if (!workshop) {
+      setActionMessage('Select a completed workshop before fetching recordings.');
+      return;
+    }
+    setActionMessage(null);
+    try {
+      const result = await fetchRecordingsMutation.mutateAsync(workshop.id);
+      await recordingCandidatesQuery.refetch();
+      setActionMessage(`Fetched ${result.count ?? 0} Zoom recording candidate${result.count === 1 ? '' : 's'}.`);
+    } catch (error) {
+      setActionMessage(readableError(error, 'Zoom recordings could not be fetched.'));
+    }
+  }
+
+  async function publishRecordingCandidate(candidateId: string) {
+    setActionMessage(null);
+    try {
+      await publishRecordingMutation.mutateAsync(candidateId);
+      await recordingCandidatesQuery.refetch();
+      setActionMessage('Recording candidate published.');
+    } catch (error) {
+      setActionMessage(readableError(error, 'Recording candidate could not be published.'));
+    }
+  }
+
+  if (workshopsQuery.isLoading || cohortsPageOneQuery.isLoading || cohortsPageTwoQuery.isLoading || cohortsPageThreeQuery.isLoading) {
     return (
       <div className="page-stack">
         <PageHeader description="Loading meeting schedule." eyebrow="Admin workshops" title="Schedule Meeting" />
@@ -290,7 +525,7 @@ export function AdminWorkshopsPage() {
     );
   }
 
-  if (workshopsQuery.isError || cohortsQuery.isError) {
+  if (workshopsQuery.isError || cohortsPageOneQuery.isError || cohortsPageTwoQuery.isError || cohortsPageThreeQuery.isError) {
     return (
       <div className="page-stack">
         <PageHeader description="Meetings could not be loaded from the Supabase." eyebrow="Admin workshops" title="Schedule Meeting unavailable" />
@@ -310,8 +545,9 @@ export function AdminWorkshopsPage() {
           </div>
           <p>Refresh only meetings data from the database.</p>
         </div>
-        <button className="announcement-refresh-button" onClick={() => void workshopsQuery.refetch()} type="button">
-          Refresh Meetings
+        <button className="announcement-refresh-button workshop-action-button" disabled={isRefreshingMeetings || workshopsQuery.isFetching} onClick={() => void refreshMeetings()} type="button">
+          {isRefreshingMeetings || workshopsQuery.isFetching ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
+          {isRefreshingMeetings || workshopsQuery.isFetching ? 'Refreshing...' : 'Refresh Meetings'}
         </button>
       </header>
 
@@ -355,22 +591,23 @@ export function AdminWorkshopsPage() {
             <h2>{form.selectedWorkshopId ? 'Edit Scheduled Meeting' : 'Schedule a New Meeting'}</h2>
           </div>
 
-          <form className="announcement-form workshop-form">
+          <form className="announcement-form workshop-form" onSubmit={saveWorkshop}>
             <label className="announcement-field announcement-field--wide">
               <span>
                 Session Title <b>*</b>
               </span>
-              <input
-                list="workshop-topic-options"
-                value={form.title}
-                onChange={(event) => updateForm('title', event.target.value)}
-                placeholder="Select or type a custom title..."
-              />
-              <datalist id="workshop-topic-options">
+              <select value={selectedTopicValue} onChange={(event) => handleTopicSelect(event.target.value)}>
+                <option value="">Select workshop topic</option>
                 {workshopTopicOptions.map((title) => (
-                  <option key={title} value={title} />
+                  <option key={title} value={title}>
+                    {title}
+                  </option>
                 ))}
-              </datalist>
+                <option value={customWorkshopTopicValue}>Custom topic</option>
+              </select>
+              {selectedTopicValue === customWorkshopTopicValue ? (
+                <input value={form.title} onChange={(event) => updateForm('title', event.target.value)} placeholder="Type custom workshop title..." />
+              ) : null}
             </label>
 
             <label className="announcement-field">
@@ -409,11 +646,13 @@ export function AdminWorkshopsPage() {
                   <Search size={16} />
                   <input value={cohortSearch} onChange={(event) => setCohortSearch(event.target.value)} placeholder="Search cohorts..." type="search" />
                 </div>
-                <button className="announcement-secondary-button" onClick={selectAllVisibleCohorts} type="button">
-                  Select all
+                <button className="announcement-secondary-button workshop-action-button" disabled={isSelectingCohorts} onClick={selectAllVisibleCohorts} type="button">
+                  {isSelectingCohorts ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
+                  {isSelectingCohorts ? 'Selecting...' : 'Select all'}
                 </button>
-                <button className="announcement-secondary-button" onClick={() => updateForm('cohortNames', [])} type="button">
-                  Clear all
+                <button className="announcement-secondary-button workshop-action-button" disabled={isClearingCohorts} onClick={clearSelectedCohorts} type="button">
+                  {isClearingCohorts ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
+                  {isClearingCohorts ? 'Clearing...' : 'Clear all'}
                 </button>
               </div>
               <div className="workshop-cohort-list">
@@ -422,14 +661,16 @@ export function AdminWorkshopsPage() {
                     <label className="workshop-cohort-row" key={cohort.id}>
                       <input checked={form.cohortNames.includes(cohort.name)} onChange={() => toggleCohort(cohort.name)} type="checkbox" />
                       <strong>{cohort.name}</strong>
-                      <span>{cohort.status.toUpperCase()}</span>
+                      <span className={`workshop-cohort-status workshop-cohort-status--${cohort.status}`}>{cohort.status.toUpperCase()}</span>
                     </label>
                   ))
                 ) : (
                   <p>No active or upcoming cohorts available.</p>
                 )}
               </div>
-              <small>Select one or more cohorts. This session will appear in each cohort's schedule.</small>
+              <small>
+                {form.cohortNames.length > 0 ? `${form.cohortNames.length} cohort${form.cohortNames.length === 1 ? '' : 's'} selected.` : 'Select one or more active/upcoming LMS cohorts.'}
+              </small>
             </div>
 
             <label className="announcement-field announcement-field--wide">
@@ -438,13 +679,22 @@ export function AdminWorkshopsPage() {
             </label>
 
             <div className="announcement-actions announcement-field--wide">
-              <button className="announcement-secondary-button" onClick={() => setForm(emptyWorkshopForm)} type="button">
-                Clear
+              <button
+                className="announcement-secondary-button workshop-action-button"
+                disabled={isClearingForm}
+                onClick={clearWorkshopForm}
+                type="button"
+              >
+                {isClearingForm ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
+                {isClearingForm ? 'Clearing...' : 'Clear'}
               </button>
-              <button className="announcement-primary-button" disabled type="button">
-                {form.selectedWorkshopId ? 'Update Meeting ->' : 'Schedule on Zoom ->'}
+              <button className="announcement-primary-button workshop-action-button" disabled={saveWorkshopMutation.isPending || updateWorkshopMutation.isPending || rescheduleWorkshopMutation.isPending} type="submit">
+                {saveWorkshopMutation.isPending || updateWorkshopMutation.isPending || rescheduleWorkshopMutation.isPending ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
+                {rescheduleWorkshopMutation.isPending ? 'Rescheduling...' : updateWorkshopMutation.isPending ? 'Updating...' : saveWorkshopMutation.isPending ? 'Saving...' : form.selectedWorkshopId ? 'Update Meeting ->' : 'Save Meeting ->'}
               </button>
             </div>
+            {formError ? <p className="workshop-error-note announcement-field--wide">{formError}</p> : null}
+            {actionMessage ? <p className="announcement-field--wide">{actionMessage}</p> : null}
           </form>
         </section>
 
@@ -470,11 +720,34 @@ export function AdminWorkshopsPage() {
               </select>
               <input value={recordingForm.youtubeUrl} onChange={(event) => setRecordingForm((current) => ({ ...current, youtubeUrl: event.target.value }))} placeholder="YouTube URL (optional)" />
               <input value={recordingForm.alternateUrl} onChange={(event) => setRecordingForm((current) => ({ ...current, alternateUrl: event.target.value }))} placeholder="Drive, Zoom, or alternate recording URL (optional)" />
-              <button className="announcement-primary-button" disabled type="button">
-                {recordingForm.youtubeUrl || recordingForm.alternateUrl ? 'Update Recording Links' : 'Save Recording Links'}
+              <button className="announcement-primary-button workshop-action-button" disabled={updateRecordingMutation.isPending || completedWorkshops.length === 0} onClick={() => void saveRecordingLinks()} type="button">
+                {updateRecordingMutation.isPending ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
+                {updateRecordingMutation.isPending ? 'Saving...' : recordingForm.youtubeUrl || recordingForm.alternateUrl ? 'Update Recording Links' : 'Save Recording Links'}
+              </button>
+              <button className="workshop-soft-action workshop-action-button" disabled={!selectedRecording || fetchRecordingsMutation.isPending} onClick={() => void fetchZoomRecordings()} type="button">
+                {fetchRecordingsMutation.isPending ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
+                {fetchRecordingsMutation.isPending ? 'Fetching...' : 'Fetch Zoom Recordings'}
               </button>
               <p>Only workshops marked completed by Admin appear here. Add or edit at least one recording link.</p>
               {markCompletedMutation.isError ? <p className="workshop-error-note">Mark Completed could not be saved. Confirm workshop status writes are enabled and try again.</p> : null}
+              {selectedRecording && recordingCandidatesQuery.data?.items.length ? (
+                <div className="workshop-recording-candidate">
+                  <strong>Zoom recording candidates</strong>
+                  {recordingCandidatesQuery.data.items.map((candidate) => (
+                    <span key={candidate.id}>
+                      {candidate.recordingType ?? 'recording'} · {candidate.fileType ?? 'file'} · {candidate.recordingStart ? formatDate(candidate.recordingStart) : 'time unknown'}
+                      {candidate.playUrl ? (
+                        <a className="inline-link" href={candidate.playUrl} rel="noreferrer" target="_blank">
+                          Preview
+                        </a>
+                      ) : null}
+                      <button disabled={publishRecordingMutation.isPending || candidate.status === 'reviewed'} onClick={() => void publishRecordingCandidate(candidate.id)} type="button">
+                        {publishRecordingMutation.isPending ? 'Publishing...' : candidate.status === 'reviewed' ? 'Published' : 'Publish'}
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             <div className="workshop-list-header">
@@ -502,7 +775,6 @@ export function AdminWorkshopsPage() {
                   const isPast = activeTab === 'past';
                   const recordingUrl = item.youtubeVideoUrl ?? item.zoomRecordingUrl;
                   const isMarkingThisWorkshop = markCompletedMutation.isPending && markCompletedMutation.variables === item.id;
-                  const isPostponed = postponedWorkshopIds.includes(item.id);
 
                   return (
                     <article className={isAdminCompleted ? 'workshop-meeting-row workshop-meeting-row--completed' : 'workshop-meeting-row'} key={item.id}>
@@ -537,8 +809,8 @@ export function AdminWorkshopsPage() {
                             <>
                               <div className="workshop-recording-candidate">
                                 <strong>Admin-only Zoom recording candidates</strong>
-                                <button disabled type="button">
-                                  Fetch Zoom Recordings
+                                <button disabled={fetchRecordingsMutation.isPending} onClick={() => void fetchZoomRecordings(item)} type="button">
+                                  {fetchRecordingsMutation.isPending ? 'Fetching...' : 'Fetch Zoom Recordings'}
                                 </button>
                                 <span>No Zoom recording candidates fetched yet.</span>
                               </div>
@@ -551,23 +823,25 @@ export function AdminWorkshopsPage() {
                       </div>
                       {!isAdminCompleted ? (
                         <div className="workshop-meeting-actions">
-                          <button className="announcement-row-button" onClick={() => editWorkshop(item)} type="button">
-                            <Edit3 size={14} />
-                            Edit
+                          <button className="announcement-row-button workshop-action-button" disabled={editingWorkshopId === item.id} onClick={() => editWorkshop(item)} type="button">
+                            {editingWorkshopId === item.id ? <Loader2 className="workshop-action-spinner" size={14} /> : <Edit3 size={14} />}
+                            {editingWorkshopId === item.id ? 'Editing...' : 'Edit'}
                           </button>
                           {isPast ? (
                             <>
-                              <button className="workshop-soft-action" disabled={markCompletedMutation.isPending} onClick={() => void markWorkshopCompleted(item)} type="button">
+                              <button className="workshop-soft-action workshop-action-button" disabled={markCompletedMutation.isPending} onClick={() => void markWorkshopCompleted(item)} type="button">
+                                {isMarkingThisWorkshop ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
                                 {isMarkingThisWorkshop ? 'Marking...' : 'Mark Completed'}
-                              </button>
-                              <button className="workshop-neutral-action" onClick={() => markWorkshopPostponed(item)} type="button">
-                                {isPostponed ? 'Postponed' : 'Postpone'}
                               </button>
                             </>
                           ) : null}
-                          <button className="announcement-row-button" disabled={!item.joinUrl} onClick={() => copyJoinUrl(item)} type="button">
-                            <Copy size={14} />
-                            Copy Link
+                          <button className="announcement-row-button workshop-action-button" disabled={!item.joinUrl || copiedWorkshopId === item.id} onClick={() => copyJoinUrl(item)} type="button">
+                            {copiedWorkshopId === item.id ? <Check size={14} /> : <Copy size={14} />}
+                            {copiedWorkshopId === item.id ? 'Copied' : 'Copy Link'}
+                          </button>
+                          <button className="workshop-danger-action workshop-action-button" disabled={cancelWorkshopMutation.isPending} onClick={() => setPendingCancelWorkshop(item)} type="button">
+                            <X size={14} />
+                            Cancel
                           </button>
                         </div>
                       ) : null}
@@ -591,8 +865,9 @@ export function AdminWorkshopsPage() {
             <span className="section-eyebrow">DROPDOWN CONTROLLER</span>
             <h2 id="workshop-topic-manager-title">Workshop Topics</h2>
           </div>
-          <button className="workshop-soft-action" onClick={saveTopicDrafts} type="button">
-            Save Topics
+          <button className="workshop-topic-action workshop-topic-action--save" disabled={isSavingTopics} onClick={saveTopicDrafts} type="button">
+            {isSavingTopics ? <Loader2 className="workshop-action-spinner" size={14} /> : <Save size={14} />}
+            {isSavingTopics ? 'Saving...' : 'Save Topics'}
           </button>
         </div>
         <div className="workshop-topic-manager">
@@ -607,26 +882,53 @@ export function AdminWorkshopsPage() {
                   placeholder="Workshop topic title"
                   type="text"
                 />
-                <button className="workshop-soft-action" onClick={() => toggleTopicDraftEditing(topic.id)} type="button">
-                  <Edit3 size={14} />
+                <button className={topic.isEditing ? 'workshop-topic-action workshop-topic-action--done' : 'workshop-topic-action workshop-topic-action--edit'} onClick={() => toggleTopicDraftEditing(topic.id)} type="button">
+                  {topic.isEditing ? <Check size={14} /> : <Edit3 size={14} />}
                   {topic.isEditing ? 'Done' : 'Edit'}
                 </button>
                 <button
-                  className="workshop-neutral-action"
-                  onClick={() => setTopicDrafts((drafts) => (drafts.length > 1 ? drafts.filter((draft) => draft.id !== topic.id) : [createTopicDraft()]))}
+                  className="workshop-topic-action workshop-topic-action--remove"
+                  onClick={() => removeTopicDraft(topic.id)}
                   type="button"
                 >
+                  <Trash2 size={14} />
                   Remove
                 </button>
               </div>
             ))}
           </div>
-          <button className="cohort-add-row-button" onClick={() => setTopicDrafts((drafts) => [...drafts, createTopicDraft()])} type="button">
-            <Plus size={15} />
-            Add Topic
+          <button className="workshop-topic-action workshop-topic-action--add workshop-topic-add-button" disabled={isAddingTopic} onClick={addTopicDraft} type="button">
+            {isAddingTopic ? <Loader2 className="workshop-action-spinner" size={14} /> : <Plus size={15} />}
+            {isAddingTopic ? 'Adding...' : 'Add Topic'}
           </button>
         </div>
       </section>
+
+      {pendingCancelWorkshop ? (
+        <div className="student-modal-backdrop" role="presentation">
+          <section aria-labelledby="cancel-workshop-title" aria-modal="true" className="student-modal workshop-confirm-modal" role="dialog">
+            <header className="student-modal__header">
+              <h2 id="cancel-workshop-title">Cancel Meeting</h2>
+              <button aria-label="Close cancel confirmation" className="student-modal__icon-button" onClick={() => setPendingCancelWorkshop(null)} type="button">
+                <X size={18} />
+              </button>
+            </header>
+            <div className="student-modal__body workshop-confirm-modal__body">
+              <strong>{pendingCancelWorkshop.title}</strong>
+              <span>{formatDateTime(pendingCancelWorkshop)}</span>
+              <p>This will cancel the Zoom meeting, remove the student join link, and move the workshop out of active schedule views.</p>
+            </div>
+            <footer className="student-modal__footer">
+              <button className="segmented-button" disabled={cancelWorkshopMutation.isPending} onClick={() => setPendingCancelWorkshop(null)} type="button">
+                Keep Meeting
+              </button>
+              <button className="segmented-button segmented-button--danger" disabled={cancelWorkshopMutation.isPending} onClick={() => void confirmCancelWorkshop()} type="button">
+                {cancelWorkshopMutation.isPending ? 'Cancelling...' : 'Cancel Meeting'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

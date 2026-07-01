@@ -24,6 +24,10 @@ type CohortFormState = {
   waGroupName: string;
   waLink: string;
 };
+type PendingStatusChange = {
+  cohort: AdminCohort;
+  nextStatus: AdminCohortStatus;
+};
 
 const statusOptions: Array<AdminCohortStatus | 'all'> = ['all', 'upcoming', 'active', 'completed', 'inactive'];
 
@@ -153,6 +157,10 @@ function formatOption(value: string) {
   return value.replace(/_/g, ' ');
 }
 
+function readableError(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 function buildPageLink(page: number, search: string, status: AdminCohortStatus | 'all', program: ProgramFilter, sort: SortMode) {
   const params = new URLSearchParams();
   params.set('page', String(page));
@@ -263,6 +271,15 @@ function CohortModal({
     }
 
     const studentCount = Number.parseInt(form.studentCount, 10);
+    if (!Number.isFinite(studentCount) || studentCount < 0) {
+      setSubmitError('Student count must be zero or a positive whole number.');
+      return;
+    }
+    if (form.startDate && form.endDate && form.startDate > form.endDate) {
+      setSubmitError('End date cannot be before the start date.');
+      return;
+    }
+
     const selfPacedSessionsPayload = selfPacedEnabled
       ? selfPacedSessions
           .map((session) => ({
@@ -295,7 +312,7 @@ function CohortModal({
         selfPacedSessions: selfPacedSessionsPayload,
         startDate: form.startDate || undefined,
         status: form.status,
-        studentCount: Number.isFinite(studentCount) && studentCount > 0 ? studentCount : 0,
+        studentCount,
         waGroupName: form.waGroupName.trim() || undefined,
         waLink: form.waLink.trim() || undefined
       };
@@ -307,8 +324,8 @@ function CohortModal({
       }
       onSaved();
       onClose();
-    } catch {
-      setSubmitError('Cohort could not be saved. Confirm cohort writes are enabled and try again.');
+    } catch (error) {
+      setSubmitError(readableError(error, 'Cohort could not be saved. Confirm cohort writes are enabled and try again.'));
     }
   }
 
@@ -482,6 +499,7 @@ export function AdminCohortsPage() {
   const [searchInput, setSearchInput] = useState(search);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingCohort, setEditingCohort] = useState<AdminCohort | null>(null);
+  const [pendingStatusChange, setPendingStatusChange] = useState<PendingStatusChange | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const cohortsQuery = useAdminCohorts({ limit: 30, page, program: program === 'all' ? undefined : program, search, sort, status });
   const programsQuery = useAdminPrograms({ limit: 100, status: 'active' });
@@ -506,17 +524,15 @@ export function AdminCohortsPage() {
     updateParams({ search: searchInput.trim() || undefined });
   }
 
-  async function handleStatusChange(cohort: AdminCohort, nextStatus: AdminCohortStatus) {
-    const verb = nextStatus === 'inactive' ? 'deactivate' : 'reactivate';
-    const confirmed = window.confirm(`Are you sure you want to ${verb} ${cohort.name}?`);
-    if (!confirmed) return;
-
+  async function confirmStatusChange() {
+    if (!pendingStatusChange) return;
     setActionError(null);
     try {
-      await updateCohortStatus.mutateAsync({ cohortId: cohort.id, status: nextStatus });
+      await updateCohortStatus.mutateAsync({ cohortId: pendingStatusChange.cohort.id, status: pendingStatusChange.nextStatus });
+      setPendingStatusChange(null);
       await cohortsQuery.refetch();
-    } catch {
-      setActionError('Cohort status could not be updated. Confirm cohort writes are enabled and try again.');
+    } catch (error) {
+      setActionError(readableError(error, 'Cohort status could not be updated. Confirm cohort writes are enabled and try again.'));
     }
   }
 
@@ -639,7 +655,7 @@ export function AdminCohortsPage() {
                 <button
                   className={cohort.status === 'inactive' ? 'segmented-button' : 'segmented-button segmented-button--danger'}
                   disabled={updateCohortStatus.isPending}
-                  onClick={() => void handleStatusChange(cohort, cohort.status === 'inactive' ? 'active' : 'inactive')}
+                  onClick={() => setPendingStatusChange({ cohort, nextStatus: cohort.status === 'inactive' ? 'active' : 'inactive' })}
                   type="button"
                 >
                   {cohort.status === 'inactive' ? 'Reactivate' : 'Deactivate'}
@@ -674,6 +690,31 @@ export function AdminCohortsPage() {
 
       {showAddModal ? <CohortModal cohort={null} onClose={() => setShowAddModal(false)} onSaved={() => void cohortsQuery.refetch()} programOptions={cohortProgramOptions} /> : null}
       {editingCohort ? <CohortModal cohort={editingCohort} onClose={() => setEditingCohort(null)} onSaved={() => void cohortsQuery.refetch()} programOptions={cohortProgramOptions} /> : null}
+      {pendingStatusChange ? (
+        <div className="student-modal-backdrop" role="presentation">
+          <section aria-labelledby="cohort-status-title" aria-modal="true" className="student-modal" role="dialog">
+            <header className="student-modal__header">
+              <h2 id="cohort-status-title">{pendingStatusChange.nextStatus === 'inactive' ? 'Deactivate Cohort' : 'Reactivate Cohort'}</h2>
+              <button aria-label="Close status confirmation" className="student-modal__icon-button" onClick={() => setPendingStatusChange(null)} type="button">
+                <X size={24} />
+              </button>
+            </header>
+            <div className="student-modal__body">
+              <p>
+                Confirm status change for <strong>{pendingStatusChange.cohort.name}</strong>.
+              </p>
+            </div>
+            <footer className="student-modal__footer">
+              <button className="segmented-button" onClick={() => setPendingStatusChange(null)} type="button">
+                Cancel
+              </button>
+              <button className="segmented-button segmented-button--active" disabled={updateCohortStatus.isPending} onClick={() => void confirmStatusChange()} type="button">
+                {updateCohortStatus.isPending ? 'Saving...' : 'Confirm'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

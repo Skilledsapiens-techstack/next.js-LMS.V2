@@ -191,6 +191,9 @@ type EnrollStudentForm = {
   studentId: string;
   waGroup: string;
 };
+type PendingStudentStatusChange = {
+  student: AdminStudent;
+};
 
 const emptyEnrollStudentForm: EnrollStudentForm = {
   active: 'yes',
@@ -235,6 +238,14 @@ function studentToForm(student: AdminStudent | undefined): EnrollStudentForm {
   };
 }
 
+function readableError(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSubmit, programOptions, student }: EnrollStudentModalProps) {
   const [form, setForm] = useState<EnrollStudentForm>(() => studentToForm(student));
   const [isCohortPickerOpen, setIsCohortPickerOpen] = useState(false);
@@ -271,23 +282,44 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
     event.preventDefault();
     setError(null);
 
+    const email = form.email.trim();
+    const altEmail = form.altEmail.trim();
+    const fullName = form.fullName.trim();
+
+    if (!fullName) {
+      setError('Student full name is required.');
+      return;
+    }
+    if (!email) {
+      setError('Student email is required.');
+      return;
+    }
+    if (!isValidEmail(email)) {
+      setError('Student email is invalid.');
+      return;
+    }
+    if (altEmail && !isValidEmail(altEmail)) {
+      setError('Alternative email is invalid.');
+      return;
+    }
+
     const selectedProgramRecords = programOptions.filter((program) => form.programNames.includes(program.name));
     const payload: AdminStudentWritePayload = {
       active: form.active === 'yes',
-      altEmail: form.altEmail || undefined,
+      altEmail: altEmail || undefined,
       cohortIds: selectedCohorts.map((cohort) => cohort.id),
       cohortNames: form.cohortNames,
-      collegeName: form.collegeName || undefined,
-      email: form.email,
-      fullName: form.fullName,
+      collegeName: form.collegeName.trim() || undefined,
+      email,
+      fullName,
       onboardingMailStatus: form.onboardingMailStatus,
-      phone: form.phone || undefined,
+      phone: form.phone.trim() || undefined,
       programKeys: selectedProgramRecords.map((program) => program.programKey),
       programNames: form.programNames,
       sendInvite: form.sendInvite,
-      slot: form.slot || undefined,
-      studentId: form.studentId || undefined,
-      waGroup: form.waGroup || undefined
+      slot: form.slot.trim() || undefined,
+      studentId: form.studentId.trim() || undefined,
+      waGroup: form.waGroup.trim() || undefined
     };
 
     try {
@@ -474,7 +506,7 @@ function LpAttemptsModal({ onClose, student }: { onClose: () => void; student: A
             <DetailField label="Student" value={`${student.fullName} (${student.email})`} />
             <label>
               <span>Max Attempts</span>
-              <input min={0} max={1000} value={maxAttempts} onChange={(event) => setMaxAttempts(Number(event.target.value))} type="number" />
+              <input min={1} max={1000} value={maxAttempts} onChange={(event) => setMaxAttempts(Number(event.target.value))} type="number" />
             </label>
             <label className="enroll-student-form__wide">
               <span>Notes</span>
@@ -511,6 +543,7 @@ export function AdminStudentsPage() {
   const [isEnrollModalOpen, setIsEnrollModalOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState<AdminStudent | null>(null);
   const [attemptStudent, setAttemptStudent] = useState<AdminStudent | null>(null);
+  const [pendingStatusChange, setPendingStatusChange] = useState<PendingStudentStatusChange | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   const studentsQuery = useAdminStudents({ page, search, status, cohortName });
@@ -578,9 +611,16 @@ export function AdminStudentsPage() {
     setActionMessage('Student updated.');
   }
 
-  async function handleToggleStudent(student: AdminStudent) {
-    await updateStudentStatus.mutateAsync({ active: !student.active, studentId: student.id });
-    setActionMessage(student.active ? 'Student deactivated.' : 'Student reactivated.');
+  async function confirmToggleStudent() {
+    if (!pendingStatusChange) return;
+    const { student } = pendingStatusChange;
+    try {
+      await updateStudentStatus.mutateAsync({ active: !student.active, studentId: student.id });
+      setPendingStatusChange(null);
+      setActionMessage(student.active ? 'Student deactivated.' : 'Student reactivated.');
+    } catch (error) {
+      setActionMessage(readableError(error, 'Student status could not be updated.'));
+    }
   }
 
   function handleExportCsv() {
@@ -834,7 +874,7 @@ export function AdminStudentsPage() {
                         <button className="segmented-button" onClick={() => setAttemptStudent(student)} type="button">
                           LP Attempts
                         </button>
-                        <button className="segmented-button" disabled={updateStudentStatus.isPending} onClick={() => void handleToggleStudent(student)} type="button">
+                        <button className="segmented-button" disabled={updateStudentStatus.isPending} onClick={() => setPendingStatusChange({ student })} type="button">
                           {student.active ? 'Deactivate' : 'Reactivate'}
                         </button>
                       </div>
@@ -892,6 +932,31 @@ export function AdminStudentsPage() {
         />
       ) : null}
       {attemptStudent ? <LpAttemptsModal student={attemptStudent} onClose={() => setAttemptStudent(null)} /> : null}
+      {pendingStatusChange ? (
+        <div className="student-modal-backdrop" role="presentation">
+          <section aria-labelledby="student-status-title" aria-modal="true" className="student-modal" role="dialog">
+            <header className="student-modal__header">
+              <h2 id="student-status-title">{pendingStatusChange.student.active ? 'Deactivate Student' : 'Reactivate Student'}</h2>
+              <button aria-label="Close status confirmation" className="student-modal__icon-button" onClick={() => setPendingStatusChange(null)} type="button">
+                <X size={26} />
+              </button>
+            </header>
+            <div className="student-modal__body">
+              <p>
+                Confirm status change for <strong>{pendingStatusChange.student.fullName}</strong>.
+              </p>
+            </div>
+            <footer className="student-modal__footer">
+              <button className="segmented-button" onClick={() => setPendingStatusChange(null)} type="button">
+                Cancel
+              </button>
+              <button className="segmented-button segmented-button--active" disabled={updateStudentStatus.isPending} onClick={() => void confirmToggleStudent()} type="button">
+                {updateStudentStatus.isPending ? 'Saving...' : 'Confirm'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }
