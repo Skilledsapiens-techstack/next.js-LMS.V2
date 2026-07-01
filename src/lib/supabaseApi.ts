@@ -22,6 +22,8 @@ export class ApiClientError extends Error {
 
 type SupabaseQuery = {
   eq: (column: string, value: unknown) => SupabaseQuery;
+  gte: (column: string, value: unknown) => SupabaseQuery;
+  lt: (column: string, value: unknown) => SupabaseQuery;
   or: (filters: string) => SupabaseQuery;
   order: (column: string, options?: { ascending?: boolean }) => SupabaseQuery;
 };
@@ -41,6 +43,7 @@ const RPC_LIST_ENDPOINTS: Record<string, { functionName: string; section?: strin
 
 type TableEndpoint = {
   filterColumns?: Record<string, string>;
+  filterValues?: Record<string, (value: string | number | boolean) => string | number | boolean | undefined>;
   searchColumns: string[];
   sortColumns?: Record<string, { ascending: boolean; column: string }>;
   studentOwned?: boolean;
@@ -70,13 +73,22 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/paid-access': { table: 'paid_access', searchColumns: ['student_email', 'item_id', 'item_type'] },
   '/admins/payment-orders': { table: 'payment_orders', searchColumns: ['student_email', 'item_id', 'item_type', 'razorpay_order_id'] },
   '/admins/programs': { table: 'programs', searchColumns: ['program_key', 'program_name', 'name'] },
-  '/admins/project-roles': { table: 'role_master', searchColumns: ['name', 'program_key', 'category'] },
-  '/admins/project-submissions': { table: 'project_submission_requests', searchColumns: ['student_email', 'student_name', 'project_title', 'request_number'] },
+  '/admins/project-roles': { table: 'role_master', filterColumns: { category: 'role_category' }, searchColumns: ['role_name', 'program_key', 'role_category'] },
+  '/admins/project-submissions': {
+    table: 'project_submission_requests',
+    filterValues: { status: (value) => (value === 'pending' ? 'submitted' : value === 'duplicates' ? undefined : value) },
+    searchColumns: ['student_email', 'student_name', 'project_title', 'request_number']
+  },
   '/admins/projects': { table: 'projects', searchColumns: ['title', 'company_name', 'program_key'] },
   '/admins/recording-candidates': { table: 'workshop_recording_candidates', searchColumns: ['workshop_id', 'zoom_id', 'zoom_account'] },
-  '/admins/resources': { table: 'resources', searchColumns: ['title', 'resource_type', 'program_key'] },
-  '/admins/students': { table: 'students', searchColumns: ['full_name', 'email', 'student_id', 'cohort_name', 'program_name'] },
-  '/admins/support-tickets': { table: 'support_tickets', searchColumns: ['subject', 'student_email', 'category_name'] },
+  '/admins/resources': { table: 'resources', searchColumns: ['title', 'resource_type', 'domain_key'] },
+  '/admins/students': {
+    table: 'students',
+    filterColumns: { status: 'active' },
+    filterValues: { status: (value) => (value === 'active' ? true : value === 'inactive' ? false : undefined) },
+    searchColumns: ['full_name', 'email', 'student_id', 'cohort_name', 'program_name']
+  },
+  '/admins/support-tickets': { table: 'support_tickets', filterColumns: { category: 'category_name' }, searchColumns: ['subject', 'student_email', 'category_name'] },
   '/admins/workshops': { table: 'workshops', filterColumns: { status: 'workshop_status' }, searchColumns: ['title', 'program_key', 'workshop_id', 'zoom_id'] },
   '/students/me/certificates': { table: 'certificates', searchColumns: ['program_name', 'project_title'], studentOwned: true },
   '/students/me/paid-access': { table: 'paid_access', searchColumns: ['item_id', 'item_type'], studentOwned: true },
@@ -324,8 +336,21 @@ async function callRpc(context: Awaited<ReturnType<typeof createContext>>, funct
 function applyCommonFilters<TQuery extends SupabaseQuery>(request: TQuery, query: ApiClientOptions['query'], endpoint: TableEndpoint): TQuery {
   const ignored = new Set(['limit', 'page', 'search', 'sort']);
   Object.entries(query ?? {}).forEach(([key, value]) => {
-    if (ignored.has(key) || value === undefined || value === '' || value === 'all') return;
-    request = request.eq(endpoint.filterColumns?.[key] ?? toSnakeCase(key), value) as TQuery;
+    if (ignored.has(key) || value === undefined || value === '' || value === 'all' || value === 'any') return;
+    if (key === 'submittedDate') {
+      const start = String(value).slice(0, 10);
+      if (!start) return;
+      const end = new Date(`${start}T00:00:00.000Z`);
+      end.setUTCDate(end.getUTCDate() + 1);
+      request = request.gte('submitted_at', start).lt('submitted_at', end.toISOString().slice(0, 10)) as TQuery;
+      return;
+    }
+
+    const normalizeValue = endpoint.filterValues?.[key];
+    const normalizedValue = normalizeValue ? normalizeValue(value) : value;
+    if (normalizedValue === undefined) return;
+
+    request = request.eq(endpoint.filterColumns?.[key] ?? toSnakeCase(key), normalizedValue) as TQuery;
   });
 
   const search = String(query?.search ?? '').trim();
@@ -396,6 +421,8 @@ function enrichRow(row: unknown) {
   return {
     active_now: computeActiveNow(row),
     id: row.id ?? row.request_id ?? row.ticket_id ?? row.student_id ?? row.workshop_id,
+    category: row.category ?? row.role_category,
+    name: row.name ?? row.role_name,
     self_paced_resources: row.self_paced_resources ?? row.sp_resources,
     self_paced_sessions: row.self_paced_sessions ?? row.sp_sessions,
     status: row.status ?? row.workshop_status,
