@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthProvider';
-import { apiGet, apiPatch } from '../../lib/supabaseApi';
+import { apiGet, apiInvokeFunction, apiPatch } from '../../lib/supabaseApi';
 import { PaginatedResponse } from '../student/useStudentAnnouncements';
 
 export type AdminWorkshopAccessType = 'free' | 'paid';
@@ -38,6 +38,28 @@ export type AdminWorkshopsQuery = {
   status?: AdminWorkshopStatus | 'all';
 };
 
+export type AdminWorkshopWritePayload = {
+  cohortNames?: string[];
+  date: string;
+  durationMinutes?: number;
+  time?: string;
+  title: string;
+  workshopStatus?: AdminWorkshopStatus;
+  zoomAccount?: string;
+};
+
+export type AdminWorkshopRecordingPayload = {
+  youtubeVideoUrl?: string | null;
+  zoomRecordingUrl?: string | null;
+};
+
+export type ZoomMeetingFunctionResponse = {
+  candidateId?: string;
+  candidates?: unknown[];
+  count?: number;
+  workshop?: AdminWorkshop;
+};
+
 export function useAdminWorkshops(query: AdminWorkshopsQuery) {
   const { accessToken } = useAuth();
   const accessType = query.accessType ?? 'all';
@@ -64,11 +86,69 @@ export function useAdminWorkshops(query: AdminWorkshopsQuery) {
   });
 }
 
-export type AdminWorkshopStatusTransitionResult = {
-  status: 'not_found' | 'disabled' | 'skipped' | 'updated' | 'failed';
-  message: string;
-  workshopId?: string;
-};
+export function useSaveAdminWorkshop() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: AdminWorkshopWritePayload) =>
+      apiInvokeFunction<ZoomMeetingFunctionResponse, { action: string; body: AdminWorkshopWritePayload }>('zoom-meetings', {
+        accessToken: accessToken ?? undefined,
+        body: { action: 'create-meeting', body }
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-workshops'] });
+    }
+  });
+}
+
+export function useUpdateAdminWorkshop() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ body, workshopId }: { body: AdminWorkshopWritePayload; workshopId: string }) =>
+      apiInvokeFunction<ZoomMeetingFunctionResponse, { action: string; body: AdminWorkshopWritePayload; workshopId: string }>('zoom-meetings', {
+        accessToken: accessToken ?? undefined,
+        body: { action: 'update-meeting', body, workshopId }
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-workshops'] });
+    }
+  });
+}
+
+export function useRescheduleAdminWorkshop() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ body, workshopId }: { body: AdminWorkshopWritePayload; workshopId: string }) =>
+      apiInvokeFunction<ZoomMeetingFunctionResponse, { action: string; body: AdminWorkshopWritePayload; workshopId: string }>('zoom-meetings', {
+        accessToken: accessToken ?? undefined,
+        body: { action: 'reschedule-meeting', body, workshopId }
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-workshops'] });
+    }
+  });
+}
+
+export function useUpdateAdminWorkshopRecording() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ body, workshopId }: { body: AdminWorkshopRecordingPayload; workshopId: string }) =>
+      apiPatch<AdminWorkshop, AdminWorkshopRecordingPayload>(`/admins/workshops/${workshopId}/recording`, {
+        accessToken: accessToken ?? undefined,
+        body
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-workshops'] });
+    }
+  });
+}
 
 export function useMarkAdminWorkshopCompleted() {
   const { accessToken } = useAuth();
@@ -76,11 +156,61 @@ export function useMarkAdminWorkshopCompleted() {
 
   return useMutation({
     mutationFn: (workshopId: string) =>
-      apiPatch<AdminWorkshopStatusTransitionResult>(`/admins/workshops/${workshopId}/complete`, {
-        accessToken: accessToken ?? undefined
+      apiInvokeFunction<ZoomMeetingFunctionResponse, { action: string; workshopId: string }>('zoom-meetings', {
+        accessToken: accessToken ?? undefined,
+        body: { action: 'complete-meeting', workshopId }
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-workshops'] });
+    }
+  });
+}
+
+export function useCancelAdminWorkshop() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (workshopId: string) =>
+      apiInvokeFunction<ZoomMeetingFunctionResponse, { action: string; workshopId: string }>('zoom-meetings', {
+        accessToken: accessToken ?? undefined,
+        body: { action: 'cancel-meeting', workshopId }
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-workshops'] });
+    }
+  });
+}
+
+export function useFetchAdminWorkshopRecordings() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (workshopId: string) =>
+      apiInvokeFunction<ZoomMeetingFunctionResponse, { action: string; workshopId: string }>('zoom-meetings', {
+        accessToken: accessToken ?? undefined,
+        body: { action: 'fetch-recordings', workshopId }
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-recording-candidates'] });
+    }
+  });
+}
+
+export function usePublishAdminWorkshopRecording() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (candidateId: string) =>
+      apiInvokeFunction<ZoomMeetingFunctionResponse, { action: string; candidateId: string }>('zoom-meetings', {
+        accessToken: accessToken ?? undefined,
+        body: { action: 'publish-recording', candidateId }
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-workshops'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-recording-candidates'] });
     }
   });
 }

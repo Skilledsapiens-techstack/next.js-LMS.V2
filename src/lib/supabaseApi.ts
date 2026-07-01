@@ -50,6 +50,69 @@ type TableEndpoint = {
   table: string;
 };
 
+type WriteEndpoint = {
+  columns: Set<string>;
+  normalizeBody?: (body: Record<string, unknown>) => Record<string, unknown>;
+  table: string;
+  validateBody?: (body: Record<string, unknown>, inserting: boolean) => void;
+};
+
+const STUDENT_WRITE_COLUMNS = new Set([
+  'active',
+  'alt_email',
+  'cohort_id',
+  'cohort_name',
+  'college_name',
+  'email',
+  'full_name',
+  'onboarding_mail_status',
+  'phone',
+  'program_name',
+  'slot',
+  'student_id',
+  'track_role_ids',
+  'wa_group_name'
+]);
+
+const COHORT_WRITE_COLUMNS = new Set([
+  'cohort_id',
+  'domain_key',
+  'end_date',
+  'google_group',
+  'name',
+  'program_key',
+  'self_paced',
+  'sp_resources',
+  'sp_sessions',
+  'start_date',
+  'status',
+  'student_count',
+  'wa_group_name',
+  'wa_link'
+]);
+
+const WORKSHOP_WRITE_COLUMNS = new Set([
+  'access_type',
+  'cohort_names',
+  'currency',
+  'date',
+  'domain_key',
+  'duration_minutes',
+  'join_url',
+  'payment_link',
+  'price',
+  'program_key',
+  'time',
+  'title',
+  'workshop_id',
+  'workshop_status',
+  'youtube_video_url',
+  'zoom_account',
+  'zoom_id',
+  'zoom_label',
+  'zoom_recording_url'
+]);
+
 const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/announcements': { table: 'announcements', searchColumns: ['title', 'message', 'audience'] },
   '/admins/certificate-requests': { table: 'certificate_requests', searchColumns: ['student_email', 'student_name', 'program_name'] },
@@ -97,6 +160,27 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/students/me/support-tickets': { table: 'support_tickets', searchColumns: ['subject', 'category_name'], studentOwned: true }
 };
 
+const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
+  cohorts: {
+    columns: COHORT_WRITE_COLUMNS,
+    normalizeBody: normalizeCohortWriteBody,
+    table: 'cohorts',
+    validateBody: validateCohortWriteBody
+  },
+  students: {
+    columns: STUDENT_WRITE_COLUMNS,
+    normalizeBody: normalizeStudentWriteBody,
+    table: 'students',
+    validateBody: validateStudentWriteBody
+  },
+  workshops: {
+    columns: WORKSHOP_WRITE_COLUMNS,
+    normalizeBody: normalizeWorkshopWriteBody,
+    table: 'workshops',
+    validateBody: validateWorkshopWriteBody
+  }
+};
+
 export async function apiGet<TResponse>(path: string, options: ApiClientOptions = {}): Promise<TResponse> {
   const context = await createContext(options.accessToken);
   const cleanPath = stripQuery(path);
@@ -105,6 +189,9 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/admins/me') return getAdminProfile(context) as Promise<TResponse>;
   if (cleanPath === '/students/me/dashboard') return getStudentDashboard(context) as Promise<TResponse>;
   if (cleanPath === '/admins/dashboard') return getAdminDashboard(context) as Promise<TResponse>;
+
+  const studentAttempts = cleanPath.match(/^\/admins\/students\/([^/]+)\/lp-attempts$/);
+  if (studentAttempts) return getStudentAttemptLimit(context, decodeURIComponent(studentAttempts[1])) as Promise<TResponse>;
 
   const studentTicketMatch = cleanPath.match(/^\/students\/me\/support-tickets\/(.+)$/);
   if (studentTicketMatch) return getSupportTicketDetail(context, decodeURIComponent(studentTicketMatch[1]), false) as Promise<TResponse>;
@@ -132,39 +219,68 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
 
 export async function apiPatch<TResponse, TBody = unknown>(path: string, options: ApiMutationOptions<TBody> = {}): Promise<TResponse> {
   if (!webEnv.writeActionsEnabled) {
-    return { message: 'Write actions are disabled in this environment.', status: 'disabled' } as TResponse;
+    throw new ApiClientError('Write actions are disabled in this environment.', 403);
   }
 
   const context = await createContext(options.accessToken);
   const cleanPath = stripQuery(path);
 
   const studentStatus = cleanPath.match(/^\/admins\/students\/([^/]+)\/status$/);
-  if (studentStatus) return updateById(context, 'students', studentStatus[1], options.body) as Promise<TResponse>;
+  if (studentStatus) return updateById(context, 'students', studentStatus[1], options.body, 'status_changed') as Promise<TResponse>;
+
+  const studentAttempts = cleanPath.match(/^\/admins\/students\/([^/]+)\/lp-attempts$/);
+  if (studentAttempts) return updateStudentAttemptLimit(context, decodeURIComponent(studentAttempts[1]), options.body) as Promise<TResponse>;
 
   const studentUpdate = cleanPath.match(/^\/admins\/students\/([^/]+)$/);
-  if (studentUpdate) return updateById(context, 'students', studentUpdate[1], options.body) as Promise<TResponse>;
+  if (studentUpdate) return updateById(context, 'students', studentUpdate[1], options.body, 'updated') as Promise<TResponse>;
 
   const cohortStatus = cleanPath.match(/^\/admins\/cohorts\/([^/]+)\/status$/);
-  if (cohortStatus) return updateById(context, 'cohorts', cohortStatus[1], options.body) as Promise<TResponse>;
+  if (cohortStatus) return updateById(context, 'cohorts', cohortStatus[1], options.body, 'status_changed') as Promise<TResponse>;
 
   const cohortUpdate = cleanPath.match(/^\/admins\/cohorts\/([^/]+)$/);
-  if (cohortUpdate) return updateById(context, 'cohorts', cohortUpdate[1], options.body) as Promise<TResponse>;
+  if (cohortUpdate) return updateById(context, 'cohorts', cohortUpdate[1], options.body, 'updated') as Promise<TResponse>;
+
+  const workshopComplete = cleanPath.match(/^\/admins\/workshops\/([^/]+)\/complete$/);
+  if (workshopComplete) return updateById(context, 'workshops', decodeURIComponent(workshopComplete[1]), { workshopStatus: 'Completed' }, 'status_changed') as Promise<TResponse>;
+
+  const workshopRecording = cleanPath.match(/^\/admins\/workshops\/([^/]+)\/recording$/);
+  if (workshopRecording) return updateById(context, 'workshops', decodeURIComponent(workshopRecording[1]), options.body, 'recording_updated') as Promise<TResponse>;
+
+  const workshopUpdate = cleanPath.match(/^\/admins\/workshops\/([^/]+)$/);
+  if (workshopUpdate) return updateById(context, 'workshops', decodeURIComponent(workshopUpdate[1]), options.body, 'updated') as Promise<TResponse>;
 
   throw new ApiClientError(`Unsupported Supabase write route: ${cleanPath}`, 404);
 }
 
 export async function apiPost<TResponse, TBody = unknown>(path: string, options: ApiMutationOptions<TBody> = {}): Promise<TResponse> {
   if (!webEnv.writeActionsEnabled) {
-    return { message: 'Write actions are disabled in this environment.', status: 'disabled' } as TResponse;
+    throw new ApiClientError('Write actions are disabled in this environment.', 403);
   }
 
   const context = await createContext(options.accessToken);
   const cleanPath = stripQuery(path);
 
-  if (cleanPath === '/admins/students') return insertRow(context, 'students', options.body) as Promise<TResponse>;
-  if (cleanPath === '/admins/cohorts') return insertRow(context, 'cohorts', options.body) as Promise<TResponse>;
+  if (cleanPath === '/admins/students/import') return importStudents(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/admins/students') return insertRow(context, 'students', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/cohorts') return insertRow(context, 'cohorts', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/workshops') return insertRow(context, 'workshops', options.body, 'created') as Promise<TResponse>;
 
   throw new ApiClientError(`Unsupported Supabase write route: ${cleanPath}`, 404);
+}
+
+export async function apiInvokeFunction<TResponse, TBody = unknown>(functionName: string, options: ApiMutationOptions<TBody> = {}): Promise<TResponse> {
+  if (!webEnv.writeActionsEnabled) {
+    throw new ApiClientError('Write actions are disabled in this environment.', 403);
+  }
+
+  const context = await createContext(options.accessToken);
+  const { data, error } = await context.supabase.functions.invoke(functionName, {
+    body: options.body as Record<string, unknown> | undefined
+  });
+
+  if (error) throw new ApiClientError(error.message, 503);
+  if (isRecord(data) && typeof data.error === 'string') throw new ApiClientError(data.error, 400);
+  return data as TResponse;
 }
 
 async function createContext(accessToken?: string) {
@@ -249,7 +365,11 @@ async function getStudentBundleList(context: Awaited<ReturnType<typeof createCon
 
 async function getRpcList(context: Awaited<ReturnType<typeof createContext>>, endpoint: { functionName: string; section?: string[] }, query: ApiClientOptions['query']) {
   const data = await callRpc(context, endpoint.functionName, { p_student_email: context.email });
-  return paginate(extractItems(data, endpoint.section ?? ['items']), query);
+  const items = extractItems(data, endpoint.section ?? ['items']);
+  if (endpoint.functionName === 'student_schedule_view') {
+    return paginate(items.filter(isVisibleStudentScheduleItem), query);
+  }
+  return paginate(items, query);
 }
 
 async function getTableList(context: Awaited<ReturnType<typeof createContext>>, endpoint: TableEndpoint, query: ApiClientOptions['query']) {
@@ -313,18 +433,154 @@ async function getEnrollmentDetail(context: Awaited<ReturnType<typeof createCont
   };
 }
 
-async function updateById(context: Awaited<ReturnType<typeof createContext>>, table: string, id: string, body: unknown) {
-  const payload = snakifyMutationBody(body);
-  const { data, error } = await context.supabase.from(table).update(payload).eq('id', id).select('*').single();
+async function getStudentAttemptLimit(context: Awaited<ReturnType<typeof createContext>>, studentId: string) {
+  const student = await getStudentById(context, studentId);
+  const { data, error } = await context.supabase.from('project_submission_student_limits').select('*').eq('student_id', student.id).maybeSingle();
   if (error) throw new ApiClientError(error.message, 503);
-  return camelize(data);
+
+  return {
+    maxAttempts: Number(data?.max_attempts ?? 3),
+    notes: data?.notes ?? undefined,
+    studentEmail: student.email,
+    studentId: student.id,
+    updatedAt: data?.updated_at ?? undefined
+  };
 }
 
-async function insertRow(context: Awaited<ReturnType<typeof createContext>>, table: string, body: unknown) {
+async function updateStudentAttemptLimit(context: Awaited<ReturnType<typeof createContext>>, studentId: string, body: unknown) {
   const payload = snakifyMutationBody(body);
-  const { data, error } = await context.supabase.from(table).insert(payload).select('*').single();
-  if (error) throw new ApiClientError(error.message, 503);
-  return camelize(data);
+  const maxAttempts = Number(payload.max_attempts);
+  const notes = typeof payload.notes === 'string' ? payload.notes.trim() : undefined;
+
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 1000) {
+    throw new ApiClientError('LP max attempts must be a whole number between 1 and 1000.', 400);
+  }
+
+  const student = await getStudentById(context, studentId);
+  const row = {
+    max_attempts: maxAttempts,
+    notes: notes || null,
+    student_email: student.email,
+    student_id: student.id,
+    updated_at: new Date().toISOString(),
+    updated_by: context.email
+  };
+
+  const { data, error } = await context.supabase.from('project_submission_student_limits').upsert(row, { onConflict: 'student_id' }).select('*').single();
+  if (error) throw mutationError(error, 'project_submission_student_limits');
+
+  await writeAuditLog(context, 'students', 'lp_attempts_updated', student, {
+    max_attempts: data.max_attempts,
+    notes: data.notes,
+    updated_by: context.email
+  });
+
+  return {
+    maxAttempts: Number(data.max_attempts),
+    notes: data.notes ?? undefined,
+    studentEmail: data.student_email,
+    studentId: data.student_id,
+    updatedAt: data.updated_at
+  };
+}
+
+async function updateById(context: Awaited<ReturnType<typeof createContext>>, table: string, id: string, body: unknown, auditAction?: string) {
+  const endpoint = getWriteEndpoint(table);
+  const metadata = getWriteMetadata(endpoint.table, body);
+  const payload = prepareWritePayload(endpoint, body, false);
+  const { data, error } = await context.supabase.from(endpoint.table).update(payload).eq('id', id).select('*').single();
+  if (error) throw mutationError(error, endpoint.table);
+  if (auditAction) await writeAuditLog(context, endpoint.table, auditAction, data, payload);
+  if (metadata.sendInvite && endpoint.table === 'students') await queueStudentInvite(context, data);
+  return camelize(enrichRow(data));
+}
+
+async function insertRow(context: Awaited<ReturnType<typeof createContext>>, table: string, body: unknown, auditAction?: string) {
+  const endpoint = getWriteEndpoint(table);
+  const metadata = getWriteMetadata(endpoint.table, body);
+  const payload = prepareWritePayload(endpoint, body, true);
+  const { data, error } = await context.supabase.from(endpoint.table).insert(payload).select('*').single();
+  if (error) throw mutationError(error, endpoint.table);
+  if (auditAction) await writeAuditLog(context, endpoint.table, auditAction, data, payload);
+  if (metadata.sendInvite && endpoint.table === 'students') await queueStudentInvite(context, data);
+  return camelize(enrichRow(data));
+}
+
+async function importStudents(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  if (!isRecord(body) || !Array.isArray(body.students)) {
+    throw new ApiClientError('Student import payload must include a students list.', 400);
+  }
+
+  if (body.students.length > 500) {
+    throw new ApiClientError('Student import is limited to 500 rows at a time.', 400);
+  }
+
+  const endpoint = getWriteEndpoint('students');
+  const result = { created: 0, failed: 0, updated: 0 };
+
+  for (const studentBody of body.students) {
+    try {
+      const metadata = getWriteMetadata('students', studentBody);
+      const payload = prepareWritePayload(endpoint, studentBody, true);
+      const email = normalizeEmail(payload.email);
+      const existing = await context.supabase.from('students').select('*').ilike('email', email).limit(1).maybeSingle();
+      if (existing.error) throw existing.error;
+
+      if (existing.data) {
+        const updatePayload = { ...payload, email, updated_at: new Date().toISOString() };
+        const { data, error } = await context.supabase.from('students').update(updatePayload).eq('id', existing.data.id).select('*').single();
+        if (error) throw error;
+        await writeAuditLog(context, 'students', 'updated', data, updatePayload);
+        if (metadata.sendInvite) await queueStudentInvite(context, data);
+        result.updated += 1;
+      } else {
+        const insertPayload = { ...payload, email };
+        const { data, error } = await context.supabase.from('students').insert(insertPayload).select('*').single();
+        if (error) throw error;
+        await writeAuditLog(context, 'students', 'created', data, insertPayload);
+        if (metadata.sendInvite) await queueStudentInvite(context, data);
+        result.created += 1;
+      }
+    } catch {
+      result.failed += 1;
+    }
+  }
+
+  return result;
+}
+
+async function getStudentById(context: Awaited<ReturnType<typeof createContext>>, studentId: string) {
+  const { data, error } = await context.supabase.from('students').select('id,email,full_name,student_id,cohort_name,program_name,active').eq('id', studentId).single();
+  if (error) throw new ApiClientError(error.message, error.code === 'PGRST116' ? 404 : 503);
+  return data;
+}
+
+async function queueStudentInvite(context: Awaited<ReturnType<typeof createContext>>, student: Record<string, unknown>) {
+  const email = normalizeEmail(student.email);
+  if (!email) throw new ApiClientError('Student was saved, but invite queueing failed because the email is missing.', 400);
+
+  const queueRow = {
+    category: 'auth',
+    created_by: context.email,
+    params: {
+      cohort: student.cohort_name ?? null,
+      program: student.program_name ?? null,
+      student_id: student.student_id ?? student.id,
+      student_name: student.full_name ?? email
+    },
+    recipient_email: email,
+    recipient_name: student.full_name ?? null,
+    related_entity_id: String(student.id ?? ''),
+    related_entity_type: 'student',
+    status: 'queued',
+    subject: 'Create your Skilled Sapiens LMS password',
+    tags: ['lms', 'lms-auth', 'portal-invite'],
+    template_key: 'portal_invite'
+  };
+
+  const { data, error } = await context.supabase.from('email_queue').insert(queueRow).select('*').single();
+  if (error) throw new ApiClientError(`Student was saved, but invite queueing failed: ${error.message}`, 503);
+  await writeAuditLog(context, 'students', 'invite_queued', student, { email_queue_id: data.id, template_key: 'portal_invite' });
 }
 
 async function callRpc(context: Awaited<ReturnType<typeof createContext>>, functionName: string, params?: Record<string, string>) {
@@ -402,6 +658,13 @@ function matchesClientFilters(item: unknown, query: ApiClientOptions['query']) {
 
     return String(actual ?? '') === expected;
   });
+}
+
+function isVisibleStudentScheduleItem(item: unknown) {
+  if (!isRecord(item)) return false;
+  const status = String(item.status ?? item.workshop_status ?? '');
+  const joinUrl = item.join_url ?? item.joinUrl;
+  return ['Scheduled', 'Live'].includes(status) && typeof joinUrl === 'string' && joinUrl.trim().length > 0;
 }
 
 function createPaginatedResponse(items: unknown[], total: number, page: number, limit: number) {
@@ -513,6 +776,240 @@ function snakifyMutationBody(value: unknown): Record<string, unknown> {
   }
 
   return snakify(value) as Record<string, unknown>;
+}
+
+function getWriteEndpoint(table: string) {
+  const endpoint = WRITE_ENDPOINTS[table];
+  if (!endpoint) throw new ApiClientError(`Unsupported Supabase write table: ${table}`, 404);
+  return endpoint;
+}
+
+function prepareWritePayload(endpoint: WriteEndpoint, body: unknown, inserting: boolean) {
+  const rawPayload = snakifyMutationBody(body);
+  const normalizedPayload = endpoint.normalizeBody ? endpoint.normalizeBody(rawPayload) : rawPayload;
+  const payload = Object.fromEntries(
+    Object.entries(normalizedPayload).filter(([, value]) => value !== undefined)
+  );
+  const unsupportedColumns = Object.keys(payload).filter((column) => !endpoint.columns.has(column));
+
+  if (unsupportedColumns.length > 0) {
+    throw new ApiClientError(`Unsupported write fields for ${endpoint.table}: ${unsupportedColumns.join(', ')}`, 400);
+  }
+
+  endpoint.validateBody?.(payload, inserting);
+
+  if (inserting) return payload;
+  return { ...payload, updated_at: new Date().toISOString() };
+}
+
+function getWriteMetadata(table: string, body: unknown) {
+  if (table !== 'students' || !isRecord(body)) return { sendInvite: false };
+  const rawPayload = snakify(body) as Record<string, unknown>;
+  return { sendInvite: rawPayload.send_invite === true };
+}
+
+function normalizeStudentWriteBody(payload: Record<string, unknown>) {
+  const cohortIds = asStringArray(payload.cohort_ids);
+  const cohortNames = asStringArray(payload.cohort_names);
+  const programNames = asStringArray(payload.program_names);
+  const programKeys = asStringArray(payload.program_keys);
+
+  return {
+    ...payload,
+    cohort_id: cohortIds[0] || payload.cohort_id,
+    cohort_name: cohortNames[0] || payload.cohort_name,
+    email: payload.email ? normalizeEmail(payload.email) : payload.email,
+    alt_email: payload.alt_email ? normalizeEmail(payload.alt_email) : payload.alt_email,
+    onboarding_mail_status: typeof payload.onboarding_mail_status === 'string' ? payload.onboarding_mail_status.toLowerCase() : payload.onboarding_mail_status,
+    program_name: programNames.join(', ') || programKeys.join(', ') || payload.program_name,
+    track_role_ids: programKeys.length > 0 ? programKeys : payload.track_role_ids,
+    wa_group_name: payload.wa_group_name ?? payload.wa_group,
+    cohort_ids: undefined,
+    cohort_names: undefined,
+    program_keys: undefined,
+    program_names: undefined,
+    send_invite: undefined,
+    wa_group: undefined
+  };
+}
+
+function normalizeCohortWriteBody(payload: Record<string, unknown>) {
+  return {
+    ...payload,
+    sp_resources: payload.sp_resources ?? payload.self_paced_resources,
+    sp_sessions: payload.sp_sessions ?? payload.self_paced_sessions,
+    self_paced_resources: undefined,
+    self_paced_sessions: undefined
+  };
+}
+
+function normalizeWorkshopWriteBody(payload: Record<string, unknown>) {
+  const status = typeof payload.workshop_status === 'string' ? payload.workshop_status : typeof payload.status === 'string' ? payload.status : undefined;
+  const accessType = typeof payload.access_type === 'string' ? payload.access_type.toLowerCase() : payload.access_type;
+  const cohortNames = payload.cohort_names === undefined ? undefined : asStringArray(payload.cohort_names);
+  const youtubeVideoUrl = payload.youtube_video_url === '' ? null : payload.youtube_video_url;
+  const zoomRecordingUrl = payload.zoom_recording_url === '' ? null : payload.zoom_recording_url;
+
+  return {
+    ...payload,
+    access_type: accessType,
+    cohort_names: cohortNames,
+    duration_minutes: payload.duration_minutes === '' || payload.duration_minutes === undefined ? undefined : Number(payload.duration_minutes),
+    price: payload.price === '' || payload.price === undefined ? undefined : Number(payload.price),
+    workshop_status: status,
+    status: undefined,
+    youtube_video_url: youtubeVideoUrl,
+    zoom_recording_url: zoomRecordingUrl
+  };
+}
+
+function validateCohortWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  const studentCount = payload.student_count;
+  const startDate = typeof payload.start_date === 'string' ? payload.start_date : undefined;
+  const endDate = typeof payload.end_date === 'string' ? payload.end_date : undefined;
+
+  if (inserting && !name) throw new ApiClientError('Cohort name is required.', 400);
+  if (status && !['upcoming', 'active', 'completed', 'inactive'].includes(status)) {
+    throw new ApiClientError('Cohort status is invalid.', 400);
+  }
+  if (studentCount !== undefined && (!Number.isInteger(Number(studentCount)) || Number(studentCount) < 0)) {
+    throw new ApiClientError('Cohort student count must be zero or a positive whole number.', 400);
+  }
+  if (startDate && endDate && startDate > endDate) {
+    throw new ApiClientError('Cohort end date cannot be before the start date.', 400);
+  }
+}
+
+function validateWorkshopWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+  const date = typeof payload.date === 'string' ? payload.date.trim() : '';
+  const status = typeof payload.workshop_status === 'string' ? payload.workshop_status : undefined;
+  const accessType = typeof payload.access_type === 'string' ? payload.access_type : undefined;
+  const durationMinutes = payload.duration_minutes;
+  const price = payload.price;
+  const youtubeVideoUrl = typeof payload.youtube_video_url === 'string' ? payload.youtube_video_url.trim() : '';
+  const zoomRecordingUrl = typeof payload.zoom_recording_url === 'string' ? payload.zoom_recording_url.trim() : '';
+
+  if (inserting && !title) throw new ApiClientError('Workshop title is required.', 400);
+  if (inserting && !date) throw new ApiClientError('Workshop date is required.', 400);
+  if (date && Number.isNaN(new Date(`${date}T00:00:00.000Z`).getTime())) {
+    throw new ApiClientError('Workshop date is invalid.', 400);
+  }
+  if (status && !['Upcoming', 'Scheduled', 'Live', 'Completed', 'Cancelled', 'Inactive'].includes(status)) {
+    throw new ApiClientError('Workshop status is invalid.', 400);
+  }
+  if (accessType && !['free', 'paid'].includes(accessType)) {
+    throw new ApiClientError('Workshop access type is invalid.', 400);
+  }
+  if (durationMinutes !== undefined && (!Number.isInteger(Number(durationMinutes)) || Number(durationMinutes) <= 0)) {
+    throw new ApiClientError('Workshop duration must be a positive whole number.', 400);
+  }
+  if (price !== undefined && Number(price) < 0) {
+    throw new ApiClientError('Workshop price cannot be negative.', 400);
+  }
+  if (youtubeVideoUrl && !isHttpUrl(youtubeVideoUrl)) throw new ApiClientError('YouTube recording URL must start with http:// or https://.', 400);
+  if (zoomRecordingUrl && !isHttpUrl(zoomRecordingUrl)) throw new ApiClientError('Alternate recording URL must start with http:// or https://.', 400);
+}
+
+function validateStudentWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const fullName = typeof payload.full_name === 'string' ? payload.full_name.trim() : '';
+  const email = typeof payload.email === 'string' ? payload.email.trim() : '';
+  const altEmail = typeof payload.alt_email === 'string' ? payload.alt_email.trim() : '';
+  const onboardingMailStatus = typeof payload.onboarding_mail_status === 'string' ? payload.onboarding_mail_status : undefined;
+  const trackRoleIds = payload.track_role_ids;
+
+  if (inserting && !fullName) throw new ApiClientError('Student full name is required.', 400);
+  if (inserting && !email) throw new ApiClientError('Student email is required.', 400);
+  if (email && !isValidEmail(email)) throw new ApiClientError('Student email is invalid.', 400);
+  if (altEmail && !isValidEmail(altEmail)) throw new ApiClientError('Alternative email is invalid.', 400);
+  if (onboardingMailStatus && !['pending', 'sent', 'failed', 'skipped', 'dry-run'].includes(onboardingMailStatus)) {
+    throw new ApiClientError('Onboarding mail status is invalid.', 400);
+  }
+  if (trackRoleIds !== undefined && !Array.isArray(trackRoleIds)) {
+    throw new ApiClientError('Student program role IDs must be a list.', 400);
+  }
+}
+
+async function writeAuditLog(
+  context: Awaited<ReturnType<typeof createContext>>,
+  table: string,
+  action: string,
+  row: Record<string, unknown>,
+  payload: Record<string, unknown>
+) {
+  if (table !== 'cohorts' && table !== 'students' && table !== 'workshops') return;
+  const entityType = table === 'cohorts' ? 'cohort' : table === 'workshops' ? 'workshop' : 'student';
+
+  const auditRow = {
+    action: `admin_${entityType}_${action}`,
+    actor_email: context.email,
+    actor_role: 'admin',
+    details: buildAuditDetails(table, row, payload),
+    entity_id: String(row.id ?? ''),
+    entity_type: entityType,
+    status: 'success'
+  };
+
+  const { error } = await context.supabase.from('audit_logs').insert(auditRow);
+  if (error) throw new ApiClientError(`${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : 'Student'} was saved, but audit logging failed: ${error.message}`, 503);
+}
+
+function buildAuditDetails(table: string, row: Record<string, unknown>, payload: Record<string, unknown>) {
+  const base = {
+    changedFields: Object.keys(payload).sort()
+  };
+
+  if (table === 'cohorts') {
+    return {
+      ...base,
+      cohortId: row.cohort_id,
+      name: row.name,
+      status: row.status
+    };
+  }
+
+  if (table === 'workshops') {
+    return {
+      ...base,
+      date: row.date,
+      status: row.workshop_status,
+      title: row.title,
+      workshopId: row.workshop_id
+    };
+  }
+
+  return {
+    ...base,
+    active: row.active,
+    email: row.email,
+    fullName: row.full_name,
+    studentId: row.student_id
+  };
+}
+
+function mutationError(error: { code?: string; message: string }, table: string) {
+  if (error.code === '23505') {
+    if (table === 'cohorts') return new ApiClientError('A cohort with this name or cohort ID already exists.', 409);
+    if (table === 'students') return new ApiClientError('A student with this email already exists.', 409);
+    return new ApiClientError('A record with this unique value already exists.', 409);
+  }
+
+  return new ApiClientError(error.message, 503);
+}
+
+function asStringArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => String(entry).trim()).filter(Boolean);
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function isHttpUrl(value: string) {
+  return /^https?:\/\//i.test(value);
 }
 
 function toCamelCase(value: string) {

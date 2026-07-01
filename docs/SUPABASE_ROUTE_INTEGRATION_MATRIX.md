@@ -15,7 +15,7 @@ The current app is a Vite React frontend that calls Supabase directly through `s
 | Student read lists | Wired and browser-smoked | Mix of student bundle RPCs, student view RPCs, and student-owned table reads; Phase 6 smoke-tested with a real student Auth account. |
 | Detail reads | Partially wired | Support ticket detail and enrollment request detail are wired. Other detail routes are not present. |
 | Frontend writes | Intentionally gated | `VITE_WRITE_ACTIONS_ENABLED=false` keeps writes disabled locally. |
-| Write route coverage | Partial | Only admin students and cohorts create/update paths are implemented in `supabaseApi.ts`; several hook mutations remain unsupported. |
+| Write route coverage | Partial and regression-tested | Admin students/cohorts create/update/status paths plus student import, invite queue, and LP attempts are implemented and tested; non-student write hooks remain unsupported. |
 | DB migrations | Started | First migration exists under `supabase/migrations`. Existing remote schema is not fully represented in repo migrations yet. |
 | Security advisor follow-up | Pending | Existing warnings around public `SECURITY DEFINER` functions need a dedicated hardening phase. |
 
@@ -76,24 +76,31 @@ The current app is a Vite React frontend that calls Supabase directly through `s
 
 | Hook | Supabase route | Current state | Notes |
 | --- | --- | --- | --- |
-| `useSaveAdminStudent` | `POST /admins/students` | Implemented but gated | Inserts into `students`; requires write flag and write RLS/backend decision. |
-| `useUpdateAdminStudent` | `PATCH /admins/students/:id` | Implemented but gated | Updates `students` by `id`. |
-| `useUpdateAdminStudentStatus` | `PATCH /admins/students/:id/status` | Implemented but gated | Updates `students` by `id`. |
-| `useCreateAdminCohort` | `POST /admins/cohorts` | Implemented but gated | Inserts into `cohorts`. |
-| `useUpdateAdminCohort` | `PATCH /admins/cohorts/:id` | Implemented but gated | Updates `cohorts` by `id`. |
-| `useUpdateAdminCohortStatus` | `PATCH /admins/cohorts/:id/status` | Implemented but gated | Updates `cohorts` by `id`. |
-| `useImportAdminStudents` | `POST /admins/students/import` | Unsupported | Hook exists, but `supabaseApi.ts` does not implement this route. |
-| `useAdminStudentAttemptLimit` | `GET /admins/students/:id/lp-attempts` | Unsupported | Hook exists, but `supabaseApi.ts` does not implement this route. |
-| `useUpdateAdminStudentAttemptLimit` | `PATCH /admins/students/:id/lp-attempts` | Unsupported | Hook exists, but `supabaseApi.ts` does not implement this route. |
+| `useSaveAdminStudent` | `POST /admins/students` | Tested and audited | Authenticated admin/RLS-created test student `STU-CODX-E2E-20260701113320`; student audit probe verified `admin_student_created`. |
+| `useUpdateAdminStudent` | `PATCH /admins/students/:id` | Tested and audited | Authenticated admin/RLS-updated the test student fields; student audit probe verified `admin_student_updated`. |
+| `useUpdateAdminStudentStatus` | `PATCH /admins/students/:id/status` | Tested and audited | Status writes use an in-app confirmation dialog and verified `admin_student_status_changed` audit insert. |
+| `useCreateAdminCohort` | `POST /admins/cohorts` | Browser-tested and audited | Browser-created cohort `CODX-E2E-20260701113320-COHORT`; authenticated admin/RLS probe verified `admin_cohort_created` audit insert. |
+| `useUpdateAdminCohort` | `PATCH /admins/cohorts/:id` | Browser-tested and audited | Browser-updated cohort name plus self-paced session/resource fields; authenticated admin/RLS probe verified `admin_cohort_updated` audit insert. |
+| `useUpdateAdminCohortStatus` | `PATCH /admins/cohorts/:id/status` | Tested and audited | Status writes use an in-app confirmation dialog and verified `admin_cohort_status_changed` audit insert. |
+| `useImportAdminStudents` | `POST /admins/students/import` | Wired and RLS-tested | Creates or updates students by email, validates rows, and audits create/update actions. |
+| `useAdminStudentAttemptLimit` | `GET /admins/students/:id/lp-attempts` | Wired and RLS-tested | Reads `project_submission_student_limits`; missing rows return the UI default of 3 attempts. |
+| `useUpdateAdminStudentAttemptLimit` | `PATCH /admins/students/:id/lp-attempts` | Wired and RLS-tested | Upserts `project_submission_student_limits` and audits `admin_student_lp_attempts_updated`. |
+| `useSaveAdminWorkshop` | `zoom-meetings:create-meeting` | Zoom-backed and deployed | Creates a real Zoom meeting through the Edge Function and saves safe workshop fields. |
+| `useUpdateAdminWorkshop` | `zoom-meetings:update-meeting` | Zoom-backed and deployed | Updates the real Zoom meeting plus the Supabase workshop row. |
+| `useRescheduleAdminWorkshop` | `zoom-meetings:reschedule-meeting` | Zoom-backed and deployed | Updates date/time/duration in Zoom and Supabase. |
+| `useCancelAdminWorkshop` | `zoom-meetings:cancel-meeting` | Implemented; blocked by Zoom app scope | Cancels Zoom first, then archives the workshop and clears `join_url`. The current Zoom app still needs `meeting:delete` scope. |
+| `useFetchAdminWorkshopRecordings` | `zoom-meetings:fetch-recordings` | Zoom-backed and deployed | Fetches `shared_screen_with_speaker_view` MP4 files into recording candidates. |
+| `usePublishAdminWorkshopRecording` | `zoom-meetings:publish-recording` | Zoom-backed and deployed | Publishes the selected candidate `play_url` to the workshop recording URL. |
+| `useUpdateAdminWorkshopRecording` | `PATCH /admins/workshops/:id/recording` | Wired and RLS-tested | Saves manual final recording URLs as a fallback and audits `admin_workshop_recording_updated`. |
+| `useMarkAdminWorkshopCompleted` | `zoom-meetings:complete-meeting` | Deployed | Marks workshops completed through the Edge Function. |
 | `useReviewAdminProjectSubmission` | `PATCH /admins/project-submissions/:id/approve|reject` | Unsupported | Hook exists, but `supabaseApi.ts` does not implement this route. |
-| `useMarkAdminWorkshopCompleted` | `PATCH /admins/workshops/:id/complete` | Unsupported | Hook exists, but `supabaseApi.ts` does not implement this route. |
 
 ## Immediate Findings
 
 1. Admin read routes have been smoke-tested in the browser with the active admin session.
 2. Student routes were browser-smoked with a real student Auth account in Phase 6.
 3. The direct browser-to-Supabase approach depends on exact grants/RLS for every table and RPC listed here.
-4. Some hook mutations are already visible in code but will fail as unsupported once write gates are enabled.
+4. Some non-student hook mutations are already visible in code but will fail as unsupported once write gates are enabled.
 5. Existing public `SECURITY DEFINER` RPC warnings should be resolved before expanding privileged access.
 
 ## Next Phase Recommendation
@@ -172,3 +179,115 @@ Verification:
 - Browser-smoked the main student routes from `/student` through support, payments, certificates, projects, recordings, resources, cohorts, and schedule.
 - `/student/projects` no longer crashes on null/string project metadata.
 - `/student/recordings` renders workshop recording rows from the dashboard bundle.
+
+## Phase 7 Admin Students And Cohorts Write Adapter
+
+Completed Phase 7 fixes:
+
+- Added write endpoint metadata for `students` and `cohorts`.
+- Normalized admin student create/update payloads to current table columns.
+- Normalized admin cohort create/update payloads to current table columns.
+- Rejected unsupported write fields before a Supabase mutation is attempted.
+- Changed disabled write behavior to throw `403` instead of returning a fake success object.
+- Added cohort write validation and duplicate-friendly conflict errors.
+- Added cohort write audit logging for create, edit, and status changes.
+- Replaced native cohort status confirmation with an in-app dialog.
+- Added student write validation and duplicate-friendly email conflict errors.
+- Added student write audit logging for create, edit, and status changes.
+- Replaced immediate student status changes with an in-app confirmation dialog.
+
+Verification:
+
+- TypeScript passed.
+- Live schema/policy inspection confirmed `students` and `cohorts` columns plus existing active-admin write policies.
+- Browser-tested admin cohort create, edit, and deactivate with `VITE_WRITE_ACTIONS_ENABLED=true`.
+- Authenticated admin/RLS-tested cohort status restore and student create, edit, deactivate, and reactivate.
+- Authenticated admin/RLS-tested cohort audit rows for create, update, and status-change actions.
+- Authenticated admin/RLS-tested student audit rows for create, update, and status-change actions.
+
+Pending:
+
+- Project-submission review writes remain unsupported.
+
+## Phase 10 Admin Student Remaining Write Actions
+
+Completed Phase 10 fixes:
+
+- Added active-admin insert policy for student invite rows in `email_queue`.
+- Expanded student audit policy for invite queue and LP attempt-limit updates.
+- Wired CSV import to create-or-update student rows by email.
+- Wired LP attempt read/update routes to `project_submission_student_limits`.
+- Queued `portal_invite` email rows when admin student create/update requests `sendInvite`.
+- Aligned LP attempt UI validation with the database `max_attempts >= 1` constraint.
+
+Verification:
+
+- TypeScript passed.
+- ESLint passed.
+- Production build passed.
+- Linked migration `20260701131729_admin_student_remaining_write_actions` is applied.
+- Authenticated admin/RLS-tested controlled student create/update, invite queue insert, LP attempt upsert, and related audit actions.
+
+## Phase 11 Schedule Meeting Write Actions
+
+Completed Phase 11 fixes:
+
+- Added active-admin insert/update policies for `workshops`.
+- Added audit policy for workshop create, update, status-change, and recording-link update actions.
+- Wired Schedule Meeting create/edit, mark completed, and final recording-link save routes.
+- Enabled the Schedule Meeting and Attach Recording UI buttons with validation and action feedback.
+- Kept Zoom provider/API scheduling out of scope; this phase writes schedule rows only.
+
+Verification:
+
+- TypeScript passed.
+- ESLint passed.
+- Production build passed.
+- Linked migration `20260701135149_admin_workshop_write_actions` is applied.
+- Authenticated admin/RLS-tested workshop create, update, complete, recording URL update, and related audit actions.
+
+## Phase 12 Zoom-Backed Schedule Meeting
+
+Completed Phase 12 fixes:
+
+- Added source-controlled `supabase/functions/zoom-meetings/index.ts`.
+- Deployed `zoom-meetings` to the linked Supabase project.
+- Kept Zoom secrets server-side in Supabase Edge Function secrets only.
+- Wired create/update/reschedule/complete/fetch-recordings/publish-recording actions through the Edge Function.
+- Recording fetch saves multiple matching `shared_screen_with_speaker_view` MP4 files as separate candidates for admin review.
+- Student schedule visibility is additionally guarded to `Scheduled` or `Live` rows with a join URL.
+
+Verification:
+
+- TypeScript passed.
+- ESLint passed.
+- Production build passed.
+- Live admin function probe created and updated a real Zoom meeting on Account 1.
+- Live admin function probe created a real Zoom meeting on Account 2.
+
+## Phase 13 Schedule Meeting Cancel + Audit Policy
+
+Completed Phase 13 fixes:
+
+- Added `cancel-meeting` to the `zoom-meetings` Edge Function.
+- Cancel flow deletes the Zoom meeting first, then updates the workshop row to `Cancelled`, clears `join_url`, and keeps `zoom_id` for audit/reference.
+- Added `useCancelAdminWorkshop` and a compact in-app confirmation dialog on Schedule Meeting rows.
+- Expanded the workshop audit insert policy for all Edge Function action names:
+  - `admin_workshop_created`
+  - `admin_workshop_updated`
+  - `admin_workshop_rescheduled`
+  - `admin_workshop_cancelled`
+  - `admin_workshop_status_changed`
+  - `admin_workshop_recording_updated`
+  - `admin_workshop_recordings_fetched`
+  - `admin_workshop_recording_published`
+
+Verification:
+
+- Linked migration `20260701144757_admin_workshop_cancel_audit_policy` is applied.
+- `supabase functions deploy zoom-meetings` succeeded.
+- TypeScript passed.
+- ESLint passed.
+- Production build passed.
+- Live admin create probe still succeeds.
+- Live cancel probe is blocked by the current Zoom OAuth app scope. Zoom returned missing `meeting:delete` scope, so the function correctly did not mark the LMS workshop cancelled.
