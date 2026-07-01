@@ -110,5 +110,79 @@ Supabase audit findings:
 Remaining follow-up:
 
 - Browser-smoke the student portal with a real student session.
-- Modernize `lms_request_email()` because it still uses deprecated `auth.role()` internally.
 - Include the student RPCs in the broader `SECURITY DEFINER` hardening phase.
+
+## Phase 5: Student RPC Helper Hardening
+
+Status: completed locally and applied to the linked project on 2026-07-01.
+
+Migration:
+
+- `supabase/migrations/20260701102314_harden_student_rpc_request_email.sql`
+
+Fix applied:
+
+- Replaced deprecated `auth.role()` usage inside `public.lms_request_email()`.
+- Preserved the existing access model:
+  - `service_role` may pass `p_student_email` for server/admin lookups.
+  - Browser/authenticated calls resolve from the caller JWT email.
+- Kept the helper as `STABLE SECURITY DEFINER`.
+- Kept explicit `search_path` as `public, auth`.
+
+Verification completed:
+
+- Linked project function definition no longer contains `auth.role()`.
+- No ordinary `public` functions currently contain `auth.role()`.
+- Supabase advisors still report broader existing `SECURITY DEFINER` and mutable `search_path` warnings for other functions; those remain separate hardening work.
+
+## Phase 6: Student Browser QA And RLS Read Policies
+
+Status: completed locally and applied to the linked project on 2026-07-01.
+
+Test account:
+
+- `skilledsapiens@gmail.com`
+
+Migration:
+
+- `supabase/migrations/20260701161458_student_owned_read_policies.sql`
+
+Fixes applied:
+
+- Added student-owned select policies for:
+  - `students`
+  - `certificates`
+  - `paid_access`
+  - `payment_orders`
+  - `project_submission_requests`
+- Kept existing admin policies unchanged.
+- Fixed login portal resolution so student login checks `/students/me` before `/admins/me`, while admin login keeps admin-first behavior.
+- Stopped login from silently navigating when no active profile is linked.
+- Added `workshops` as the student recordings bundle source key.
+- Normalized student project `action_items`, `resources`, and `deliverables` into stable UI arrays.
+- Null protected recording and schedule URLs in the adapter when a row is marked `locked`.
+
+Verification completed:
+
+- Authenticated Supabase probe for the test account can now read one own `students` row.
+- The same account can read own certificates, payment orders, and project submissions.
+- Browser-smoked:
+  - `/student`
+  - `/student/announcements`
+  - `/student/cohorts`
+  - `/student/resources`
+  - `/student/recordings`
+  - `/student/schedule`
+  - `/student/projects`
+  - `/student/project-submissions`
+  - `/student/certificates`
+  - `/student/payments`
+  - `/student/access`
+  - `/student/support`
+- `/student/projects` no longer crashes on null/string project deliverable data.
+- `/student/recordings` now renders completed workshop recordings from the dashboard bundle.
+
+Remaining follow-up:
+
+- `/student/schedule` loaded successfully but the current test student has no visible schedule rows.
+- `/student/announcements`, `/student/access`, and `/student/support` loaded empty for the current test data.

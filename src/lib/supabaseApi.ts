@@ -32,7 +32,7 @@ type SupabaseQuery = {
 const STUDENT_BUNDLE_SECTIONS: Record<string, string[]> = {
   '/students/me/announcements': ['announcements', 'announcementList', 'studentAnnouncements'],
   '/students/me/cohorts': ['cohorts', 'studentCohorts'],
-  '/students/me/recordings': ['recordings', 'workshopRecordings']
+  '/students/me/recordings': ['recordings', 'workshopRecordings', 'workshops']
 };
 
 const RPC_LIST_ENDPOINTS: Record<string, { functionName: string; section?: string[] }> = {
@@ -443,15 +443,48 @@ function chooseIdentityRow(rows: unknown, context: Awaited<ReturnType<typeof cre
 function enrichRow(row: unknown) {
   if (!isRecord(row)) return row;
   return {
+    ...row,
     active_now: computeActiveNow(row),
+    deliverables: normalizeProjectList(row.deliverables, 'deliverable'),
+    documents: normalizeProjectList(row.documents ?? row.resources, 'document'),
     id: row.id ?? row.request_id ?? row.ticket_id ?? row.student_id ?? row.workshop_id,
+    join_url: row.locked === true ? null : row.join_url,
     category: row.category ?? row.role_category,
     name: row.name ?? row.role_name,
+    recording_url: row.locked === true ? null : row.recording_url ?? row.youtube_video_url ?? row.zoom_recording_url,
     self_paced_resources: row.self_paced_resources ?? row.sp_resources,
     self_paced_sessions: row.self_paced_sessions ?? row.sp_sessions,
+    source: row.source ?? (row.youtube_video_url ? 'youtube' : row.zoom_recording_url ? 'zoom' : undefined),
     status: row.status ?? row.workshop_status,
-    ...row
+    tasks: normalizeProjectList(row.tasks ?? row.action_items, 'task')
   };
+}
+
+function normalizeProjectList(value: unknown, kind: 'deliverable' | 'document' | 'task') {
+  if (Array.isArray(value)) return value;
+  if (value === null || value === undefined || value === '') return [];
+
+  if (typeof value === 'string') {
+    return value
+      .split(/\r?\n/)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const [title, detail, extra] = entry.split('|').map((part) => part.trim());
+        if (kind === 'document') return { title, type: detail || undefined, link: extra || undefined };
+        if (kind === 'deliverable') return { title, format: detail || undefined, note: extra || undefined };
+        return { title, description: detail || undefined };
+      });
+  }
+
+  if (isRecord(value)) {
+    if (Array.isArray(value.items)) return value.items;
+    if (Array.isArray(value.tasks)) return value.tasks;
+    if (Array.isArray(value.documents)) return value.documents;
+    if (Array.isArray(value.deliverables)) return value.deliverables;
+  }
+
+  return [];
 }
 
 function computeActiveNow(row: Record<string, unknown>) {
