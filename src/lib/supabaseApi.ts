@@ -25,6 +25,7 @@ type SupabaseQuery = {
   contains: (column: string, value: string | readonly unknown[] | Record<string, unknown>) => SupabaseQuery;
   eq: (column: string, value: unknown) => SupabaseQuery;
   gte: (column: string, value: unknown) => SupabaseQuery;
+  in: (column: string, values: readonly unknown[]) => SupabaseQuery;
   lt: (column: string, value: unknown) => SupabaseQuery;
   or: (filters: string) => SupabaseQuery;
   order: (column: string, options?: { ascending?: boolean }) => SupabaseQuery;
@@ -55,6 +56,16 @@ type WriteEndpoint = {
   normalizeBody?: (body: Record<string, unknown>) => Record<string, unknown>;
   table: string;
   validateBody?: (body: Record<string, unknown>, inserting: boolean) => void;
+};
+
+type StudentWriteMetadata = {
+  assignmentMode: 'add' | 'replace';
+  cohortIds: string[];
+  cohortNames: string[];
+  programKeys: string[];
+  programNames: string[];
+  sendInvite: boolean;
+  sendOnboardingMail: boolean;
 };
 
 const STUDENT_WRITE_COLUMNS = new Set([
@@ -222,9 +233,13 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/admins/me') return getAdminProfile(context) as Promise<TResponse>;
   if (cleanPath === '/students/me/dashboard') return getStudentDashboard(context) as Promise<TResponse>;
   if (cleanPath === '/admins/dashboard') return getAdminDashboard(context) as Promise<TResponse>;
+  if (cleanPath === '/admins/student-audit-logs') return getStudentAuditLogs(context, options.query) as Promise<TResponse>;
 
   const studentAttempts = cleanPath.match(/^\/admins\/students\/([^/]+)\/lp-attempts$/);
   if (studentAttempts) return getStudentAttemptLimit(context, decodeURIComponent(studentAttempts[1])) as Promise<TResponse>;
+
+  const studentAccessPreview = cleanPath.match(/^\/admins\/students\/([^/]+)\/access-preview$/);
+  if (studentAccessPreview) return getStudentAccessPreview(context, decodeURIComponent(studentAccessPreview[1])) as Promise<TResponse>;
 
   const studentTicketMatch = cleanPath.match(/^\/students\/me\/support-tickets\/(.+)$/);
   if (studentTicketMatch) return getSupportTicketDetail(context, decodeURIComponent(studentTicketMatch[1]), false) as Promise<TResponse>;
@@ -244,6 +259,8 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   }
 
   if (cleanPath === '/students/me/resources') return getStudentResourcesList(context, options.query) as Promise<TResponse>;
+
+  if (cleanPath === '/admins/students') return getAdminStudentsList(context, options.query) as Promise<TResponse>;
 
   if (RPC_LIST_ENDPOINTS[cleanPath]) {
     return getRpcList(context, RPC_LIST_ENDPOINTS[cleanPath], options.query) as Promise<TResponse>;
@@ -309,6 +326,8 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   const cleanPath = stripQuery(path);
 
   if (cleanPath === '/admins/students/import') return importStudents(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/admins/students/bulk') return bulkUpdateStudents(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/admins/students/resend-invites') return resendStudentInvites(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/students') return insertRow(context, 'students', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/cohorts') return insertRow(context, 'cohorts', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/workshops') return insertRow(context, 'workshops', options.body, 'created') as Promise<TResponse>;
@@ -496,6 +515,131 @@ async function getTableList(context: Awaited<ReturnType<typeof createContext>>, 
   return createPaginatedResponse((data ?? []).map(enrichRow).map(camelize), count ?? 0, page, limit);
 }
 
+async function getAdminStudentsList(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const endpoint = TABLE_ENDPOINTS['/admins/students'];
+  const page = Number(query?.page ?? 1);
+  const limit = Math.min(Number(query?.limit ?? 25), 500);
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+  const cohortName = String(query?.cohortName ?? '').trim();
+  const programKey = String(query?.programKey ?? '').trim();
+  const queryWithoutJoins = { ...(query ?? {}) };
+  delete queryWithoutJoins.cohortName;
+  delete queryWithoutJoins.programKey;
+
+  let request = context.supabase.from(endpoint.table).select('*', { count: 'exact' });
+  const joinedStudentIdSets: string[][] = [];
+
+  if (cohortName && cohortName !== 'all') {
+    const { data: cohortRows, error: cohortError } = await context.supabase.from('student_cohorts').select('student_id').eq('cohort_name', cohortName).limit(5000);
+    if (cohortError) throw new ApiClientError(cohortError.message, 503);
+    joinedStudentIdSets.push((cohortRows ?? []).map((row) => String(row.student_id ?? '')).filter(Boolean));
+  }
+
+  if (programKey && programKey !== 'all') {
+    const { data: programRows, error: programError } = await context.supabase.from('student_programs').select('student_id').eq('program_key', programKey).limit(5000);
+    if (programError) throw new ApiClientError(programError.message, 503);
+    joinedStudentIdSets.push((programRows ?? []).map((row) => String(row.student_id ?? '')).filter(Boolean));
+  }
+
+  if (joinedStudentIdSets.length > 0) {
+    const studentIds = intersectStringSets(joinedStudentIdSets);
+    if (studentIds.length === 0) return createPaginatedResponse([], 0, page, limit);
+    request = request.in('id', studentIds);
+  }
+
+  request = applyCommonFilters(request, queryWithoutJoins, endpoint);
+  request = applyCommonSort(request, queryWithoutJoins, endpoint);
+
+  const { count, data, error } = await request.range(from, to);
+  if (error) throw new ApiClientError(error.message, 503);
+
+  const enriched = await enrichAdminStudents(context, data ?? []);
+  return createPaginatedResponse(enriched, count ?? 0, page, limit);
+}
+
+async function getStudentAuditLogs(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const page = Number(query?.page ?? 1);
+  const limit = Math.min(Number(query?.limit ?? 12), 50);
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+  const { count, data, error } = await context.supabase.from('audit_logs').select('*', { count: 'exact' }).eq('entity_type', 'student').order('created_at', { ascending: false }).range(from, to);
+  if (error) throw new ApiClientError(error.message, 503);
+  return createPaginatedResponse((data ?? []).map(enrichRow).map(camelize), count ?? 0, page, limit);
+}
+
+async function enrichAdminStudents(context: Awaited<ReturnType<typeof createContext>>, rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return [];
+
+  const studentIds = rows.map((row) => String(row.id)).filter(Boolean);
+  const [cohortsResult, programsResult] = await Promise.all([
+    context.supabase.from('student_cohorts').select('*').in('student_id', studentIds).limit(5000),
+    context.supabase.from('student_programs').select('*').in('student_id', studentIds).limit(5000)
+  ]);
+
+  if (cohortsResult.error) throw new ApiClientError(cohortsResult.error.message, 503);
+  if (programsResult.error) throw new ApiClientError(programsResult.error.message, 503);
+
+  const programKeys = Array.from(new Set((programsResult.data ?? []).map((row) => String(row.program_key ?? '').trim()).filter(Boolean)));
+  const programNameByKey = new Map<string, string>();
+  if (programKeys.length > 0) {
+    const { data: programRows, error: programError } = await context.supabase.from('programs').select('program_key,name').in('program_key', programKeys).limit(500);
+    if (programError) throw new ApiClientError(programError.message, 503);
+    (programRows ?? []).forEach((program) => {
+      const key = String(program.program_key ?? '').trim();
+      const name = String(program.name ?? key).trim();
+      if (key) programNameByKey.set(key, name);
+    });
+  }
+
+  const cohortsByStudent = groupByStudentId(cohortsResult.data ?? []);
+  const programsByStudent = groupByStudentId(programsResult.data ?? []);
+
+  return rows.map((row) => {
+    const studentId = String(row.id);
+    const cohortRows = cohortsByStudent.get(studentId) ?? [];
+    const programRows = programsByStudent.get(studentId) ?? [];
+    const cohortNames = uniqueStrings([
+      ...cohortRows.map((cohort) => cohort.cohort_name),
+      row.cohort_name
+    ]);
+    const studentProgramKeys = uniqueStrings([
+      ...programRows.map((program) => program.program_key),
+      ...asStringArray(row.track_role_ids)
+    ]);
+    const programNames = uniqueStrings([
+      ...studentProgramKeys.map((key) => programNameByKey.get(key) ?? key),
+      ...String(row.program_name ?? '')
+        .split(',')
+        .map((value) => value.trim())
+    ]);
+
+    return camelize(
+      enrichRow({
+        ...row,
+        cohort_names: cohortNames,
+        cohorts: cohortRows.map((cohort) => ({
+          cohort_id: cohort.cohort_id,
+          cohort_name: cohort.cohort_name
+        })),
+        program_keys: studentProgramKeys,
+        programs: programNames
+      })
+    );
+  });
+}
+
+function groupByStudentId(rows: Record<string, unknown>[]) {
+  return rows.reduce<Map<string, Record<string, unknown>[]>>((groups, row) => {
+    const studentId = String(row.student_id ?? '');
+    if (!studentId) return groups;
+    const existing = groups.get(studentId) ?? [];
+    existing.push(row);
+    groups.set(studentId, existing);
+    return groups;
+  }, new Map());
+}
+
 async function getSupportTicketDetail(context: Awaited<ReturnType<typeof createContext>>, ticketId: string, admin: boolean) {
   let ticketQuery = context.supabase.from('support_tickets').select('*').or(`id.eq.${ticketId},ticket_id.eq.${ticketId}`).limit(1);
   if (!admin) ticketQuery = ticketQuery.eq('student_email', context.email);
@@ -552,6 +696,33 @@ async function getStudentAttemptLimit(context: Awaited<ReturnType<typeof createC
   };
 }
 
+async function getStudentAccessPreview(context: Awaited<ReturnType<typeof createContext>>, studentId: string) {
+  const student = await getStudentById(context, studentId);
+  const [dashboard, schedule, resources, projects, certificates, enrichedStudent] = await Promise.all([
+    callRpc(context, 'student_dashboard_bundle', { p_student_email: student.email }),
+    callRpc(context, 'student_schedule_view', { p_student_email: student.email }),
+    callRpc(context, 'student_resources_view', { p_student_email: student.email }),
+    callRpc(context, 'student_projects_bundle', { p_student_email: student.email }),
+    callRpc(context, 'student_certificates_bundle', { p_student_email: student.email }),
+    enrichAdminStudents(context, [student])
+  ]);
+
+  const studentRow = enrichedStudent[0] as Record<string, unknown> | undefined;
+  const cohorts = Array.isArray(studentRow?.cohortNames) ? (studentRow.cohortNames as string[]) : student.cohort_name ? [student.cohort_name] : [];
+  const recordings = extractItems(dashboard, ['recordings', 'workshopRecordings', 'workshops']).filter(isStudentRecordingRow);
+
+  return {
+    certificates: extractItems(certificates, ['certificates', 'items']).length,
+    cohorts,
+    projects: extractItems(projects, ['projects', 'items']).length,
+    recordings: recordings.length,
+    resources: extractItems(resources, ['resources', 'items']).length,
+    schedule: extractItems(schedule, ['schedule', 'items']).length,
+    studentEmail: student.email,
+    studentName: student.full_name
+  };
+}
+
 async function updateStudentAttemptLimit(context: Awaited<ReturnType<typeof createContext>>, studentId: string, body: unknown) {
   const payload = snakifyMutationBody(body);
   const maxAttempts = Number(payload.max_attempts);
@@ -595,9 +766,11 @@ async function updateById(context: Awaited<ReturnType<typeof createContext>>, ta
   const payload = prepareWritePayload(endpoint, body, false);
   const { data, error } = await context.supabase.from(endpoint.table).update(payload).eq('id', id).select('*').single();
   if (error) throw mutationError(error, endpoint.table);
+  if (endpoint.table === 'students') await syncStudentAssignments(context, data, metadata);
   if (auditAction) await writeAuditLog(context, endpoint.table, auditAction, data, payload);
   if (metadata.sendInvite && endpoint.table === 'students') await queueStudentInvite(context, data);
-  return camelize(enrichRow(data));
+  if (metadata.sendOnboardingMail && endpoint.table === 'students') await queueStudentOnboardingMail(context, data);
+  return endpoint.table === 'students' ? (await enrichAdminStudents(context, [data]))[0] : camelize(enrichRow(data));
 }
 
 async function insertRow(context: Awaited<ReturnType<typeof createContext>>, table: string, body: unknown, auditAction?: string) {
@@ -606,9 +779,11 @@ async function insertRow(context: Awaited<ReturnType<typeof createContext>>, tab
   const payload = prepareWritePayload(endpoint, body, true);
   const { data, error } = await context.supabase.from(endpoint.table).insert(payload).select('*').single();
   if (error) throw mutationError(error, endpoint.table);
+  if (endpoint.table === 'students') await syncStudentAssignments(context, data, metadata);
   if (auditAction) await writeAuditLog(context, endpoint.table, auditAction, data, payload);
   if (metadata.sendInvite && endpoint.table === 'students') await queueStudentInvite(context, data);
-  return camelize(enrichRow(data));
+  if (metadata.sendOnboardingMail && endpoint.table === 'students') await queueStudentOnboardingMail(context, data);
+  return endpoint.table === 'students' ? (await enrichAdminStudents(context, [data]))[0] : camelize(enrichRow(data));
 }
 
 async function importStudents(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
@@ -621,37 +796,138 @@ async function importStudents(context: Awaited<ReturnType<typeof createContext>>
   }
 
   const endpoint = getWriteEndpoint('students');
-  const result = { created: 0, failed: 0, updated: 0 };
+  const result = {
+    created: 0,
+    failed: 0,
+    rows: [] as Array<{ action?: 'created' | 'updated' | 'skipped'; email?: string; error?: string; rowNumber: number; status: 'success' | 'failed' }>,
+    updated: 0
+  };
 
-  for (const studentBody of body.students) {
+  for (const [index, studentBody] of body.students.entries()) {
+    const rowNumber = index + 2;
+    let rowEmail = '';
     try {
       const metadata = getWriteMetadata('students', studentBody);
       const payload = prepareWritePayload(endpoint, studentBody, true);
       const email = normalizeEmail(payload.email);
+      rowEmail = email;
       const existing = await context.supabase.from('students').select('*').ilike('email', email).limit(1).maybeSingle();
       if (existing.error) throw existing.error;
 
       if (existing.data) {
-        const updatePayload = { ...payload, email, updated_at: new Date().toISOString() };
+        const assignmentMetadata = metadata.assignmentMode === 'add' ? await mergeExistingStudentAssignmentMetadata(context, existing.data, metadata) : metadata;
+        const updatePayload: Record<string, unknown> = { ...payload, email, updated_at: new Date().toISOString() };
+        if (metadata.assignmentMode === 'add') {
+          updatePayload.cohort_id = assignmentMetadata.cohortIds[0] || updatePayload.cohort_id;
+          updatePayload.cohort_name = assignmentMetadata.cohortNames[0] || updatePayload.cohort_name;
+          updatePayload.track_role_ids = assignmentMetadata.programKeys.length > 0 ? assignmentMetadata.programKeys : updatePayload.track_role_ids;
+          updatePayload.program_name = assignmentMetadata.programNames.length > 0 ? assignmentMetadata.programNames.join(', ') : updatePayload.program_name;
+        }
         const { data, error } = await context.supabase.from('students').update(updatePayload).eq('id', existing.data.id).select('*').single();
         if (error) throw error;
+        await syncStudentAssignments(context, data, assignmentMetadata);
         await writeAuditLog(context, 'students', 'updated', data, updatePayload);
         if (metadata.sendInvite) await queueStudentInvite(context, data);
+        if (metadata.sendOnboardingMail) await queueStudentOnboardingMail(context, data);
         result.updated += 1;
+        result.rows.push({ action: 'updated', email, rowNumber, status: 'success' });
       } else {
         const insertPayload = { ...payload, email };
         const { data, error } = await context.supabase.from('students').insert(insertPayload).select('*').single();
         if (error) throw error;
+        await syncStudentAssignments(context, data, metadata);
         await writeAuditLog(context, 'students', 'created', data, insertPayload);
         if (metadata.sendInvite) await queueStudentInvite(context, data);
+        if (metadata.sendOnboardingMail) await queueStudentOnboardingMail(context, data);
         result.created += 1;
+        result.rows.push({ action: 'created', email, rowNumber, status: 'success' });
       }
-    } catch {
+    } catch (error) {
       result.failed += 1;
+      result.rows.push({ email: rowEmail, error: error instanceof Error ? error.message : 'Import failed for this row.', rowNumber, status: 'failed' });
     }
   }
 
   return result;
+}
+
+async function bulkUpdateStudents(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  if (!isRecord(body) || !Array.isArray(body.studentIds)) {
+    throw new ApiClientError('Bulk update payload must include selected students.', 400);
+  }
+
+  const studentIds = uniqueStrings(body.studentIds).slice(0, 500);
+  if (studentIds.length === 0) throw new ApiClientError('Select at least one student.', 400);
+
+  const active = typeof body.active === 'boolean' ? body.active : undefined;
+  const addCohortIds = asStringArray(body.cohortIds);
+  const addCohortNames = asStringArray(body.cohortNames);
+  const addProgramKeys = asStringArray(body.programKeys);
+  const addProgramNames = asStringArray(body.programNames);
+  const assignmentMode = body.assignmentMode === 'replace' ? 'replace' : 'add';
+  const resendInvite = body.resendInvite === true;
+  const result = { failed: 0, rows: [] as Array<{ email?: string; error?: string; status: 'success' | 'failed'; studentId: string }>, updated: 0 };
+
+  const { data: students, error } = await context.supabase.from('students').select('*').in('id', studentIds).limit(500);
+  if (error) throw new ApiClientError(error.message, 503);
+  const studentsById = new Map((students ?? []).map((student) => [String(student.id), student]));
+
+  for (const studentId of studentIds) {
+    const student = studentsById.get(studentId);
+    if (!student) {
+      result.failed += 1;
+      result.rows.push({ error: 'Student not found.', status: 'failed', studentId });
+      continue;
+    }
+
+    try {
+      let currentStudent = student as Record<string, unknown>;
+      if (active !== undefined) {
+        const { data, error: updateError } = await context.supabase.from('students').update({ active, updated_at: new Date().toISOString() }).eq('id', studentId).select('*').single();
+        if (updateError) throw updateError;
+        currentStudent = data;
+        await writeAuditLog(context, 'students', 'status_changed', data, { active });
+      }
+
+      if (addCohortNames.length > 0 || addCohortIds.length > 0 || addProgramKeys.length > 0 || addProgramNames.length > 0) {
+        const [cohortsResult, programsResult] = await Promise.all([
+          context.supabase.from('student_cohorts').select('cohort_id,cohort_name').eq('student_id', studentId).limit(500),
+          context.supabase.from('student_programs').select('program_key').eq('student_id', studentId).limit(500)
+        ]);
+        if (cohortsResult.error) throw cohortsResult.error;
+        if (programsResult.error) throw programsResult.error;
+
+        await syncStudentAssignments(context, currentStudent, {
+          assignmentMode,
+          cohortIds: assignmentMode === 'replace' ? addCohortIds : uniqueStrings([...(cohortsResult.data ?? []).map((cohort) => cohort.cohort_id), ...addCohortIds]),
+          cohortNames: assignmentMode === 'replace' ? addCohortNames : uniqueStrings([...(cohortsResult.data ?? []).map((cohort) => cohort.cohort_name), ...addCohortNames]),
+          programKeys: assignmentMode === 'replace' ? addProgramKeys : uniqueStrings([...(programsResult.data ?? []).map((program) => program.program_key), ...addProgramKeys]),
+          programNames: addProgramNames,
+          sendInvite: false,
+          sendOnboardingMail: false
+        });
+        await writeAuditLog(context, 'students', 'updated', currentStudent, { assignment_mode: assignmentMode, bulk_assignment: true, cohort_names: addCohortNames, program_keys: addProgramKeys });
+      }
+
+      if (resendInvite) await queueStudentInvite(context, currentStudent);
+      result.updated += 1;
+      result.rows.push({ email: normalizeEmail(currentStudent.email), status: 'success', studentId });
+    } catch (bulkError) {
+      result.failed += 1;
+      result.rows.push({ email: normalizeEmail(student.email), error: bulkError instanceof Error ? bulkError.message : 'Bulk update failed.', status: 'failed', studentId });
+    }
+  }
+
+  return result;
+}
+
+async function resendStudentInvites(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  if (!isRecord(body) || !Array.isArray(body.studentIds)) {
+    throw new ApiClientError('Resend invite payload must include selected students.', 400);
+  }
+
+  const result = await bulkUpdateStudents(context, { resendInvite: true, studentIds: body.studentIds });
+  return { queued: result.failed === 0, ...result };
 }
 
 async function getStudentById(context: Awaited<ReturnType<typeof createContext>>, studentId: string) {
@@ -686,6 +962,34 @@ async function queueStudentInvite(context: Awaited<ReturnType<typeof createConte
   const { data, error } = await context.supabase.from('email_queue').insert(queueRow).select('*').single();
   if (error) throw new ApiClientError(`Student was saved, but invite queueing failed: ${error.message}`, 503);
   await writeAuditLog(context, 'students', 'invite_queued', student, { email_queue_id: data.id, template_key: 'portal_invite' });
+}
+
+async function queueStudentOnboardingMail(context: Awaited<ReturnType<typeof createContext>>, student: Record<string, unknown>) {
+  const email = normalizeEmail(student.email);
+  if (!email) throw new ApiClientError('Student was saved, but onboarding mail queueing failed because the email is missing.', 400);
+
+  const queueRow = {
+    category: 'auth',
+    created_by: context.email,
+    params: {
+      cohort: student.cohort_name ?? null,
+      program: student.program_name ?? null,
+      student_id: student.student_id ?? student.id,
+      student_name: student.full_name ?? email
+    },
+    recipient_email: email,
+    recipient_name: student.full_name ?? null,
+    related_entity_id: String(student.id ?? ''),
+    related_entity_type: 'student',
+    status: 'queued',
+    subject: 'Welcome to Skilled Sapiens LMS',
+    tags: ['lms', 'lms-auth', 'onboarding'],
+    template_key: 'onboarding_welcome'
+  };
+
+  const { data, error } = await context.supabase.from('email_queue').insert(queueRow).select('*').single();
+  if (error) throw new ApiClientError(`Student was saved, but onboarding mail queueing failed: ${error.message}`, 503);
+  await writeAuditLog(context, 'students', 'onboarding_mail_queued', student, { email_queue_id: data.id, template_key: 'onboarding_welcome' });
 }
 
 async function callRpc(context: Awaited<ReturnType<typeof createContext>>, functionName: string, params?: Record<string, string>) {
@@ -917,10 +1221,115 @@ function prepareWritePayload(endpoint: WriteEndpoint, body: unknown, inserting: 
   return { ...payload, updated_at: new Date().toISOString() };
 }
 
-function getWriteMetadata(table: string, body: unknown) {
-  if (table !== 'students' || !isRecord(body)) return { sendInvite: false };
+function getWriteMetadata(table: string, body: unknown): StudentWriteMetadata {
+  if (table !== 'students' || !isRecord(body)) return { assignmentMode: 'replace', cohortIds: [], cohortNames: [], programKeys: [], programNames: [], sendInvite: false, sendOnboardingMail: false };
   const rawPayload = snakify(body) as Record<string, unknown>;
-  return { sendInvite: rawPayload.send_invite === true };
+  return {
+    assignmentMode: rawPayload.assignment_mode === 'add' ? 'add' : 'replace',
+    cohortIds: asStringArray(rawPayload.cohort_ids),
+    cohortNames: asStringArray(rawPayload.cohort_names),
+    programKeys: asStringArray(rawPayload.program_keys),
+    programNames: asStringArray(rawPayload.program_names),
+    sendInvite: rawPayload.send_invite === true,
+    sendOnboardingMail: rawPayload.send_onboarding_mail === true
+  };
+}
+
+async function syncStudentAssignments(context: Awaited<ReturnType<typeof createContext>>, student: Record<string, unknown>, metadata: StudentWriteMetadata) {
+  const studentId = String(student.id ?? '');
+  if (!studentId) return;
+
+  const cohortIds = uniqueStrings(metadata.cohortIds);
+  const cohortNames = uniqueStrings(metadata.cohortNames.length > 0 ? metadata.cohortNames : [student.cohort_name]);
+  const programKeys = uniqueStrings(metadata.programKeys.length > 0 ? metadata.programKeys : asStringArray(student.track_role_ids));
+  const programNames = uniqueStrings(metadata.programNames);
+
+  const selectedCohorts = await resolveStudentCohortAssignments(context, cohortIds, cohortNames);
+
+  const deleteCohorts = await context.supabase.from('student_cohorts').delete().eq('student_id', studentId);
+  if (deleteCohorts.error) throw new ApiClientError(`Student cohorts sync failed: ${deleteCohorts.error.message}`, 503);
+
+  if (selectedCohorts.length > 0) {
+    const { error } = await context.supabase.from('student_cohorts').insert(
+      selectedCohorts.map((cohort) => ({
+        cohort_id: cohort.id,
+        cohort_name: cohort.name,
+        student_id: studentId
+      }))
+    );
+    if (error) throw new ApiClientError(`Student cohorts sync failed: ${error.message}`, 503);
+  }
+
+  const deletePrograms = await context.supabase.from('student_programs').delete().eq('student_id', studentId);
+  if (deletePrograms.error) throw new ApiClientError(`Student programs sync failed: ${deletePrograms.error.message}`, 503);
+
+  if (programKeys.length > 0) {
+    const nameByKey = await resolveProgramNamesByKey(context, programKeys, programNames);
+    const { error } = await context.supabase.from('student_programs').insert(
+      programKeys.map((programKey) => ({
+        program_key: programKey,
+        student_id: studentId,
+        student_name: nameByKey.get(programKey) ?? String(student.full_name ?? student.email ?? '')
+      }))
+    );
+    if (error) throw new ApiClientError(`Student programs sync failed: ${error.message}`, 503);
+  }
+}
+
+async function mergeExistingStudentAssignmentMetadata(context: Awaited<ReturnType<typeof createContext>>, student: Record<string, unknown>, metadata: StudentWriteMetadata): Promise<StudentWriteMetadata> {
+  const studentId = String(student.id ?? '');
+  if (!studentId || metadata.assignmentMode !== 'add') return metadata;
+
+  const [cohortsResult, programsResult] = await Promise.all([
+    context.supabase.from('student_cohorts').select('cohort_id,cohort_name').eq('student_id', studentId).limit(500),
+    context.supabase.from('student_programs').select('program_key,student_name').eq('student_id', studentId).limit(500)
+  ]);
+  if (cohortsResult.error) throw new ApiClientError(`Student cohorts lookup failed: ${cohortsResult.error.message}`, 503);
+  if (programsResult.error) throw new ApiClientError(`Student programs lookup failed: ${programsResult.error.message}`, 503);
+
+  return {
+    ...metadata,
+    cohortIds: uniqueStrings([...(cohortsResult.data ?? []).map((cohort) => cohort.cohort_id), ...metadata.cohortIds]),
+    cohortNames: uniqueStrings([...(cohortsResult.data ?? []).map((cohort) => cohort.cohort_name), ...metadata.cohortNames]),
+    programKeys: uniqueStrings([...(programsResult.data ?? []).map((program) => program.program_key), ...metadata.programKeys]),
+    programNames: uniqueStrings([...(programsResult.data ?? []).map((program) => program.student_name), ...metadata.programNames])
+  };
+}
+
+async function resolveStudentCohortAssignments(context: Awaited<ReturnType<typeof createContext>>, cohortIds: string[], cohortNames: string[]) {
+  if (cohortIds.length === 0 && cohortNames.length === 0) return [];
+
+  const lookups = [];
+  if (cohortIds.length > 0) lookups.push(context.supabase.from('cohorts').select('id,name').in('id', cohortIds).limit(500));
+  if (cohortNames.length > 0) lookups.push(context.supabase.from('cohorts').select('id,name').in('name', cohortNames).limit(500));
+
+  const results = await Promise.all(lookups);
+  const failed = results.find((result) => result.error);
+  if (failed?.error) throw new ApiClientError(`Student cohort lookup failed: ${failed.error.message}`, 503);
+  const data = results.flatMap((result) => result.data ?? []);
+
+  return uniqueBy(
+    data.map((cohort) => ({ id: String(cohort.id), name: String(cohort.name ?? '').trim() })).filter((cohort) => cohort.id && cohort.name),
+    (cohort) => cohort.id
+  );
+}
+
+async function resolveProgramNamesByKey(context: Awaited<ReturnType<typeof createContext>>, programKeys: string[], programNames: string[]) {
+  const nameByKey = new Map<string, string>();
+  programKeys.forEach((key, index) => nameByKey.set(key, programNames[index] ?? key));
+
+  if (programKeys.length === 0) return nameByKey;
+
+  const { data, error } = await context.supabase.from('programs').select('program_key,name').in('program_key', programKeys).limit(500);
+  if (error) throw new ApiClientError(`Student program lookup failed: ${error.message}`, 503);
+
+  (data ?? []).forEach((program) => {
+    const key = String(program.program_key ?? '').trim();
+    const name = String(program.name ?? key).trim();
+    if (key && name) nameByKey.set(key, name);
+  });
+
+  return nameByKey;
 }
 
 function normalizeStudentWriteBody(payload: Record<string, unknown>) {
@@ -943,7 +1352,9 @@ function normalizeStudentWriteBody(payload: Record<string, unknown>) {
     cohort_names: undefined,
     program_keys: undefined,
     program_names: undefined,
+    send_onboarding_mail: undefined,
     send_invite: undefined,
+    assignment_mode: undefined,
     wa_group: undefined
   };
 }
@@ -1180,6 +1591,26 @@ function mutationError(error: { code?: string; message: string }, table: string)
 function asStringArray(value: unknown) {
   if (!Array.isArray(value)) return [];
   return value.map((entry) => String(entry).trim()).filter(Boolean);
+}
+
+function uniqueStrings(values: unknown[]) {
+  return Array.from(new Set(values.map((value) => String(value ?? '').trim()).filter(Boolean)));
+}
+
+function uniqueBy<TItem>(items: TItem[], getKey: (item: TItem) => string) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = getKey(item);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function intersectStringSets(sets: string[][]) {
+  const [first, ...rest] = sets.map((set) => new Set(set));
+  if (!first) return [];
+  return Array.from(first).filter((value) => rest.every((set) => set.has(value)));
 }
 
 function isValidEmail(value: string) {
