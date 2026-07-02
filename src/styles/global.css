@@ -2356,25 +2356,63 @@ h1 {
 
 .resource-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.student-resource-library {
+  display: grid;
   gap: 18px;
+}
+
+.student-resource-group {
+  display: grid;
+  gap: 10px;
+}
+
+.student-resource-group > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 8px;
+}
+
+.student-resource-group > header span {
+  color: var(--color-accent-strong);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.student-resource-group > header strong {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 750;
+  padding: 4px 10px;
 }
 
 .resource-card {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: 54px minmax(0, 1fr);
   gap: 16px;
+  align-items: start;
   min-width: 0;
-  min-height: 286px;
+  min-height: 0;
   border: 1px solid var(--color-border);
   border-radius: 8px;
-  background:
-    linear-gradient(135deg, rgb(255 253 244 / 86%), #ffffff 44%),
-    #ffffff;
+  background: #ffffff;
   box-shadow: 0 1px 0 rgb(17 17 17 / 3%);
   overflow: hidden;
-  padding: 20px;
+  padding: 16px;
   transition:
     border-color 150ms ease,
     transform 150ms ease;
@@ -2406,8 +2444,9 @@ h1 {
 
 .resource-card__body {
   display: grid;
-  grid-template-rows: auto minmax(78px, 1fr) auto auto auto;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, auto);
+  gap: 8px 16px;
+  align-items: start;
   min-width: 0;
   overflow: hidden;
 }
@@ -2421,11 +2460,12 @@ h1 {
 }
 
 .resource-card__header {
-  justify-content: space-between;
+  grid-column: 1;
+  justify-content: flex-start;
 }
 
 .resource-card__body h2 {
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1.22;
   overflow-wrap: anywhere;
 }
@@ -2445,17 +2485,186 @@ h1 {
   overflow-wrap: anywhere;
 }
 
-.resource-card__payment-copy {
+.resource-card__commerce {
+  display: grid;
+  grid-column: 2;
+  grid-row: 1 / span 5;
+  align-self: start;
+  justify-self: end;
+  gap: 8px;
+  width: min(100%, 238px);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.resource-card__commerce--paid,
+.resource-card__commerce--pending {
+  border-color: #f2c66d;
+  background: #fff8e5;
+}
+
+.resource-card__commerce--locked {
+  border-color: #f6b7b7;
+  background: #fff5f5;
+}
+
+.resource-card__commerce--ready {
+  border-color: #bfe6cc;
+  background: #f2fbf5;
+}
+
+.resource-card__commerce-label {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.resource-card__commerce strong {
+  color: var(--color-text);
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.resource-card__commerce p {
   margin: 0 !important;
-  color: var(--color-accent-strong) !important;
-  font-size: 13px !important;
-  font-weight: 700;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .resource-card__action {
   max-width: 100%;
   min-width: 0;
   width: 100%;
+}
+
+.resource-card__action:disabled {
+  cursor: progress;
+  opacity: 0.75;
+}
+
+.resource-card__locked-note {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: 8px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 750;
+  padding: 8px 10px;
+}
+
+.resource-card__bookmark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  padding: 5px 9px;
+}
+
+.resource-card__bookmark--active {
+  border-color: #f4d66f;
+  background: #fff8da;
+  color: var(--color-text);
+}
+
+.student-resource-toolbar {
+  display: grid;
+  grid-template-columns: auto minmax(280px, 1fr);
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 0 rgb(17 17 17 / 3%);
+  padding: 12px;
+}
+
+.student-resource-search {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, 210px) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.student-resource-search .filter-search {
+  width: 100%;
+  background: #ffffff;
+}
+
+.student-resource-search select {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  padding: 8px 10px;
+}
+
+.student-resource-scope {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 10px;
+}
+
+.student-resource-scope span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 10px;
+}
+
+.student-resource-payment-check {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  border: 1px solid #f2c66d;
+  border-radius: 8px;
+  background: #fff8e5;
+  color: #735b26;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+  padding: 10px 12px;
+}
+
+.student-resource-empty {
+  background: #ffffff;
 }
 
 .filter-search select {
@@ -8815,6 +9024,26 @@ h1 {
 
   .student-recording-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .student-resource-toolbar,
+  .student-resource-search {
+    grid-template-columns: 1fr;
+  }
+
+  .resource-card {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .resource-card__body {
+    grid-template-columns: 1fr;
+  }
+
+  .resource-card__commerce {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: stretch;
+    width: 100%;
   }
 
   .student-recording-row {

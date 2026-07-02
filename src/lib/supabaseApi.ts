@@ -38,7 +38,6 @@ const STUDENT_BUNDLE_SECTIONS: Record<string, string[]> = {
 
 const RPC_LIST_ENDPOINTS: Record<string, { functionName: string; section?: string[] }> = {
   '/students/me/projects': { functionName: 'student_projects_bundle', section: ['projects', 'items'] },
-  '/students/me/resources': { functionName: 'student_resources_view', section: ['resources', 'items'] },
   '/students/me/schedule': { functionName: 'student_schedule_view', section: ['schedule', 'items'] }
 };
 
@@ -244,6 +243,8 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
     return getStudentRecordingsList(context, options.query) as Promise<TResponse>;
   }
 
+  if (cleanPath === '/students/me/resources') return getStudentResourcesList(context, options.query) as Promise<TResponse>;
+
   if (RPC_LIST_ENDPOINTS[cleanPath]) {
     return getRpcList(context, RPC_LIST_ENDPOINTS[cleanPath], options.query) as Promise<TResponse>;
   }
@@ -428,6 +429,46 @@ async function getStudentRecordingsList(context: Awaited<ReturnType<typeof creat
   const bundle = await callRpc(context, 'student_dashboard_bundle', { p_student_email: context.email });
   const workshops = extractItems(bundle, ['recordings', 'workshopRecordings', 'workshops']);
   return paginate(workshops.filter(isStudentRecordingRow), query);
+}
+
+async function getStudentResourcesList(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const data = await callRpc(context, 'student_resources_view', { p_student_email: context.email });
+  const items = extractItems(data, ['resources', 'items']).map(enrichRow).map(camelize).filter((item) => matchesClientFilters(item, query));
+  const search = String(query?.search ?? '').trim().toLowerCase();
+  const filtered = search ? items.filter((item) => JSON.stringify(item).toLowerCase().includes(search)) : items;
+  const page = Number(query?.page ?? 1);
+  const limit = Math.min(Number(query?.limit ?? 25), 500);
+  const start = (page - 1) * limit;
+  const summary = summarizeStudentResources(filtered);
+  return { ...createPaginatedResponse(filtered.slice(start, start + limit), filtered.length, page, limit), summary };
+}
+
+function summarizeStudentResources(items: unknown[]) {
+  const typeCounts: Record<string, number> = {};
+  const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  let available = 0;
+  let free = 0;
+  let locked = 0;
+  let paid = 0;
+  let recentlyAdded = 0;
+
+  items.forEach((item) => {
+    if (!isRecord(item)) return;
+    const isLocked = item.locked === true;
+    const accessType = String(item.accessType ?? item.access_type ?? '');
+    const resourceType = String(item.resourceType ?? item.resource_type ?? 'general') || 'general';
+    const updatedAt = typeof item.updatedAt === 'string' ? item.updatedAt : typeof item.updated_at === 'string' ? item.updated_at : '';
+    const updatedTime = updatedAt ? new Date(updatedAt).getTime() : Number.NaN;
+
+    if (!isLocked && item.hasAccess !== false) available += 1;
+    if (isLocked) locked += 1;
+    if (accessType === 'paid') paid += 1;
+    if (accessType !== 'paid') free += 1;
+    if (!Number.isNaN(updatedTime) && updatedTime >= oneWeekAgo) recentlyAdded += 1;
+    typeCounts[resourceType] = (typeCounts[resourceType] ?? 0) + 1;
+  });
+
+  return { available, free, locked, paid, recentlyAdded, typeCounts };
 }
 
 async function getRpcList(context: Awaited<ReturnType<typeof createContext>>, endpoint: { functionName: string; section?: string[] }, query: ApiClientOptions['query']) {
