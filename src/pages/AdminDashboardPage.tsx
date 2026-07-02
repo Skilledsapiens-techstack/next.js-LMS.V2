@@ -63,19 +63,6 @@ type LearningItem = {
   stats: Array<{ label: string; value: number }>;
 };
 
-type DrilldownGroup = {
-  emptyText: string;
-  getMeta: (item: JsonRecord) => string;
-  getStatus: (item: JsonRecord) => string;
-  getTitle: (item: JsonRecord) => string;
-  href: string;
-  icon: LucideIcon;
-  items: JsonRecord[];
-  label: string;
-  tone: 'safe' | 'warning' | 'danger' | 'neutral';
-  total: number;
-};
-
 type PipelineSignal = {
   caption: string;
   icon: LucideIcon;
@@ -158,15 +145,6 @@ function textFromItem(item: JsonRecord, paths: string[][], fallback = 'Not avail
   return fallback;
 }
 
-function numberFromItem(item: JsonRecord, paths: string[][]) {
-  for (const path of paths) {
-    const numeric = asNumber(valueAtPath(item, path));
-    if (numeric !== undefined) return numeric;
-  }
-
-  return undefined;
-}
-
 function formatDateText(value: string) {
   if (!value || value === 'Not available') return value;
   const parsed = new Date(value);
@@ -176,13 +154,6 @@ function formatDateText(value: string) {
     month: 'short',
     year: 'numeric'
   }).format(parsed);
-}
-
-function formatAmount(item: JsonRecord) {
-  const amount = numberFromItem(item, [['amount'], ['price'], ['orderAmount'], ['paidAmount']]);
-  if (amount === undefined) return textFromItem(item, [['itemType'], ['resourceType']], 'Amount not available');
-  const currency = textFromItem(item, [['currency']], 'INR');
-  return `${currency} ${formatNumber(amount)}`;
 }
 
 function buildLiveMetrics(summary: JsonRecord): MetricCard[] {
@@ -375,73 +346,6 @@ function buildLearningItems(summary: JsonRecord): LearningItem[] {
   ];
 }
 
-function buildDrilldownGroups(drilldowns?: AdminDashboardDrilldowns): DrilldownGroup[] {
-  if (!drilldowns) return [];
-
-  return [
-    {
-      emptyText: 'No failed payments in the compact queue.',
-      getMeta: (item) => `${formatAmount(item)} · ${textFromItem(item, [['itemType'], ['itemId']], 'Payment item')}`,
-      getStatus: (item) => textFromItem(item, [['status'], ['paymentStatus']], 'Pending'),
-      getTitle: (item) => textFromItem(item, [['studentEmail'], ['studentName'], ['email']], 'Student payment'),
-      href: '/admin/payment-orders',
-      icon: BadgeIndianRupee,
-      items: drilldowns.failedPaymentOrders.items,
-      label: 'Failed payments',
-      tone: drilldowns.failedPaymentOrders.total > 0 ? 'danger' : 'safe',
-      total: drilldowns.failedPaymentOrders.total
-    },
-    {
-      emptyText: 'No enrollment requests in this compact queue.',
-      getMeta: (item) => `${textFromItem(item, [['programName'], ['programKey']], 'Program')} · ${textFromItem(item, [['paymentStatus'], ['status']], 'Status pending')}`,
-      getStatus: (item) => textFromItem(item, [['status'], ['paymentStatus']], 'Review'),
-      getTitle: (item) => textFromItem(item, [['studentEmail'], ['studentName'], ['requestId']], 'Enrollment request'),
-      href: '/admin/enrollments',
-      icon: LinkIcon,
-      items: drilldowns.enrollmentRequests.items,
-      label: 'Enrollment requests',
-      tone: drilldowns.enrollmentRequests.total > 0 ? 'warning' : 'safe',
-      total: drilldowns.enrollmentRequests.total
-    },
-    {
-      emptyText: 'No pending project submissions right now.',
-      getMeta: (item) => `${textFromItem(item, [['projectTitle'], ['title']], 'Project')} · ${formatDateText(textFromItem(item, [['submittedAt'], ['createdAt']], 'Not available'))}`,
-      getStatus: (item) => textFromItem(item, [['status']], 'Submitted'),
-      getTitle: (item) => textFromItem(item, [['studentEmail'], ['studentName'], ['requestNumber']], 'Project submission'),
-      href: '/admin/project-submissions',
-      icon: FileCheck2,
-      items: drilldowns.projectSubmissions.items,
-      label: 'Project reviews',
-      tone: drilldowns.projectSubmissions.total > 0 ? 'warning' : 'safe',
-      total: drilldowns.projectSubmissions.total
-    },
-    {
-      emptyText: 'No pending certificate requests right now.',
-      getMeta: (item) => `${textFromItem(item, [['programName'], ['projectTitle']], 'Certificate')} · ${formatDateText(textFromItem(item, [['createdAt'], ['requestedAt']], 'Not available'))}`,
-      getStatus: (item) => textFromItem(item, [['adminStatus'], ['status']], 'Pending'),
-      getTitle: (item) => textFromItem(item, [['studentEmail'], ['studentName']], 'Certificate request'),
-      href: '/admin/certificate-requests',
-      icon: ClipboardCheck,
-      items: drilldowns.certificateRequests.items,
-      label: 'Certificates',
-      tone: drilldowns.certificateRequests.total > 0 ? 'warning' : 'safe',
-      total: drilldowns.certificateRequests.total
-    },
-    {
-      emptyText: 'No open support tickets right now.',
-      getMeta: (item) => `${textFromItem(item, [['categoryName'], ['category']], 'Support')} · ${formatDateText(textFromItem(item, [['createdAt'], ['updatedAt']], 'Not available'))}`,
-      getStatus: (item) => textFromItem(item, [['status']], 'Open'),
-      getTitle: (item) => textFromItem(item, [['subject'], ['studentEmail']], 'Support ticket'),
-      href: '/admin/support',
-      icon: Headphones,
-      items: drilldowns.supportTickets.items,
-      label: 'Support tickets',
-      tone: drilldowns.supportTickets.total > 0 ? 'warning' : 'safe',
-      total: drilldowns.supportTickets.total
-    }
-  ];
-}
-
 function buildPipelineSignals(summary: JsonRecord, drilldowns?: AdminDashboardDrilldowns): PipelineSignal[] {
   const upcoming = countFromSummary(summary, [['workshops', 'upcoming']]);
   const completed = countFromSummary(summary, [['workshops', 'completed']]);
@@ -493,38 +397,6 @@ function sectionToneClass(tone: string) {
   return `admin-health-card admin-health-card--${tone}`;
 }
 
-function DrilldownCard({ group }: { group: DrilldownGroup }) {
-  const Icon = group.icon;
-
-  return (
-    <article className={`admin-drilldown-card admin-drilldown-card--${group.tone}`}>
-      <div className="admin-drilldown-card__head">
-        <Icon size={18} />
-        <div>
-          <strong>{group.label}</strong>
-          <span>{formatNumber(group.total)} total</span>
-        </div>
-        <Link to={group.href}>View all</Link>
-      </div>
-      <div className="admin-drilldown-card__body">
-        {group.items.length ? (
-          group.items.map((item, index) => (
-            <Link className="admin-drilldown-row" key={String(item.id ?? item.requestId ?? item.ticketId ?? index)} to={group.href}>
-              <div>
-                <strong>{group.getTitle(item)}</strong>
-                <p>{group.getMeta(item)}</p>
-              </div>
-              <span>{group.getStatus(item)}</span>
-            </Link>
-          ))
-        ) : (
-          <p className="admin-drilldown-empty">{group.emptyText}</p>
-        )}
-      </div>
-    </article>
-  );
-}
-
 export function AdminDashboardPage() {
   const profileQuery = useAdminProfile();
   const dashboardQuery = useAdminDashboard();
@@ -537,7 +409,6 @@ export function AdminDashboardPage() {
   const healthItems = buildHealthItems(summary);
   const queueItems = buildQueueItems(summary);
   const learningItems = buildLearningItems(summary);
-  const drilldownGroups = buildDrilldownGroups(drilldownsQuery.data);
   const pipelineSignals = buildPipelineSignals(summary, drilldownsQuery.data);
   const hasAttentionItems = queueItems.some((item) => item.count > 0) || healthItems.some((item) => item.tone === 'danger');
   const isRefreshing = dashboardQuery.isFetching || drilldownsQuery.isFetching;
@@ -658,27 +529,6 @@ export function AdminDashboardPage() {
             ))}
           </div>
         </div>
-      </section>
-
-      <section className="admin-section">
-        <div className="admin-section__heading">
-          <div>
-            <span className="eyebrow">Action details</span>
-            <h2>Queues needing admin review</h2>
-          </div>
-          <p>Compact drill-downs show the latest records behind the dashboard totals so admins can move directly to the module that needs work.</p>
-        </div>
-        {drilldownsQuery.isLoading ? (
-          <div className="admin-inline-state">Loading latest queue records...</div>
-        ) : drilldownsQuery.isError ? (
-          <div className="admin-inline-state admin-inline-state--warning">Queue records could not be loaded. The summary above is still available.</div>
-        ) : (
-          <div className="admin-drilldown-grid">
-            {drilldownGroups.map((group) => (
-              <DrilldownCard group={group} key={group.label} />
-            ))}
-          </div>
-        )}
       </section>
 
       <section className="admin-section">
