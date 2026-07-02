@@ -1,4 +1,4 @@
-import { Archive, CheckCircle2, Clock3, Loader2, Plus, RotateCcw, Save, Search } from 'lucide-react';
+import { Archive, CheckCircle2, Clock3, Loader2, Plus, RotateCcw, Save, Search, X } from 'lucide-react';
 import { FormEvent, useMemo, useRef, useState } from 'react';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
@@ -36,6 +36,8 @@ type ResourceFormState = {
 
 type ResourceStatusFilter = AdminResourceStatus | 'all';
 type CohortTargetFilter = 'all' | 'active' | 'upcoming';
+
+const resourcePageSize = 25;
 
 const statusOptions: Array<{ label: string; value: ResourceStatusFilter }> = [
   { label: 'All Statuses', value: 'all' },
@@ -109,16 +111,6 @@ function mapResourceToForm(resource: AdminResource): ResourceFormState {
   };
 }
 
-function resourceMatchesProgram(resource: AdminResource, programKey: string) {
-  if (!programKey) return true;
-  return resource.programKeys.some((key) => key === programKey);
-}
-
-function resourceMatchesCohort(resource: AdminResource, cohortName: string) {
-  if (!cohortName) return true;
-  return resource.cohortNames.some((name) => name === cohortName);
-}
-
 function dedupeById<T extends { id: string }>(pages: Array<T[] | undefined>) {
   const rows = new Map<string, T>();
   pages.forEach((page) => {
@@ -143,6 +135,7 @@ export function AdminResourcesPage() {
   const editorFormRef = useRef<HTMLFormElement | null>(null);
   const [formState, setFormState] = useState<ResourceFormState>(emptyResourceForm);
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null);
+  const [resourcePage, setResourcePage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<ResourceStatusFilter>('all');
@@ -155,11 +148,17 @@ export function AdminResourcesPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isCreatingNew, setIsCreatingNew] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
   const [isSelectingCohorts, setIsSelectingCohorts] = useState(false);
   const [isClearingCohorts, setIsClearingCohorts] = useState(false);
+  const [isClearingPrograms, setIsClearingPrograms] = useState(false);
   const [isClearingForm, setIsClearingForm] = useState(false);
   const [editingResourceId, setEditingResourceId] = useState<string | null>(null);
-  const resourcesQuery = useAdminResources({ limit: 100, page: 1, search, status: statusFilter });
+  const [pendingArchiveResource, setPendingArchiveResource] = useState<AdminResource | null>(null);
+  const [archiveActionResourceId, setArchiveActionResourceId] = useState<string | null>(null);
+  const [restoreActionResourceId, setRestoreActionResourceId] = useState<string | null>(null);
+  const resourcesQuery = useAdminResources({ cohortName: cohortFilter, limit: resourcePageSize, page: resourcePage, programKey: programFilter, search, status: statusFilter });
   const programsQuery = useAdminPrograms({ limit: 100, page: 1, status: 'all' });
   const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, sort: 'name', status: 'all' });
   const cohortsPageTwoQuery = useAdminCohorts({ enabled: (cohortsPageOneQuery.data?.totalPages ?? 1) >= 2, limit: 100, page: 2, sort: 'name', status: 'all' });
@@ -171,6 +170,10 @@ export function AdminResourcesPage() {
   const auditLogsQuery = useAdminResourceAuditLogs(selectedResourceId);
 
   const resources = resourcesQuery.data?.items ?? [];
+  const totalResources = resourcesQuery.data?.total ?? 0;
+  const totalResourcePages = resourcesQuery.data?.totalPages ?? 1;
+  const hasPreviousResourcePage = resourcePage > 1;
+  const hasNextResourcePage = resourcePage < totalResourcePages;
   const programs = programsQuery.data?.items ?? [];
   const cohorts = useMemo(
     () => dedupeById([cohortsPageOneQuery.data?.items, cohortsPageTwoQuery.data?.items, cohortsPageThreeQuery.data?.items]).sort((a, b) => a.name.localeCompare(b.name)),
@@ -180,10 +183,7 @@ export function AdminResourcesPage() {
   const lastRefresh = formatDateTime(resources[0]?.updatedAt);
   const selectedResource = resources.find((resource) => resource.id === selectedResourceId);
 
-  const filteredResources = useMemo(
-    () => resources.filter((resource) => resourceMatchesProgram(resource, programFilter) && resourceMatchesCohort(resource, cohortFilter)),
-    [cohortFilter, programFilter, resources]
-  );
+  const filteredResources = resources;
 
   const selectedCohortSet = useMemo(() => new Set(formState.cohortNames), [formState.cohortNames]);
   const selectedProgramSet = useMemo(() => new Set(formState.programKeys), [formState.programKeys]);
@@ -198,6 +198,7 @@ export function AdminResourcesPage() {
   const effectiveProgramKeys = useMemo(() => uniqueStrings([...formState.programKeys, ...derivedProgramKeys]), [derivedProgramKeys, formState.programKeys]);
   const effectiveDomainKey = derivedDomainKeys.join(',') || formState.domainKey;
   const isResourceSaving = saveResourceMutation.isPending || updateResourceMutation.isPending;
+  const isResourceMutating = isResourceSaving || archiveResourceMutation.isPending || restoreResourceMutation.isPending;
   const filteredProgramsForTargeting = useMemo(() => {
     const query = programTargetSearch.trim().toLowerCase();
     if (!query) return programs;
@@ -221,10 +222,29 @@ export function AdminResourcesPage() {
 
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setIsSearching(true);
+    setResourcePage(1);
     setSearch(searchInput.trim());
+    window.setTimeout(() => setIsSearching(false), 450);
+  }
+
+  function updateStatusFilter(nextStatus: ResourceStatusFilter) {
+    setResourcePage(1);
+    setStatusFilter(nextStatus);
+  }
+
+  function updateProgramFilter(nextProgram: string) {
+    setResourcePage(1);
+    setProgramFilter(nextProgram);
+  }
+
+  function updateCohortFilter(nextCohort: string) {
+    setResourcePage(1);
+    setCohortFilter(nextCohort);
   }
 
   function handleNewResource() {
+    setIsCreatingNew(true);
     setSelectedResourceId(null);
     setFormState({ ...emptyResourceForm, resourceId: `RES-${Date.now()}` });
     setFormError(null);
@@ -233,6 +253,7 @@ export function AdminResourcesPage() {
       editorFormRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
       editorFormRef.current?.closest('.admin-resource-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
+    window.setTimeout(() => setIsCreatingNew(false), 650);
   }
 
   function handleEdit(resource: AdminResource) {
@@ -292,7 +313,9 @@ export function AdminResourcesPage() {
   }
 
   function clearPrograms() {
+    setIsClearingPrograms(true);
     setFormState((current) => ({ ...current, programKeys: [] }));
+    window.setTimeout(() => setIsClearingPrograms(false), 650);
   }
 
   async function refreshResources() {
@@ -385,32 +408,42 @@ export function AdminResourcesPage() {
       setSelectedResourceId(savedResource.id);
       setFormState(mapResourceToForm(savedResource));
       setActionMessage(selectedResourceId ? 'Resource updated.' : 'Resource created.');
+      await auditLogsQuery.refetch();
     } catch (error) {
       setFormError(readableError(error, 'Resource could not be saved.'));
     }
   }
 
   async function archiveResource(resource: AdminResource) {
+    setArchiveActionResourceId(resource.id);
     setActionMessage(null);
     setFormError(null);
     try {
       const archived = await archiveResourceMutation.mutateAsync(resource.id);
       if (selectedResourceId === resource.id) setFormState(mapResourceToForm(archived));
       setActionMessage('Resource archived and hidden from students.');
+      setPendingArchiveResource(null);
+      await auditLogsQuery.refetch();
     } catch (error) {
       setFormError(readableError(error, 'Resource could not be archived.'));
+    } finally {
+      setArchiveActionResourceId(null);
     }
   }
 
   async function restoreResource(resource: AdminResource) {
+    setRestoreActionResourceId(resource.id);
     setActionMessage(null);
     setFormError(null);
     try {
       const restored = await restoreResourceMutation.mutateAsync(resource.id);
       if (selectedResourceId === resource.id) setFormState(mapResourceToForm(restored));
       setActionMessage('Resource restored.');
+      await auditLogsQuery.refetch();
     } catch (error) {
       setFormError(readableError(error, 'Resource could not be restored.'));
+    } finally {
+      setRestoreActionResourceId(null);
     }
   }
 
@@ -456,9 +489,9 @@ export function AdminResourcesPage() {
               <span>Resources</span>
               <h2>Resource Library</h2>
             </div>
-            <button className="segmented-button segmented-button--gold admin-resource-action" onClick={handleNewResource} type="button">
-              <Plus size={15} />
-              New Resource
+            <button className="segmented-button segmented-button--gold admin-resource-action" disabled={isCreatingNew || isResourceSaving} onClick={handleNewResource} type="button">
+              {isCreatingNew ? <Loader2 className="workshop-action-spinner" size={14} /> : <Plus size={15} />}
+              {isCreatingNew ? 'Opening...' : 'New Resource'}
             </button>
           </header>
 
@@ -471,10 +504,14 @@ export function AdminResourcesPage() {
                 </label>
                 <input id="admin-resource-search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search resources..." type="search" />
               </div>
+              <button className="segmented-button admin-resource-action admin-resource-search-button" disabled={isSearching || resourcesQuery.isFetching} type="submit">
+                {isSearching || resourcesQuery.isFetching ? <Loader2 className="workshop-action-spinner" size={14} /> : <Search size={14} />}
+                {isSearching || resourcesQuery.isFetching ? 'Searching...' : 'Search'}
+              </button>
               <label className="sr-only" htmlFor="admin-resource-status-filter">
                 Status
               </label>
-              <select id="admin-resource-status-filter" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as ResourceStatusFilter)}>
+              <select id="admin-resource-status-filter" value={statusFilter} onChange={(event) => updateStatusFilter(event.target.value as ResourceStatusFilter)}>
                 {statusOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
@@ -484,7 +521,7 @@ export function AdminResourcesPage() {
               <label className="sr-only" htmlFor="admin-resource-program-filter">
                 Program
               </label>
-              <select id="admin-resource-program-filter" value={programFilter} onChange={(event) => setProgramFilter(event.target.value)}>
+              <select id="admin-resource-program-filter" value={programFilter} onChange={(event) => updateProgramFilter(event.target.value)}>
                 <option value="">All Programs</option>
                 {programs.map((program) => (
                   <option key={program.id} value={program.programKey}>
@@ -495,7 +532,7 @@ export function AdminResourcesPage() {
               <label className="sr-only" htmlFor="admin-resource-cohort-filter">
                 Cohort
               </label>
-              <select id="admin-resource-cohort-filter" value={cohortFilter} onChange={(event) => setCohortFilter(event.target.value)}>
+              <select id="admin-resource-cohort-filter" value={cohortFilter} onChange={(event) => updateCohortFilter(event.target.value)}>
                 <option value="">All Cohorts</option>
                 {cohorts.map((cohort) => (
                   <option key={cohort.id} value={cohort.name}>
@@ -524,14 +561,14 @@ export function AdminResourcesPage() {
                         {editingResourceId === resource.id ? 'Editing...' : 'Edit'}
                       </button>
                       {resource.status === 'inactive' ? (
-                        <button className="segmented-button admin-resource-action" disabled={restoreResourceMutation.isPending} onClick={() => void restoreResource(resource)} type="button">
-                          {restoreResourceMutation.isPending ? <Loader2 className="workshop-action-spinner" size={14} /> : <RotateCcw size={14} />}
-                          {restoreResourceMutation.isPending ? 'Restoring...' : 'Restore'}
+                        <button className="segmented-button admin-resource-action" disabled={isResourceMutating} onClick={() => void restoreResource(resource)} type="button">
+                          {restoreActionResourceId === resource.id ? <Loader2 className="workshop-action-spinner" size={14} /> : <RotateCcw size={14} />}
+                          {restoreActionResourceId === resource.id ? 'Restoring...' : 'Restore'}
                         </button>
                       ) : (
-                        <button className="segmented-button segmented-button--danger admin-resource-action" disabled={archiveResourceMutation.isPending} onClick={() => void archiveResource(resource)} type="button">
-                          {archiveResourceMutation.isPending ? <Loader2 className="workshop-action-spinner" size={14} /> : <Archive size={14} />}
-                          {archiveResourceMutation.isPending ? 'Archiving...' : 'Archive'}
+                        <button className="segmented-button segmented-button--danger admin-resource-action" disabled={isResourceMutating} onClick={() => setPendingArchiveResource(resource)} type="button">
+                          {archiveActionResourceId === resource.id ? <Loader2 className="workshop-action-spinner" size={14} /> : <Archive size={14} />}
+                          {archiveActionResourceId === resource.id ? 'Archiving...' : 'Archive'}
                         </button>
                       )}
                     </div>
@@ -541,6 +578,17 @@ export function AdminResourcesPage() {
                 <EmptyState />
               )}
             </div>
+            <nav className="pagination-bar admin-resource-pagination" aria-label="Resource pagination">
+              <button className="pagination-link" disabled={!hasPreviousResourcePage || resourcesQuery.isFetching} onClick={() => setResourcePage((current) => Math.max(1, current - 1))} type="button">
+                Previous page
+              </button>
+              <span>
+                Page {resourcePage} of {totalResourcePages} · {totalResources} matching
+              </span>
+              <button className="pagination-link" disabled={!hasNextResourcePage || resourcesQuery.isFetching} onClick={() => setResourcePage((current) => Math.min(totalResourcePages, current + 1))} type="button">
+                Next page
+              </button>
+            </nav>
           </div>
         </section>
 
@@ -552,7 +600,7 @@ export function AdminResourcesPage() {
             </div>
           </header>
 
-          <form className="admin-project-form admin-resource-form" onSubmit={saveResource} ref={editorFormRef}>
+          <form className={isResourceSaving ? 'admin-project-form admin-resource-form admin-resource-form--saving' : 'admin-project-form admin-resource-form'} onSubmit={saveResource} ref={editorFormRef} aria-busy={isResourceSaving}>
             <label>
               <span>Resource ID *</span>
               <input value={formState.resourceId} onChange={(event) => updateForm('resourceId', event.target.value)} />
@@ -596,8 +644,9 @@ export function AdminResourcesPage() {
                   <input value={programTargetSearch} onChange={(event) => setProgramTargetSearch(event.target.value)} placeholder="Search programs..." type="search" />
                 </div>
                 <span>{formState.programKeys.length} selected</span>
-                <button className="segmented-button admin-resource-action" onClick={clearPrograms} type="button">
-                  Clear Programs
+                <button className="segmented-button admin-resource-action" disabled={isClearingPrograms || isResourceSaving} onClick={clearPrograms} type="button">
+                  {isClearingPrograms ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
+                  {isClearingPrograms ? 'Clearing...' : 'Clear Programs'}
                 </button>
               </div>
               <div className="admin-project-program-list admin-resource-program-list">
@@ -722,7 +771,7 @@ export function AdminResourcesPage() {
               <input readOnly value="Auto" />
             </label>
             <div className="admin-project-form__actions">
-              <button className="segmented-button admin-resource-action" disabled={isClearingForm} onClick={clearForm} type="button">
+              <button className="segmented-button admin-resource-action" disabled={isClearingForm || isResourceSaving} onClick={clearForm} type="button">
                 {isClearingForm ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
                 {isClearingForm ? 'Clearing...' : 'Clear'}
               </button>
@@ -771,6 +820,34 @@ export function AdminResourcesPage() {
           </form>
         </section>
       </div>
+      {pendingArchiveResource ? (
+        <div className="student-modal-backdrop" role="presentation">
+          <section className="student-modal workshop-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="archive-resource-title">
+            <header className="student-modal__header">
+              <div>
+                <span>Archive resource</span>
+                <h2 id="archive-resource-title">Hide this resource?</h2>
+              </div>
+              <button aria-label="Close archive confirmation" className="student-modal__icon-button" disabled={archiveResourceMutation.isPending} onClick={() => setPendingArchiveResource(null)} type="button">
+                <X size={18} />
+              </button>
+            </header>
+            <div className="student-modal__body workshop-confirm-modal__body">
+              <strong>{pendingArchiveResource.title}</strong>
+              <p>This sets the resource to inactive and hides it from students. You can restore it later from the inactive list.</p>
+            </div>
+            <footer className="student-modal__footer">
+              <button className="segmented-button" disabled={archiveResourceMutation.isPending} onClick={() => setPendingArchiveResource(null)} type="button">
+                Keep active
+              </button>
+              <button className="segmented-button segmented-button--danger admin-resource-action" disabled={archiveResourceMutation.isPending} onClick={() => void archiveResource(pendingArchiveResource)} type="button">
+                {archiveResourceMutation.isPending ? <Loader2 className="workshop-action-spinner" size={14} /> : <Archive size={14} />}
+                {archiveResourceMutation.isPending ? 'Archiving...' : 'Archive Resource'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

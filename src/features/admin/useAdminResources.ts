@@ -61,8 +61,10 @@ export type AdminResourceWritePayload = {
 
 export type AdminResourcesQuery = {
   accessType?: AdminResourceAccessType | 'all';
+  cohortName?: string;
   limit?: number;
   page?: number;
+  programKey?: string;
   search?: string;
   status?: AdminResourceStatus | 'all';
 };
@@ -72,6 +74,8 @@ export function useAdminResources(query: AdminResourcesQuery) {
   const accessType = query.accessType ?? 'all';
   const limit = query.limit ?? 25;
   const page = query.page ?? 1;
+  const cohortName = query.cohortName?.trim();
+  const programKey = query.programKey?.trim();
   const search = query.search?.trim();
   const status = query.status ?? 'all';
 
@@ -82,13 +86,16 @@ export function useAdminResources(query: AdminResourcesQuery) {
         accessToken: accessToken ?? undefined,
         query: {
           accessType,
+          cohortName,
           limit,
           page,
+          programKey,
           search,
+          sort: 'newest',
           status
         }
       }),
-    queryKey: ['admin-resources', accessToken, page, limit, status, accessType, search],
+    queryKey: ['admin-resources', accessToken, page, limit, status, accessType, programKey, cohortName, search],
     staleTime: 60_000
   });
 }
