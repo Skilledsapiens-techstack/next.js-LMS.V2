@@ -3825,16 +3825,54 @@ h1 {
   gap: 18px;
 }
 
-.program-card {
-  display: flex;
-  flex-direction: column;
+.program-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.program-overview article {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
-  min-height: 310px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 0 rgb(17 17 17 / 3%);
+  padding: 14px;
+}
+
+.program-overview svg {
+  color: var(--color-text-muted);
+}
+
+.program-overview span {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.program-overview strong {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.program-card {
+  display: grid;
+  grid-template-rows: 178px 112px auto 58px auto minmax(24px, auto);
+  align-content: start;
+  min-width: 0;
+  min-height: 462px;
   border: 1px solid var(--color-border);
   border-top: 4px solid var(--color-gold);
   border-radius: 8px;
   background: #ffffff;
-  padding: 24px;
+  padding: 20px;
   box-shadow: 0 1px 0 rgb(17 17 17 / 3%);
 }
 
@@ -3843,6 +3881,7 @@ h1 {
   grid-template-columns: 48px minmax(0, 1fr) auto;
   align-items: start;
   gap: 14px;
+  min-height: 178px;
 }
 
 .program-card__icon {
@@ -3858,19 +3897,20 @@ h1 {
 
 .program-card__head h2 {
   margin-top: 4px;
-  font-size: 21px;
-  font-weight: 800;
+  font-size: 19px;
+  font-weight: 700;
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
 
 .program-card__body {
-  margin-top: 26px;
   min-width: 0;
+  min-height: 112px;
 }
 
 .program-card__body h3 {
-  font-size: 24px;
+  font-size: 20px;
+  font-weight: 700;
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
@@ -3903,11 +3943,42 @@ h1 {
   padding: 6px 12px;
 }
 
+.program-card__stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 0;
+}
+
+.program-card__stats span {
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #f9fbff;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 8px;
+  text-align: center;
+}
+
+.program-card__stats b {
+  display: block;
+  color: var(--color-text);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
 .program-card__meta {
   display: grid;
+  align-content: start;
   gap: 10px;
-  margin-top: auto;
-  padding-top: 24px;
+  margin-top: 16px;
+  min-height: 58px;
+  padding-top: 0;
 }
 
 .program-card__meta div {
@@ -3919,10 +3990,34 @@ h1 {
   font-weight: 700;
 }
 
+.program-card__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.program-card__actions .student-action {
+  min-height: 38px;
+  font-size: 12px;
+  font-weight: 650;
+  padding: 8px 10px;
+}
+
 .program-card__link,
 .program-card__note {
-  margin-top: 20px;
+  margin-top: 14px;
   align-self: flex-start;
+}
+
+.program-card__certificate {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .certificate-card-grid {
@@ -8652,6 +8747,7 @@ h1 {
   .admin-pipeline-grid,
   .admin-learning-grid,
   .admin-shortcut-grid,
+  .program-overview,
   .student-summary-grid,
   .student-shortcut-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -9295,6 +9391,7 @@ h1 {
   .admin-pipeline-lists,
   .admin-learning-grid,
   .admin-shortcut-grid,
+  .program-overview,
   .student-summary-grid,
   .student-shortcut-grid,
   .support-tabs,
@@ -9310,6 +9407,22 @@ h1 {
   .live-project-deliverable,
   .certificate-card-grid {
     grid-template-columns: 1fr;
+  }
+
+  .program-card__stats,
+  .program-card__actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .program-card {
+    grid-template-rows: auto;
+    min-height: 0;
+  }
+
+  .program-card__head,
+  .program-card__body,
+  .program-card__meta {
+    min-height: 0;
   }
 
   .live-project-hero {

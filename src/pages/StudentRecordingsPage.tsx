@@ -1,4 +1,4 @@
-import { CalendarDays, ExternalLink, HelpCircle, Lock, ShieldCheck, Video } from 'lucide-react';
+import { CalendarDays, ExternalLink, Lock, ShieldCheck, Video } from 'lucide-react';
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState, LockedState } from '../components/ScreenStates';
@@ -78,7 +78,6 @@ function totalPagesFor(count: number) {
 function RecordingRow({ recording }: { recording: StudentRecording }) {
   const canOpen = hasRecordingAccess(recording) && Boolean(recording.recordingUrl);
   const programLabel = getProgramLabel(recording);
-  const supportLink = `/student/support?subject=${encodeURIComponent(`Recording issue: ${recording.title}`)}`;
 
   return (
     <article className="student-recording-row">
@@ -117,10 +116,6 @@ function RecordingRow({ recording }: { recording: StudentRecording }) {
             Pay to unlock
           </a>
         ) : null}
-        <Link className="student-action" to={supportLink}>
-          <HelpCircle size={16} />
-          Report issue
-        </Link>
       </div>
     </article>
   );
@@ -239,7 +234,7 @@ export function StudentRecordingsPage() {
       {lockedCount > 0 ? <LockedState /> : null}
 
       <StateBlock title="Recording access">
-        Only recordings mapped to your account are shown here. If a link is broken or a session is missing, use Report issue with the session name and program details.
+        Only recordings mapped to your account are shown here. Recording links and paid access stay protected for eligible learners.
       </StateBlock>
     </div>
   );

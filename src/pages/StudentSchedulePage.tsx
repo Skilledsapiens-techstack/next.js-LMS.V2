@@ -1,4 +1,4 @@
-import { CalendarDays, ExternalLink, HelpCircle, Lock, Radio, ShieldCheck } from 'lucide-react';
+import { CalendarDays, ExternalLink, Lock, Radio, ShieldCheck } from 'lucide-react';
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState, LockedState } from '../components/ScreenStates';
@@ -107,7 +107,6 @@ function buildPageLink(page: number, accessType: AccessFilter) {
 function ScheduleRow({ item }: { item: StudentScheduleItem }) {
   const canJoin = hasScheduleAccess(item) && Boolean(item.joinUrl);
   const programLabel = getProgramLabel(item);
-  const supportLink = `/student/support?subject=${encodeURIComponent(`Schedule issue: ${item.title}`)}`;
 
   return (
     <article className="student-schedule-row">
@@ -150,10 +149,6 @@ function ScheduleRow({ item }: { item: StudentScheduleItem }) {
             Pay to unlock
           </a>
         ) : null}
-        <Link className="student-action" to={supportLink}>
-          <HelpCircle size={16} />
-          Report issue
-        </Link>
       </div>
     </article>
   );
@@ -287,7 +282,7 @@ export function StudentSchedulePage() {
       {lockedCount > 0 ? <LockedState /> : null}
 
       <StateBlock title="Schedule access">
-        Only sessions mapped to your account are shown here. If a session is missing or a join link does not work, use Report issue with the session name and program details.
+        Only sessions mapped to your account are shown here. Join links and paid access stay protected for eligible learners.
       </StateBlock>
     </div>
   );
