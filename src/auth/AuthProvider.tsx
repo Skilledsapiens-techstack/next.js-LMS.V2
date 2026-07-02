@@ -1,4 +1,5 @@
 import { Session } from '@supabase/supabase-js';
+import type { AuthChangeEvent } from '@supabase/supabase-js';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { getSupabaseClient, isSupabaseAuthConfigured } from '../lib/supabaseClient';
 
@@ -7,10 +8,13 @@ type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'configurati
 type AuthContextValue = {
   accessToken: string | null;
   isConfigured: boolean;
+  isPasswordRecovery: boolean;
+  resetPasswordForEmail: (email: string, intent?: 'forgot' | 'create') => Promise<void>;
   session: Session | null;
   signInWithPassword: (email: string, password: string) => Promise<Session | null>;
   signOut: () => Promise<void>;
   status: AuthStatus;
+  updatePassword: (password: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -23,6 +27,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const isConfigured = isSupabaseAuthConfigured();
   const supabase = getSupabaseClient();
   const [session, setSession] = useState<Session | null>(null);
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
   const [status, setStatus] = useState<AuthStatus>(isConfigured ? 'loading' : 'configuration-missing');
 
   useEffect(() => {
@@ -45,9 +50,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     const {
       data: { subscription }
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, nextSession) => {
       setSession(nextSession);
       setStatus(nextSession ? 'authenticated' : 'unauthenticated');
+      setIsPasswordRecovery(event === 'PASSWORD_RECOVERY');
     });
 
     return () => {
@@ -78,24 +84,61 @@ export function AuthProvider({ children }: AuthProviderProps) {
     [supabase]
   );
 
+  const resetPasswordForEmail = useCallback(
+    async (email: string, intent: 'forgot' | 'create' = 'forgot') => {
+      if (!supabase) {
+        throw new Error('Portal authentication is not configured for this environment.');
+      }
+
+      const redirectTo = `${window.location.origin}/login?mode=recovery&intent=${intent}`;
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+
+      if (error) {
+        throw error;
+      }
+    },
+    [supabase]
+  );
+
+  const updatePassword = useCallback(
+    async (password: string) => {
+      if (!supabase) {
+        throw new Error('Portal authentication is not configured for this environment.');
+      }
+
+      const { error } = await supabase.auth.updateUser({ password });
+
+      if (error) {
+        throw error;
+      }
+
+      setIsPasswordRecovery(false);
+    },
+    [supabase]
+  );
+
   const signOut = useCallback(async () => {
     if (!supabase) {
       return;
     }
 
     await supabase.auth.signOut();
+    setIsPasswordRecovery(false);
   }, [supabase]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       accessToken: session?.access_token ?? null,
       isConfigured,
+      isPasswordRecovery,
+      resetPasswordForEmail,
       session,
       signInWithPassword,
       signOut,
-      status
+      status,
+      updatePassword
     }),
-    [isConfigured, session, signInWithPassword, signOut, status]
+    [isConfigured, isPasswordRecovery, resetPasswordForEmail, session, signInWithPassword, signOut, status, updatePassword]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
