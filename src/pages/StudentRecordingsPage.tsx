@@ -55,6 +55,10 @@ function getProgramLabel(recording: StudentRecording) {
   return recording.programKey || recording.domainKey;
 }
 
+function hasRecordingAccess(recording: StudentRecording) {
+  return !recording.locked && recording.hasAccess !== false;
+}
+
 function buildPageLink(page: number, accessType: AccessFilter) {
   const params = new URLSearchParams();
   params.set('page', String(page));
@@ -72,7 +76,7 @@ function totalPagesFor(count: number) {
 }
 
 function RecordingRow({ recording }: { recording: StudentRecording }) {
-  const canOpen = !recording.locked && recording.hasAccess && Boolean(recording.recordingUrl);
+  const canOpen = hasRecordingAccess(recording) && Boolean(recording.recordingUrl);
   const programLabel = getProgramLabel(recording);
   const supportLink = `/student/support?subject=${encodeURIComponent(`Recording issue: ${recording.title}`)}`;
 
@@ -133,7 +137,7 @@ export function StudentRecordingsPage() {
   const safePage = Math.min(page, totalPages);
   const visibleRecordings = paginateItems(recordings, safePage);
   const lockedCount = useMemo(() => recordings.filter((item) => item.locked).length, [recordings]);
-  const availableCount = useMemo(() => recordings.filter((item) => !item.locked && item.hasAccess).length, [recordings]);
+  const availableCount = useMemo(() => recordings.filter(hasRecordingAccess).length, [recordings]);
   const latestDate = recordings[0]?.date ? formatDate(recordings[0].date) : 'None';
 
   function updateAccessType(nextAccessType: AccessFilter) {

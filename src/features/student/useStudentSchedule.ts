@@ -9,7 +9,7 @@ export type StudentScheduleStatus = 'Upcoming' | 'Scheduled' | 'Live';
 export type StudentScheduleItem = {
   accessType: StudentScheduleAccessType;
   cohortNames: string[];
-  currency?: string;
+  currency?: string | null;
   date: string;
   domainKey?: string;
   durationMinutes?: number;
@@ -18,7 +18,8 @@ export type StudentScheduleItem = {
   joinUrl?: string;
   locked: boolean;
   lockReason?: string;
-  price?: number;
+  paymentLink?: string;
+  price?: number | null;
   programKey?: string;
   status: StudentScheduleStatus;
   time?: string;
