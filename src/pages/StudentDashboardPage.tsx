@@ -1,13 +1,27 @@
-import { Award, BookOpen, CalendarDays, FileCheck2, Library, MessageCircle, PlayCircle, ShieldCheck, Video, type LucideIcon } from 'lucide-react';
+import {
+  ArrowRight,
+  Award,
+  CalendarDays,
+  Clock3,
+  ExternalLink,
+  FileCheck2,
+  Library,
+  Lock,
+  Megaphone,
+  PlayCircle,
+  Video,
+  type LucideIcon
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../components/PageHeader';
-import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
+import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
-import { JsonRecord, StudentDashboard, StudentProfile, useStudentDashboard, useStudentProfile } from '../features/student/useStudentDashboard';
-import { useStudentRecordings } from '../features/student/useStudentRecordings';
-import { useStudentResources } from '../features/student/useStudentResources';
-import { useStudentSchedule } from '../features/student/useStudentSchedule';
+import { StudentAnnouncement, useStudentAnnouncements } from '../features/student/useStudentAnnouncements';
+import { JsonRecord, StudentProfile, useStudentDashboard, useStudentProfile } from '../features/student/useStudentDashboard';
+import { StudentRecording, useStudentRecordings } from '../features/student/useStudentRecordings';
+import { StudentResource, useStudentResources } from '../features/student/useStudentResources';
+import { StudentScheduleItem, useStudentSchedule } from '../features/student/useStudentSchedule';
 
 type SummaryCard = {
   caption: string;
@@ -17,14 +31,10 @@ type SummaryCard = {
   value: string;
 };
 
-type DashboardRow = {
-  area: string;
-  count: number;
-  path: string;
-  notes: string;
-};
-
 type ScopedCounts = {
+  announcements: number;
+  certificates: number;
+  projects: number;
   recordings: number;
   resources: number;
   schedule: number;
@@ -34,7 +44,11 @@ function asArray(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
-function pickArray(record: JsonRecord, keys: string[]) {
+function pickArray(record: JsonRecord | undefined, keys: string[]) {
+  if (!record) {
+    return [];
+  }
+
   for (const key of keys) {
     const value = record[key];
     if (Array.isArray(value)) {
@@ -45,7 +59,7 @@ function pickArray(record: JsonRecord, keys: string[]) {
   return [];
 }
 
-function countFromBundle(bundle: JsonRecord, keys: string[]) {
+function countFromBundle(bundle: JsonRecord | undefined, keys: string[]) {
   return pickArray(bundle, keys).length;
 }
 
@@ -53,110 +67,157 @@ function formatName(profile?: StudentProfile) {
   return profile?.fullName || 'Student';
 }
 
-function buildSummaryCards(data: StudentDashboard | undefined, counts: ScopedCounts): SummaryCard[] {
+function formatDate(value?: string) {
+  if (!value) {
+    return 'Date pending';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    weekday: 'short'
+  }).format(date);
+}
+
+function formatDateTime(value?: string) {
+  if (!value) {
+    return 'Recently updated';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short'
+  }).format(date);
+}
+
+function formatScheduleTime(item?: StudentScheduleItem) {
+  if (!item) {
+    return 'Time pending';
+  }
+
+  const parts = [formatDate(item.date), item.time, item.durationMinutes ? `${item.durationMinutes} min` : undefined].filter(Boolean);
+  return parts.join(' · ');
+}
+
+function getResourceNote(resource: StudentResource) {
+  if (resource.locked && resource.price) {
+    return `${resource.currency ?? 'INR'} ${resource.price} payment required`;
+  }
+
+  if (resource.locked) {
+    return resource.lockReason ?? 'Access required';
+  }
+
+  return resource.resourceType || 'Learning resource';
+}
+
+function buildSummaryCards(counts: ScopedCounts): SummaryCard[] {
   return [
     {
-      caption: 'Completed sessions ready to watch',
-      icon: Video,
-      label: 'Recordings',
-      path: '/student/recordings',
-      value: String(counts.recordings)
-    },
-    {
-      caption: 'Upcoming live classes and workshops',
+      caption: 'Join-ready live sessions',
       icon: CalendarDays,
       label: 'Schedule',
       path: '/student/schedule',
       value: String(counts.schedule)
     },
     {
-      caption: 'Templates, compendiums, and links',
+      caption: 'Completed sessions to watch',
+      icon: Video,
+      label: 'Recordings',
+      path: '/student/recordings',
+      value: String(counts.recordings)
+    },
+    {
+      caption: 'Templates and useful links',
       icon: Library,
       label: 'Resources',
       path: '/student/resources',
       value: String(counts.resources)
     },
     {
-      caption: 'Guided live project work',
+      caption: 'Guided work and submissions',
       icon: FileCheck2,
       label: 'Projects',
       path: '/student/projects',
-      value: String(data ? countFromBundle(data.projects, ['projects', 'items']) : 0)
+      value: String(counts.projects)
     },
     {
-      caption: 'Achievements and status',
+      caption: 'Certificate status',
       icon: Award,
       label: 'Certificates',
       path: '/student/certificates',
-      value: String(data ? countFromBundle(data.certificates, ['certificates', 'items']) : 0)
+      value: String(counts.certificates)
     }
   ];
 }
 
-function buildRows(data: StudentDashboard | undefined, counts: ScopedCounts): DashboardRow[] {
-  if (!data) {
-    return [];
+function getSessionAction(item?: StudentScheduleItem) {
+  if (!item) {
+    return { label: 'View schedule', path: '/student/schedule' };
   }
 
-  return [
-    {
-      area: 'Announcements',
-      count: countFromBundle(data.dashboard, ['announcements']),
-      notes: 'Priority updates and cohort notices published for your learner access.',
-      path: '/student/announcements'
-    },
-    {
-      area: 'Recordings',
-      count: counts.recordings,
-      notes: 'Completed sessions available for your enrolled programs and cohorts.',
-      path: '/student/recordings'
-    },
-    {
-      area: 'Schedule',
-      count: counts.schedule,
-      notes: 'Upcoming live sessions currently visible for your profile.',
-      path: '/student/schedule'
-    },
-    {
-      area: 'Resources',
-      count: counts.resources,
-      notes: 'Curated learning material unlocked for your program and cohort access.',
-      path: '/student/resources'
-    },
-    {
-      area: 'Projects',
-      count: countFromBundle(data.projects, ['projects', 'items']),
-      notes: 'Live project catalog and guided submission areas.',
-      path: '/student/projects'
-    },
-    {
-      area: 'Certificates',
-      count: countFromBundle(data.certificates, ['certificates', 'items']),
-      notes: 'Certificate status and eligible achievement records.',
-      path: '/student/certificates'
-    }
-  ];
+  if (!item.locked && item.hasAccess && item.joinUrl) {
+    return { href: item.joinUrl, label: item.status === 'Live' ? 'Join live class' : 'Open meeting link' };
+  }
+
+  return { label: 'View schedule', path: '/student/schedule' };
+}
+
+function renderItemList<TItem>({
+  emptyText,
+  items,
+  renderItem
+}: {
+  emptyText: string;
+  items: TItem[];
+  renderItem: (item: TItem) => JSX.Element;
+}) {
+  if (items.length === 0) {
+    return <p className="student-muted-state">{emptyText}</p>;
+  }
+
+  return <div className="student-learning-list">{items.map(renderItem)}</div>;
 }
 
 export function StudentDashboardPage() {
   const profileQuery = useStudentProfile();
   const dashboardQuery = useStudentDashboard();
-  const recordingsQuery = useStudentRecordings({ accessType: 'all', limit: 1, page: 1, source: 'all' });
-  const scheduleQuery = useStudentSchedule({ accessType: 'all', limit: 1, page: 1, status: 'all' });
-  const resourcesQuery = useStudentResources({ accessType: 'all', limit: 1, page: 1 });
+  const announcementsQuery = useStudentAnnouncements({ limit: 3, page: 1, priority: 'all' });
+  const recordingsQuery = useStudentRecordings({ accessType: 'all', limit: 3, page: 1, source: 'all' });
+  const scheduleQuery = useStudentSchedule({ accessType: 'all', limit: 3, page: 1, status: 'all' });
+  const resourcesQuery = useStudentResources({ accessType: 'all', limit: 3, locked: 'all', page: 1 });
+  const lockedResourcesQuery = useStudentResources({ accessType: 'paid', limit: 3, locked: true, page: 1 });
   const profile = dashboardQuery.data?.student ?? profileQuery.data;
-  const isLoading = profileQuery.isLoading || dashboardQuery.isLoading || recordingsQuery.isLoading || scheduleQuery.isLoading || resourcesQuery.isLoading;
-  const isError = profileQuery.isError || dashboardQuery.isError || recordingsQuery.isError || scheduleQuery.isError || resourcesQuery.isError;
+  const isLoading = profileQuery.isLoading || dashboardQuery.isLoading;
+  const isError = profileQuery.isError || dashboardQuery.isError;
   const scopedCounts = {
+    announcements: announcementsQuery.data?.total ?? countFromBundle(dashboardQuery.data?.dashboard, ['announcements']),
+    certificates: countFromBundle(dashboardQuery.data?.certificates, ['certificates', 'items']),
+    projects: countFromBundle(dashboardQuery.data?.projects, ['projects', 'items']),
     recordings: recordingsQuery.data?.total ?? 0,
     resources: resourcesQuery.data?.total ?? 0,
     schedule: scheduleQuery.data?.total ?? 0
   };
-  const summaryCards = buildSummaryCards(dashboardQuery.data, scopedCounts);
-  const rows = buildRows(dashboardQuery.data, scopedCounts);
-  const hasAnyRecords = rows.some((row) => row.count > 0);
+  const summaryCards = buildSummaryCards(scopedCounts);
   const trackRoles = asArray(profile?.trackRoleIds).filter((role): role is string => typeof role === 'string');
   const verifiedCohortName = profile?.cohortName?.trim();
+  const scheduleItems = scheduleQuery.data?.items ?? [];
+  const recordingItems = recordingsQuery.data?.items ?? [];
+  const resourceItems = resourcesQuery.data?.items ?? [];
+  const lockedResourceItems = lockedResourcesQuery.data?.items ?? [];
+  const announcementItems = announcementsQuery.data?.items ?? [];
+  const nextSession = scheduleItems[0];
+  const sessionAction = getSessionAction(nextSession);
 
   if (isLoading) {
     return (
@@ -179,57 +240,44 @@ export function StudentDashboardPage() {
   return (
     <div className="page-stack student-dashboard">
       <PageHeader
-        description="Your learning hub for live classes, recordings, resources, projects, and certificates."
+        description="A quick home base for your next class, latest material, resources, projects, and important updates."
         eyebrow="Student dashboard"
         title={`Welcome, ${formatName(profile)}`}
       />
 
-      <section className="student-hero">
-        <div className="student-hero__identity">
+      <section className="student-home-hero">
+        <div className="student-home-hero__main">
           <span className="eyebrow">Learner profile</span>
           <h2>{profile?.programName ?? 'Program not assigned'}</h2>
-          {verifiedCohortName ? (
-            <div className="student-cohort-list" aria-label="Assigned cohorts">
-              <StatusBadge>{verifiedCohortName}</StatusBadge>
-            </div>
-          ) : (
-            <p>Cohort assignment will appear here once available.</p>
-          )}
-          <div className="student-hero__actions">
-            <Link className="student-action student-action--primary" to="/student/recordings">
-              <PlayCircle size={18} />
-              Watch recordings
-            </Link>
-            <Link className="student-action" to="/student/resources">
-              <Library size={18} />
-              Open resources
-            </Link>
+          <div className="student-profile-strip" aria-label="Student profile details">
+            <span>{profile?.email ?? 'Email not available'}</span>
+            <span>{profile?.studentId ?? 'Student ID pending'}</span>
+            <span>{profile?.collegeName ?? 'College not available'}</span>
+          </div>
+          <div className="student-cohort-list" aria-label="Assigned cohorts">
+            {verifiedCohortName ? <StatusBadge>{verifiedCohortName}</StatusBadge> : <StatusBadge>Cohort pending</StatusBadge>}
+            <StatusBadge>{profile?.active ? 'Active access' : 'Inactive access'}</StatusBadge>
+            {trackRoles.slice(0, 2).map((role) => (
+              <StatusBadge key={role}>{role}</StatusBadge>
+            ))}
           </div>
         </div>
-        <div className="student-hero__meta">
-          <article>
-            <span>Email</span>
-            <strong>{profile?.email ?? 'Not available'}</strong>
-          </article>
-          <article>
-            <span>College</span>
-            <strong>{profile?.collegeName ?? 'Not available'}</strong>
-          </article>
-          <article>
-            <span>Student ID</span>
-            <strong>{profile?.studentId ?? 'Not available'}</strong>
-          </article>
-          <article>
-            <span>Access</span>
-            <strong>{profile?.active ? 'Active' : 'Inactive'}</strong>
-          </article>
+        <div className="student-home-actions">
+          <Link className="student-action student-action--primary" to="/student/schedule">
+            <CalendarDays size={18} />
+            View schedule
+          </Link>
+          <Link className="student-action" to="/student/recordings">
+            <PlayCircle size={18} />
+            Continue learning
+          </Link>
         </div>
       </section>
 
       <div className="student-summary-grid">
         {summaryCards.map(({ caption, icon: Icon, label, path, value }) => (
           <Link className="student-summary-card" key={label} to={path}>
-            <Icon size={22} />
+            <Icon size={20} />
             <div>
               <span>{label}</span>
               <strong>{value}</strong>
@@ -239,65 +287,154 @@ export function StudentDashboardPage() {
         ))}
       </div>
 
-      <section className="student-focus-grid">
-        <article className="student-focus-card">
-          <div className="module-card__icon">
-            <ShieldCheck size={20} />
+      <section className="student-home-grid">
+        <article className="student-panel student-next-session">
+          <div className="student-panel__header">
+            <div>
+              <span className="eyebrow">Next up</span>
+              <h2>{nextSession?.title ?? 'No live class available'}</h2>
+            </div>
+            {nextSession ? <StatusBadge>{nextSession.status}</StatusBadge> : null}
           </div>
-          <h2>Secure learning access</h2>
-          <p>Your dashboard is personalized through your current portal session and protected account access.</p>
+          <p>{nextSession ? formatScheduleTime(nextSession) : 'When a scheduled or live class is available for your cohort, it will appear here.'}</p>
+          {nextSession?.cohortNames.length ? <span className="student-panel__fineprint">{nextSession.cohortNames.join(', ')}</span> : null}
+          <div className="student-panel__footer">
+            {'href' in sessionAction ? (
+              <a className="student-action student-action--primary" href={sessionAction.href} rel="noreferrer" target="_blank">
+                <ExternalLink size={18} />
+                {sessionAction.label}
+              </a>
+            ) : (
+              <Link className="student-action student-action--primary" to={sessionAction.path}>
+                <ArrowRight size={18} />
+                {sessionAction.label}
+              </Link>
+            )}
+          </div>
         </article>
-        <article className="student-focus-card">
-          <div className="module-card__icon">
-            <MessageCircle size={20} />
+
+        <article className="student-panel">
+          <div className="student-panel__header">
+            <div>
+              <span className="eyebrow">Action required</span>
+              <h2>Items to review</h2>
+            </div>
+            <Lock size={20} />
           </div>
-          <h2>Community</h2>
-          <p>Connect with cohort updates and community activity as this area expands.</p>
-        </article>
-        <article className="student-focus-card">
-          <div className="module-card__icon">
-            <BookOpen size={20} />
-          </div>
-          <h2>Live project hub</h2>
-          <p>Track project visibility and submission areas from one dedicated learning space.</p>
+          {renderItemList<StudentResource>({
+            emptyText: 'No locked paid resources need your attention right now.',
+            items: lockedResourceItems,
+            renderItem: (resource) => (
+              <Link className="student-learning-row" key={resource.id} to="/student/resources">
+                <div>
+                  <strong>{resource.title}</strong>
+                  <span>{getResourceNote(resource)}</span>
+                </div>
+                <ArrowRight size={16} />
+              </Link>
+            )
+          })}
         </article>
       </section>
 
-      {trackRoles.length > 0 ? (
-        <div className="chip-row" aria-label="Track roles">
-          {trackRoles.map((role) => (
-            <StatusBadge key={role}>{role}</StatusBadge>
-          ))}
-        </div>
-      ) : null}
-
-      <section className="student-overview-panel">
-        <div className="data-panel__header">
-          <div>
-            <h2>Learning overview</h2>
-            <p>A quick view of your learning activity across the portal.</p>
-          </div>
-        </div>
-        <div className="student-overview-list">
-          {rows.map((row) => (
-            <Link className="student-overview-item" key={row.area} to={row.path}>
-              <div>
-                <strong>{row.area}</strong>
-                <p>{row.notes}</p>
-              </div>
-              <div className="student-overview-item__meta">
-                <strong>{row.count}</strong>
-                <span>Open</span>
-              </div>
+      <section className="student-home-grid student-home-grid--three">
+        <article className="student-panel">
+          <div className="student-panel__header">
+            <div>
+              <span className="eyebrow">Continue</span>
+              <h2>Recent recordings</h2>
+            </div>
+            <Link className="student-panel__link" to="/student/recordings">
+              View all
             </Link>
-          ))}
-        </div>
+          </div>
+          {renderItemList<StudentRecording>({
+            emptyText: 'Recordings published for your access will appear here.',
+            items: recordingItems,
+            renderItem: (recording) => (
+              <Link className="student-learning-row" key={recording.id} to="/student/recordings">
+                <Video size={18} />
+                <div>
+                  <strong>{recording.title}</strong>
+                  <span>{[formatDate(recording.date), recording.source?.toUpperCase()].filter(Boolean).join(' · ')}</span>
+                </div>
+              </Link>
+            )
+          })}
+        </article>
+
+        <article className="student-panel">
+          <div className="student-panel__header">
+            <div>
+              <span className="eyebrow">Resources</span>
+              <h2>Recently available</h2>
+            </div>
+            <Link className="student-panel__link" to="/student/resources">
+              View all
+            </Link>
+          </div>
+          {renderItemList<StudentResource>({
+            emptyText: 'Resources mapped to your access will appear here.',
+            items: resourceItems,
+            renderItem: (resource) => (
+              <Link className="student-learning-row" key={resource.id} to="/student/resources">
+                {resource.locked ? <Lock size={18} /> : <Library size={18} />}
+                <div>
+                  <strong>{resource.title}</strong>
+                  <span>{getResourceNote(resource)}</span>
+                </div>
+              </Link>
+            )
+          })}
+        </article>
+
+        <article className="student-panel">
+          <div className="student-panel__header">
+            <div>
+              <span className="eyebrow">Updates</span>
+              <h2>Announcements</h2>
+            </div>
+            <Link className="student-panel__link" to="/student/announcements">
+              View all
+            </Link>
+          </div>
+          {renderItemList<StudentAnnouncement>({
+            emptyText: 'Important announcements will appear here.',
+            items: announcementItems,
+            renderItem: (announcement) => (
+              <Link className="student-learning-row" key={announcement.id} to="/student/announcements">
+                <Megaphone size={18} />
+                <div>
+                  <strong>{announcement.title}</strong>
+                  <span>{announcement.pinned ? 'Pinned' : formatDateTime(announcement.updatedAt)}</span>
+                </div>
+              </Link>
+            )
+          })}
+        </article>
       </section>
 
-      {!hasAnyRecords ? <EmptyState /> : null}
+      <section className="student-shortcut-grid" aria-label="Student dashboard shortcuts">
+        <Link className="student-shortcut-card" to="/student/schedule">
+          <Clock3 size={18} />
+          <span>Live classes</span>
+        </Link>
+        <Link className="student-shortcut-card" to="/student/projects">
+          <FileCheck2 size={18} />
+          <span>Projects</span>
+        </Link>
+        <Link className="student-shortcut-card" to="/student/certificates">
+          <Award size={18} />
+          <span>Certificates</span>
+        </Link>
+        <Link className="student-shortcut-card" to="/student/support">
+          <Megaphone size={18} />
+          <span>Support</span>
+        </Link>
+      </section>
 
       <StateBlock title="Need help?">
-        Use Support for account, access, resource, project, or certificate questions. We keep private links and restricted content protected for eligible learners.
+        Use Support for account, access, resource, project, or certificate questions. Private links and restricted content stay protected for eligible learners.
       </StateBlock>
     </div>
   );
