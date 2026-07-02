@@ -410,7 +410,7 @@ async function getRpcList(context: Awaited<ReturnType<typeof createContext>>, en
 
 async function getTableList(context: Awaited<ReturnType<typeof createContext>>, endpoint: TableEndpoint, query: ApiClientOptions['query']) {
   const page = Number(query?.page ?? 1);
-  const limit = Math.min(Number(query?.limit ?? 25), 100);
+  const limit = Math.min(Number(query?.limit ?? 25), 500);
   const from = (page - 1) * limit;
   const to = from + limit - 1;
   let request = context.supabase.from(endpoint.table).select('*', { count: 'exact' });
@@ -662,7 +662,7 @@ function applyCommonSort<TQuery extends SupabaseQuery>(request: TQuery, query: A
 
 function paginate(rawItems: unknown[], query: ApiClientOptions['query']) {
   const page = Number(query?.page ?? 1);
-  const limit = Math.min(Number(query?.limit ?? 25), 100);
+  const limit = Math.min(Number(query?.limit ?? 25), 500);
   const search = String(query?.search ?? '').trim().toLowerCase();
   const filtered = rawItems
     .map(enrichRow)

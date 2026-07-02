@@ -57,6 +57,7 @@ export type ZoomMeetingFunctionResponse = {
   candidateId?: string;
   candidates?: unknown[];
   count?: number;
+  duplicateCount?: number;
   workshop?: AdminWorkshop;
 };
 
@@ -210,6 +211,22 @@ export function usePublishAdminWorkshopRecording() {
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-workshops'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-recording-candidates'] });
+    }
+  });
+}
+
+export function useRejectAdminWorkshopRecording() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (candidateId: string) =>
+      apiInvokeFunction<ZoomMeetingFunctionResponse, { action: string; candidateId: string }>('zoom-meetings', {
+        accessToken: accessToken ?? undefined,
+        body: { action: 'reject-recording', candidateId }
+      }),
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-recording-candidates'] });
     }
   });
