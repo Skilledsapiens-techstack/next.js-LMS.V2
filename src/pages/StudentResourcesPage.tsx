@@ -57,11 +57,15 @@ function formatDate(value: string | undefined) {
 }
 
 function formatPrice(resource: StudentResource) {
-  if (resource.price === undefined) {
+  if (resource.price == null) {
     return resource.accessType === 'paid' ? 'Paid' : 'Free';
   }
 
   return `${resource.currency ?? 'INR'} ${resource.price}`;
+}
+
+function hasResourceAccess(resource: StudentResource) {
+  return !resource.locked && resource.hasAccess !== false;
 }
 
 function formatFilterLabel(value: string) {
@@ -84,7 +88,7 @@ function matchingPaymentOrder(resource: StudentResource, orders: StudentPaymentO
 }
 
 function ResourceCard({ paymentOrder, resource }: { paymentOrder?: StudentPaymentOrder; resource: StudentResource }) {
-  const canOpen = !resource.locked && resource.hasAccess && Boolean(resource.url);
+  const canOpen = hasResourceAccess(resource) && Boolean(resource.url);
   const isPaymentPending = resource.locked && paymentOrder?.status === 'created';
   const canPay = resource.locked && resource.accessType === 'paid' && Boolean(resource.paymentLink) && !isPaymentPending;
 
@@ -166,7 +170,7 @@ export function StudentResourcesPage() {
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
   const lockedCount = useMemo(() => data?.items.filter((item) => item.locked).length ?? 0, [data?.items]);
-  const availableCount = useMemo(() => data?.items.filter((item) => !item.locked && item.hasAccess).length ?? 0, [data?.items]);
+  const availableCount = useMemo(() => data?.items.filter(hasResourceAccess).length ?? 0, [data?.items]);
   const programOptions = useMemo(() => {
     const keys = new Set<string>();
     data?.items.forEach((item) => item.programKeys.forEach((key) => keys.add(key)));

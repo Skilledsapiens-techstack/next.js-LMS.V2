@@ -166,7 +166,7 @@ function getSessionAction(item?: StudentScheduleItem) {
     return { label: 'View schedule', path: '/student/schedule' };
   }
 
-  if (!item.locked && item.hasAccess && item.joinUrl) {
+  if (!item.locked && item.hasAccess !== false && item.joinUrl) {
     return { href: item.joinUrl, label: item.status === 'Live' ? 'Join live class' : 'Open meeting link' };
   }
 

@@ -1,3 +1,4 @@
+import { createClient } from '@supabase/supabase-js';
 import { getSupabaseClient } from './supabaseClient';
 import { webEnv } from '../config/env';
 
@@ -31,8 +32,7 @@ type SupabaseQuery = {
 // Keeps existing feature hooks stable while the data layer moves from HTTP routes to Supabase tables/RPCs.
 const STUDENT_BUNDLE_SECTIONS: Record<string, string[]> = {
   '/students/me/announcements': ['announcements', 'announcementList', 'studentAnnouncements'],
-  '/students/me/cohorts': ['cohorts', 'studentCohorts'],
-  '/students/me/recordings': ['recordings', 'workshopRecordings', 'workshops']
+  '/students/me/cohorts': ['cohorts', 'studentCohorts']
 };
 
 const RPC_LIST_ENDPOINTS: Record<string, { functionName: string; section?: string[] }> = {
@@ -235,6 +235,10 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
     return getStudentBundleList(context, STUDENT_BUNDLE_SECTIONS[cleanPath], options.query) as Promise<TResponse>;
   }
 
+  if (cleanPath === '/students/me/recordings') {
+    return getStudentRecordingsList(context, options.query) as Promise<TResponse>;
+  }
+
   if (RPC_LIST_ENDPOINTS[cleanPath]) {
     return getRpcList(context, RPC_LIST_ENDPOINTS[cleanPath], options.query) as Promise<TResponse>;
   }
@@ -323,12 +327,28 @@ export async function apiInvokeFunction<TResponse, TBody = unknown>(functionName
 }
 
 async function createContext(accessToken?: string) {
-  const supabase = getSupabaseClient();
-  if (!supabase) throw new ApiClientError('Supabase is not configured.', 503);
+  const authClient = getSupabaseClient();
+  if (!authClient || !webEnv.supabaseUrl || !webEnv.supabaseAnonKey) {
+    throw new ApiClientError('Supabase is not configured.', 503);
+  }
   if (!accessToken) throw new ApiClientError('Supabase access token is required.', 401);
 
-  const { data, error } = await supabase.auth.getUser(accessToken);
+  const { data, error } = await authClient.auth.getUser(accessToken);
   if (error || !data.user?.email) throw new ApiClientError('Supabase session is invalid.', 401);
+
+  const supabase = createClient(webEnv.supabaseUrl, webEnv.supabaseAnonKey, {
+    auth: {
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      persistSession: false,
+      storageKey: `lms-request-${data.user.id}-${accessToken.slice(-12)}`
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    }
+  });
 
   const email = normalizeEmail(data.user.email);
   return { accessToken, email, supabase, userId: data.user.id };
@@ -399,12 +419,15 @@ async function getStudentBundleList(context: Awaited<ReturnType<typeof createCon
   return paginate(extractItems(bundle, sections), query);
 }
 
+async function getStudentRecordingsList(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const bundle = await callRpc(context, 'student_dashboard_bundle', { p_student_email: context.email });
+  const workshops = extractItems(bundle, ['recordings', 'workshopRecordings', 'workshops']);
+  return paginate(workshops.filter(isStudentRecordingRow), query);
+}
+
 async function getRpcList(context: Awaited<ReturnType<typeof createContext>>, endpoint: { functionName: string; section?: string[] }, query: ApiClientOptions['query']) {
   const data = await callRpc(context, endpoint.functionName, { p_student_email: context.email });
   const items = extractItems(data, endpoint.section ?? ['items']);
-  if (endpoint.functionName === 'student_schedule_view') {
-    return paginate(items.filter(isVisibleStudentScheduleItem), query);
-  }
   return paginate(items, query);
 }
 
@@ -696,11 +719,11 @@ function matchesClientFilters(item: unknown, query: ApiClientOptions['query']) {
   });
 }
 
-function isVisibleStudentScheduleItem(item: unknown) {
+function isStudentRecordingRow(item: unknown) {
   if (!isRecord(item)) return false;
-  const status = String(item.status ?? item.workshop_status ?? '');
-  const joinUrl = item.join_url ?? item.joinUrl;
-  return ['Scheduled', 'Live'].includes(status) && typeof joinUrl === 'string' && joinUrl.trim().length > 0;
+  const status = String(item.status ?? item.workshop_status ?? item.workshopStatus ?? '');
+  const recordingUrl = item.recording_url ?? item.recordingUrl ?? item.youtube_video_url ?? item.youtubeVideoUrl ?? item.zoom_recording_url ?? item.zoomRecordingUrl;
+  return status === 'Completed' && typeof recordingUrl === 'string' && recordingUrl.trim().length > 0;
 }
 
 function createPaginatedResponse(items: unknown[], total: number, page: number, limit: number) {
@@ -747,15 +770,15 @@ function enrichRow(row: unknown) {
     deliverables: normalizeProjectList(row.deliverables, 'deliverable'),
     documents: normalizeProjectList(row.documents ?? row.resources, 'document'),
     id: row.id ?? row.request_id ?? row.ticket_id ?? row.student_id ?? row.workshop_id,
-    join_url: row.locked === true ? null : row.join_url,
+    join_url: row.locked === true ? null : row.join_url ?? row.joinUrl,
     category: row.category ?? row.role_category,
     name: row.name ?? row.role_name,
-    recording_url: row.locked === true ? null : row.recording_url ?? row.youtube_video_url ?? row.zoom_recording_url,
+    recording_url: row.locked === true ? null : row.recording_url ?? row.recordingUrl ?? row.youtube_video_url ?? row.youtubeVideoUrl ?? row.zoom_recording_url ?? row.zoomRecordingUrl,
     self_paced_resources: row.self_paced_resources ?? row.sp_resources,
     self_paced_sessions: row.self_paced_sessions ?? row.sp_sessions,
-    source: row.source ?? (row.youtube_video_url ? 'youtube' : row.zoom_recording_url ? 'zoom' : undefined),
-    status: row.status ?? row.workshop_status,
-    tasks: normalizeProjectList(row.tasks ?? row.action_items, 'task')
+    source: row.source ?? (row.youtube_video_url || row.youtubeVideoUrl ? 'youtube' : row.zoom_recording_url || row.zoomRecordingUrl ? 'zoom' : undefined),
+    status: row.status ?? row.workshop_status ?? row.workshopStatus,
+    tasks: normalizeProjectList(row.tasks ?? row.action_items ?? row.actionItems, 'task')
   };
 }
 
