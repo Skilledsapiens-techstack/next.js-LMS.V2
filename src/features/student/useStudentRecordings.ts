@@ -9,7 +9,7 @@ export type StudentRecordingSource = 'youtube' | 'zoom';
 export type StudentRecording = {
   accessType: StudentRecordingAccessType;
   cohortNames: string[];
-  currency?: string;
+  currency?: string | null;
   date: string;
   domainKey?: string;
   durationMinutes?: number;
@@ -17,7 +17,8 @@ export type StudentRecording = {
   id: string;
   locked: boolean;
   lockReason?: string;
-  price?: number;
+  paymentLink?: string;
+  price?: number | null;
   programKey?: string;
   recordingUrl?: string;
   source?: StudentRecordingSource;
