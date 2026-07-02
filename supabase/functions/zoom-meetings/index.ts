@@ -9,7 +9,8 @@ type ZoomMeetingAction =
   | 'cancel-meeting'
   | 'complete-meeting'
   | 'fetch-recordings'
-  | 'publish-recording';
+  | 'publish-recording'
+  | 'reject-recording';
 
 type WorkshopPayload = {
   action: ZoomMeetingAction;
@@ -319,14 +320,34 @@ async function fetchRecordings(supabase: ReturnType<typeof createClient>, actorE
     zoom_id: zoomMeetingId,
     zoom_recording_file_id: file.id ?? null
   }));
+  const recordingFileIds = rows.map((row) => row.zoom_recording_file_id).filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+  let existingFileIds = new Set<string>();
 
-  if (rows.length > 0) {
-    const { error } = await supabase.from('workshop_recording_candidates').insert(rows);
+  if (recordingFileIds.length > 0) {
+    const { data: existingCandidates, error: existingError } = await supabase
+      .from('workshop_recording_candidates')
+      .select('zoom_recording_file_id')
+      .eq('zoom_account', account)
+      .eq('zoom_id', zoomMeetingId)
+      .neq('status', 'rejected')
+      .in('zoom_recording_file_id', recordingFileIds);
+    if (existingError) throw existingError;
+    existingFileIds = new Set((existingCandidates ?? []).map((candidate) => String(candidate.zoom_recording_file_id)).filter(Boolean));
+  }
+
+  const newRows = rows.filter((row) => !row.zoom_recording_file_id || !existingFileIds.has(row.zoom_recording_file_id));
+
+  if (newRows.length > 0) {
+    const { error } = await supabase.from('workshop_recording_candidates').insert(newRows);
     if (error) throw error;
   }
 
-  await writeAudit(supabase, actorEmail, 'admin_workshop_recordings_fetched', workshop, { candidateCount: rows.length, zoomAccount: account });
-  return { candidates: rows, count: rows.length, workshop };
+  await writeAudit(supabase, actorEmail, 'admin_workshop_recordings_fetched', workshop, {
+    candidateCount: newRows.length,
+    duplicateCount: rows.length - newRows.length,
+    zoomAccount: account
+  });
+  return { candidates: newRows, count: newRows.length, duplicateCount: rows.length - newRows.length, workshop };
 }
 
 async function completeMeeting(supabase: ReturnType<typeof createClient>, actorEmail: string, payload: WorkshopPayload) {
@@ -406,6 +427,27 @@ async function publishRecording(supabase: ReturnType<typeof createClient>, actor
   return { candidateId, workshop };
 }
 
+async function rejectRecording(supabase: ReturnType<typeof createClient>, actorEmail: string, payload: WorkshopPayload) {
+  const candidateId = requireText(payload.candidateId, 'Recording candidate ID is required.');
+  const { data: candidate, error: candidateError } = await supabase.from('workshop_recording_candidates').select('*').eq('id', candidateId).single();
+  if (candidateError) throw candidateError;
+
+  const { data: candidateRow, error: updateError } = await supabase
+    .from('workshop_recording_candidates')
+    .update({ reviewed_at: new Date().toISOString(), reviewed_by: actorEmail, status: 'rejected', updated_at: new Date().toISOString() })
+    .eq('id', candidateId)
+    .select('*')
+    .single();
+  if (updateError) throw updateError;
+
+  const { data: workshop } = await supabase.from('workshops').select('*').eq('workshop_id', candidate.workshop_id).maybeSingle();
+  await writeAudit(supabase, actorEmail, 'admin_workshop_recording_rejected', workshop ?? { id: candidate.workshop_id }, {
+    candidateId,
+    zoomRecordingFileId: candidate.zoom_recording_file_id
+  });
+  return { candidate: candidateRow, candidateId };
+}
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed.' }, 405);
@@ -424,6 +466,7 @@ Deno.serve(async (request) => {
     if (payload.action === 'complete-meeting') return jsonResponse({ workshop: await completeMeeting(supabase, admin.email, payload) });
     if (payload.action === 'fetch-recordings') return jsonResponse(await fetchRecordings(supabase, admin.email, payload));
     if (payload.action === 'publish-recording') return jsonResponse(await publishRecording(supabase, admin.email, payload));
+    if (payload.action === 'reject-recording') return jsonResponse(await rejectRecording(supabase, admin.email, payload));
 
     return jsonResponse({ error: 'Unsupported Zoom meeting action.' }, 400);
   } catch (error) {
