@@ -22,6 +22,7 @@ export class ApiClientError extends Error {
 }
 
 type SupabaseQuery = {
+  contains: (column: string, value: string | readonly unknown[] | Record<string, unknown>) => SupabaseQuery;
   eq: (column: string, value: unknown) => SupabaseQuery;
   gte: (column: string, value: unknown) => SupabaseQuery;
   lt: (column: string, value: unknown) => SupabaseQuery;
@@ -167,7 +168,11 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   },
   '/admins/projects': { table: 'projects', searchColumns: ['title', 'company_name', 'program_key'] },
   '/admins/recording-candidates': { table: 'workshop_recording_candidates', searchColumns: ['workshop_id', 'zoom_id', 'zoom_account'] },
-  '/admins/resources': { table: 'resources', searchColumns: ['title', 'resource_type', 'domain_key'] },
+  '/admins/resources': {
+    table: 'resources',
+    searchColumns: ['title', 'resource_type', 'resource_mode', 'domain_key'],
+    sortColumns: { newest: { column: 'updated_at', ascending: false }, title: { column: 'title', ascending: true } }
+  },
   '/admins/students': {
     table: 'students',
     filterColumns: { status: 'active' },
@@ -664,6 +669,16 @@ function applyCommonFilters<TQuery extends SupabaseQuery>(request: TQuery, query
     const normalizeValue = endpoint.filterValues?.[key];
     const normalizedValue = normalizeValue ? normalizeValue(value) : value;
     if (normalizedValue === undefined) return;
+
+    if (endpoint.table === 'resources' && key === 'programKey') {
+      request = request.contains('program_keys', [String(normalizedValue)]) as TQuery;
+      return;
+    }
+
+    if (endpoint.table === 'resources' && key === 'cohortName') {
+      request = request.contains('cohort_names', [String(normalizedValue)]) as TQuery;
+      return;
+    }
 
     request = request.eq(endpoint.filterColumns?.[key] ?? toSnakeCase(key), normalizedValue) as TQuery;
   });
