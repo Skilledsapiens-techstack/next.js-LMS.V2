@@ -24,6 +24,14 @@ export type AdminCohort = {
   waGroupName?: string;
 };
 
+export type AdminCohortImpact = {
+  announcements: number;
+  auditLogs: Array<{ action: string; actorEmail?: string; createdAt?: string; id: string; status?: string }>;
+  resources: number;
+  students: number;
+  workshops: number;
+};
+
 export type AdminCohortsQuery = {
   enabled?: boolean;
   limit?: number;
@@ -78,6 +86,88 @@ export function useAdminCohorts(query: AdminCohortsQuery) {
       }),
     queryKey: ['admin-cohorts', accessToken, page, limit, status, search, program, sort],
     staleTime: 60_000
+  });
+}
+
+export function useExportAdminCohorts() {
+  const { accessToken } = useAuth();
+
+  return useMutation({
+    mutationFn: async (query: AdminCohortsQuery) => {
+      const allItems: AdminCohort[] = [];
+      let currentPage = 1;
+      let latestResponse: PaginatedResponse<AdminCohort> | null = null;
+
+      do {
+        latestResponse = await apiGet<PaginatedResponse<AdminCohort>>('/admins/cohorts', {
+          accessToken: accessToken ?? undefined,
+          query: {
+            limit: 500,
+            page: currentPage,
+            program: query.program?.trim(),
+            search: query.search?.trim(),
+            sort: query.sort?.trim(),
+            status: query.status ?? 'all'
+          }
+        });
+        allItems.push(...latestResponse.items);
+        currentPage += 1;
+      } while (latestResponse.hasNextPage && currentPage <= 100);
+
+      return latestResponse ? { ...latestResponse, items: allItems, page: 1, totalPages: 1 } : { hasNextPage: false, hasPreviousPage: false, items: allItems, limit: 500, page: 1, total: 0, totalPages: 1 };
+    }
+  });
+}
+
+function includesCohortName(row: unknown, cohortName: string) {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return false;
+  const record = row as Record<string, unknown>;
+  const names = record.cohortNames ?? record.cohort_names;
+  if (!Array.isArray(names)) return false;
+  return names.some((name) => String(name ?? '').trim() === cohortName);
+}
+
+export function useAdminCohortImpact(cohort?: Pick<AdminCohort, 'id' | 'name'> | null) {
+  const { accessToken } = useAuth();
+  const cohortName = cohort?.name?.trim();
+  const cohortId = cohort?.id?.trim();
+
+  return useQuery({
+    enabled: Boolean(accessToken && cohortName && cohortId),
+    queryFn: async () => {
+      const [students, resources, workshops, announcements, auditLogs] = await Promise.all([
+        apiGet<PaginatedResponse<unknown>>('/admins/students', {
+          accessToken: accessToken ?? undefined,
+          query: { cohortName, limit: 1, page: 1, status: 'all' }
+        }),
+        apiGet<PaginatedResponse<unknown>>('/admins/resources', {
+          accessToken: accessToken ?? undefined,
+          query: { cohortName, limit: 1, page: 1, status: 'all' }
+        }),
+        apiGet<PaginatedResponse<unknown>>('/admins/workshops', {
+          accessToken: accessToken ?? undefined,
+          query: { limit: 500, page: 1, status: 'all' }
+        }),
+        apiGet<PaginatedResponse<unknown>>('/admins/announcements', {
+          accessToken: accessToken ?? undefined,
+          query: { audience: 'cohort', limit: 500, page: 1, status: 'all' }
+        }),
+        apiGet<PaginatedResponse<{ action: string; actorEmail?: string; createdAt?: string; id: string; status?: string }>>('/admins/audit-logs', {
+          accessToken: accessToken ?? undefined,
+          query: { entityId: cohortId, entityType: 'cohort', limit: 8, page: 1, sort: 'newest' }
+        })
+      ]);
+
+      return {
+        announcements: announcements.items.filter((item) => includesCohortName(item, cohortName ?? '')).length,
+        auditLogs: auditLogs.items,
+        resources: resources.total,
+        students: students.total,
+        workshops: workshops.items.filter((item) => includesCohortName(item, cohortName ?? '')).length
+      } satisfies AdminCohortImpact;
+    },
+    queryKey: ['admin-cohort-impact', accessToken, cohortId, cohortName],
+    staleTime: 30_000
   });
 }
 
