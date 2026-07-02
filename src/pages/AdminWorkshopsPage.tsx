@@ -1,5 +1,6 @@
 import { CalendarDays, Check, CheckCircle2, Clapperboard, Clock3, Copy, Edit3, Link as LinkIcon, Loader2, Plus, Radio, Save, Search, Trash2, Video, X } from 'lucide-react';
-import { ChangeEvent, FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
@@ -11,15 +12,12 @@ import {
   useFetchAdminWorkshopRecordings,
   useAdminWorkshops,
   useMarkAdminWorkshopCompleted,
-  usePublishAdminWorkshopRecording,
   useRescheduleAdminWorkshop,
   useSaveAdminWorkshop,
-  useUpdateAdminWorkshop,
-  useUpdateAdminWorkshopRecording
+  useUpdateAdminWorkshop
 } from '../features/admin/useAdminWorkshops';
-import { useAdminRecordingCandidates } from '../features/admin/useAdminRecordingCandidates';
 
-type WorkshopTab = 'upcoming' | 'past' | 'completed';
+type WorkshopTab = 'upcoming' | 'needs-completion' | 'completed' | 'cancelled';
 
 type WorkshopForm = {
   agenda: string;
@@ -30,12 +28,6 @@ type WorkshopForm = {
   time: string;
   title: string;
   zoomAccount: string;
-};
-
-type RecordingForm = {
-  alternateUrl: string;
-  selectedWorkshopId: string;
-  youtubeUrl: string;
 };
 
 type WorkshopTopicDraft = {
@@ -185,10 +177,6 @@ function readableError(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-function isHttpUrl(value: string) {
-  return /^https?:\/\//i.test(value);
-}
-
 export function AdminWorkshopsPage() {
   const workshopsQuery = useAdminWorkshops({ limit: 100, page: 1, status: 'all' });
   const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, sort: 'name', status: 'all' });
@@ -197,13 +185,10 @@ export function AdminWorkshopsPage() {
   const saveWorkshopMutation = useSaveAdminWorkshop();
   const updateWorkshopMutation = useUpdateAdminWorkshop();
   const rescheduleWorkshopMutation = useRescheduleAdminWorkshop();
-  const updateRecordingMutation = useUpdateAdminWorkshopRecording();
   const fetchRecordingsMutation = useFetchAdminWorkshopRecordings();
-  const publishRecordingMutation = usePublishAdminWorkshopRecording();
   const markCompletedMutation = useMarkAdminWorkshopCompleted();
   const cancelWorkshopMutation = useCancelAdminWorkshop();
   const [form, setForm] = useState<WorkshopForm>(emptyWorkshopForm);
-  const [recordingForm, setRecordingForm] = useState<RecordingForm>({ alternateUrl: '', selectedWorkshopId: '', youtubeUrl: '' });
   const [cohortSearch, setCohortSearch] = useState('');
   const [activeTab, setActiveTab] = useState<WorkshopTab>('upcoming');
   const [savedWorkshopTopics, setSavedWorkshopTopics] = useState<string[]>(loadSavedWorkshopTopics);
@@ -218,6 +203,7 @@ export function AdminWorkshopsPage() {
   const [isClearingForm, setIsClearingForm] = useState(false);
   const [isRefreshingMeetings, setIsRefreshingMeetings] = useState(false);
   const [isSelectingCohorts, setIsSelectingCohorts] = useState(false);
+  const [isTopicManagerOpen, setIsTopicManagerOpen] = useState(false);
   const [copiedWorkshopId, setCopiedWorkshopId] = useState<string | null>(null);
   const [editingWorkshopId, setEditingWorkshopId] = useState<string | null>(null);
 
@@ -228,31 +214,30 @@ export function AdminWorkshopsPage() {
   );
   const filteredCohorts = useMemo(() => {
     const query = cohortSearch.trim().toLowerCase();
-    if (!query) return cohorts;
-    return cohorts.filter((cohort) => [cohort.name, cohort.cohortId, cohort.programKey, cohort.domainKey].filter(Boolean).join(' ').toLowerCase().includes(query));
-  }, [cohortSearch, cohorts]);
+    const matches = query ? cohorts.filter((cohort) => [cohort.name, cohort.cohortId, cohort.programKey, cohort.domainKey].filter(Boolean).join(' ').toLowerCase().includes(query)) : cohorts;
+    return [...matches].sort((left, right) => {
+      const leftSelected = form.cohortNames.includes(left.name);
+      const rightSelected = form.cohortNames.includes(right.name);
+      if (leftSelected !== rightSelected) return leftSelected ? -1 : 1;
+      return left.name.localeCompare(right.name);
+    });
+  }, [cohortSearch, cohorts, form.cohortNames]);
 
   const now = Date.now();
   const completedWorkshops = useMemo(() => workshops.filter(isCompleted), [workshops]);
+  const cancelledWorkshops = useMemo(() => workshops.filter(isArchived), [workshops]);
   const upcomingWorkshops = useMemo(() => workshops.filter((item) => isFutureScheduled(item, now)), [now, workshops]);
   const pastWorkshops = useMemo(() => workshops.filter((item) => isPastPendingCompletion(item, now)), [now, workshops]);
-  const visibleWorkshops = activeTab === 'completed' ? completedWorkshops : activeTab === 'past' ? pastWorkshops : upcomingWorkshops;
+  const visibleWorkshops =
+    activeTab === 'completed' ? completedWorkshops : activeTab === 'needs-completion' ? pastWorkshops : activeTab === 'cancelled' ? cancelledWorkshops : upcomingWorkshops;
   const total = workshopsQuery.data?.total ?? workshops.length;
   const pendingWithLink = useMemo(() => pastWorkshops.filter((item) => Boolean(item.joinUrl)).length, [pastWorkshops]);
   const upcomingCount = upcomingWorkshops.length;
   const pastCount = pastWorkshops.length;
   const completedCount = completedWorkshops.length;
-  const pendingMarkCompleted = pastCount;
+  const cancelledCount = cancelledWorkshops.length;
   const workshopTopicOptions = useMemo(() => uniqueTitles(savedWorkshopTopics), [savedWorkshopTopics]);
   const selectedTopicValue = customTitleMode || (form.title && !workshopTopicOptions.includes(form.title)) ? customWorkshopTopicValue : form.title;
-
-  const selectedRecording = completedWorkshops.find((item) => item.id === recordingForm.selectedWorkshopId) ?? completedWorkshops[0];
-  const recordingCandidatesQuery = useAdminRecordingCandidates({
-    limit: 20,
-    page: 1,
-    status: 'all',
-    workshopId: selectedRecording?.workshopId
-  });
 
   function updateForm<K extends keyof WorkshopForm>(key: K, value: WorkshopForm[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -388,11 +373,6 @@ export function AdminWorkshopsPage() {
     setActionMessage(null);
     try {
       await markCompletedMutation.mutateAsync(item.id);
-      setRecordingForm({
-        alternateUrl: item.zoomRecordingUrl ?? '',
-        selectedWorkshopId: item.id,
-        youtubeUrl: item.youtubeVideoUrl ?? ''
-      });
       setActiveTab('completed');
       setActionMessage('Workshop marked completed.');
     } catch (error) {
@@ -404,11 +384,6 @@ export function AdminWorkshopsPage() {
     setEditingWorkshopId(item.id);
     setCustomTitleMode(!workshopTopicOptions.includes(item.title));
     setForm(workshopToForm(item));
-    setRecordingForm({
-      alternateUrl: item.zoomRecordingUrl ?? '',
-      selectedWorkshopId: item.id,
-      youtubeUrl: item.youtubeVideoUrl ?? ''
-    });
     window.setTimeout(() => setEditingWorkshopId((current) => (current === item.id ? null : current)), 650);
   }
 
@@ -444,53 +419,7 @@ export function AdminWorkshopsPage() {
     window.setTimeout(() => setIsAddingTopic(false), 650);
   }
 
-  function handleRecordingWorkshopChange(event: ChangeEvent<HTMLSelectElement>) {
-    const selected = completedWorkshops.find((item) => item.id === event.target.value);
-    setRecordingForm({
-      alternateUrl: selected?.zoomRecordingUrl ?? '',
-      selectedWorkshopId: event.target.value,
-      youtubeUrl: selected?.youtubeVideoUrl ?? ''
-    });
-  }
-
-  async function saveRecordingLinks() {
-    setActionMessage(null);
-    const selectedWorkshopId = recordingForm.selectedWorkshopId || selectedRecording?.id;
-    const youtubeUrl = recordingForm.youtubeUrl.trim();
-    const alternateUrl = recordingForm.alternateUrl.trim();
-
-    if (!selectedWorkshopId) {
-      setActionMessage('Select a completed workshop before saving recording links.');
-      return;
-    }
-    if (!youtubeUrl && !alternateUrl) {
-      setActionMessage('Add at least one recording link.');
-      return;
-    }
-    if (youtubeUrl && !isHttpUrl(youtubeUrl)) {
-      setActionMessage('YouTube URL must start with http:// or https://.');
-      return;
-    }
-    if (alternateUrl && !isHttpUrl(alternateUrl)) {
-      setActionMessage('Alternate recording URL must start with http:// or https://.');
-      return;
-    }
-
-    try {
-      await updateRecordingMutation.mutateAsync({
-        body: {
-          youtubeVideoUrl: youtubeUrl || null,
-          zoomRecordingUrl: alternateUrl || null
-        },
-        workshopId: selectedWorkshopId
-      });
-      setActionMessage('Recording links saved.');
-    } catch (error) {
-      setActionMessage(readableError(error, 'Recording links could not be saved.'));
-    }
-  }
-
-  async function fetchZoomRecordings(workshop = selectedRecording) {
+  async function fetchZoomRecordings(workshop: AdminWorkshop) {
     if (!workshop) {
       setActionMessage('Select a completed workshop before fetching recordings.');
       return;
@@ -498,21 +427,10 @@ export function AdminWorkshopsPage() {
     setActionMessage(null);
     try {
       const result = await fetchRecordingsMutation.mutateAsync(workshop.id);
-      await recordingCandidatesQuery.refetch();
-      setActionMessage(`Fetched ${result.count ?? 0} Zoom recording candidate${result.count === 1 ? '' : 's'}.`);
+      const duplicateText = result.duplicateCount ? ` ${result.duplicateCount} duplicate${result.duplicateCount === 1 ? '' : 's'} skipped.` : '';
+      setActionMessage(`Fetched ${result.count ?? 0} Zoom recording candidate${result.count === 1 ? '' : 's'} for ${workshop.title}.${duplicateText}`);
     } catch (error) {
       setActionMessage(readableError(error, 'Zoom recordings could not be fetched.'));
-    }
-  }
-
-  async function publishRecordingCandidate(candidateId: string) {
-    setActionMessage(null);
-    try {
-      await publishRecordingMutation.mutateAsync(candidateId);
-      await recordingCandidatesQuery.refetch();
-      setActionMessage('Recording candidate published.');
-    } catch (error) {
-      setActionMessage(readableError(error, 'Recording candidate could not be published.'));
     }
   }
 
@@ -541,9 +459,9 @@ export function AdminWorkshopsPage() {
           <span className="section-eyebrow">MODULE REFRESH</span>
           <div className="announcement-admin-title-row">
             <h1>Schedule Meeting</h1>
-            <span>Last Refresh: 28 Jun 2026, 02:57 pm</span>
+            <span>{workshopsQuery.isFetching ? 'Refreshing meeting data...' : `${total} meetings loaded`}</span>
           </div>
-          <p>Refresh only meetings data from the database.</p>
+          <p>Create Zoom meetings, manage cohort visibility, and move completed sessions into the recording review workflow.</p>
         </div>
         <button className="announcement-refresh-button workshop-action-button" disabled={isRefreshingMeetings || workshopsQuery.isFetching} onClick={() => void refreshMeetings()} type="button">
           {isRefreshingMeetings || workshopsQuery.isFetching ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
@@ -559,7 +477,7 @@ export function AdminWorkshopsPage() {
         </article>
         <article className="metric-tile">
           <LinkIcon size={18} />
-          <span>Pending with Link</span>
+          <span>Needs Completion With Link</span>
           <strong>{pendingWithLink}</strong>
         </article>
         <article className="metric-tile">
@@ -569,7 +487,7 @@ export function AdminWorkshopsPage() {
         </article>
         <article className="metric-tile">
           <Clock3 size={18} />
-          <span>Past</span>
+          <span>Needs Completion</span>
           <strong>{pastCount}</strong>
         </article>
         <article className="metric-tile">
@@ -578,9 +496,9 @@ export function AdminWorkshopsPage() {
           <strong>{completedCount}</strong>
         </article>
         <article className="metric-tile">
-          <Video size={18} />
-          <span>Pending Mark Completed</span>
-          <strong>{pendingMarkCompleted}</strong>
+          <X size={18} />
+          <span>Cancelled / Archived</span>
+          <strong>{cancelledCount}</strong>
         </article>
       </div>
 
@@ -703,52 +621,13 @@ export function AdminWorkshopsPage() {
             <div className="announcement-panel__header">
               <span className="section-eyebrow">WORKSHOP PIPELINE</span>
               <h2>All Sessions</h2>
+              <p className="workshop-panel-note">Recording review and publishing now happens in the dedicated Recordings workspace.</p>
+              <Link className="workshop-soft-action workshop-recordings-link" to="/admin/recording-candidates">
+                <Clapperboard size={14} />
+                Open Recordings
+              </Link>
             </div>
-
-            <div className="workshop-recording-box">
-              <span className="section-eyebrow">ATTACH RECORDING</span>
-              <select disabled={completedWorkshops.length === 0} value={selectedRecording?.id ?? ''} onChange={handleRecordingWorkshopChange}>
-                {completedWorkshops.length > 0 ? (
-                  completedWorkshops.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.title} - {formatDate(item.date)}
-                    </option>
-                  ))
-                ) : (
-                  <option value="">No admin-completed workshops available</option>
-                )}
-              </select>
-              <input value={recordingForm.youtubeUrl} onChange={(event) => setRecordingForm((current) => ({ ...current, youtubeUrl: event.target.value }))} placeholder="YouTube URL (optional)" />
-              <input value={recordingForm.alternateUrl} onChange={(event) => setRecordingForm((current) => ({ ...current, alternateUrl: event.target.value }))} placeholder="Drive, Zoom, or alternate recording URL (optional)" />
-              <button className="announcement-primary-button workshop-action-button" disabled={updateRecordingMutation.isPending || completedWorkshops.length === 0} onClick={() => void saveRecordingLinks()} type="button">
-                {updateRecordingMutation.isPending ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
-                {updateRecordingMutation.isPending ? 'Saving...' : recordingForm.youtubeUrl || recordingForm.alternateUrl ? 'Update Recording Links' : 'Save Recording Links'}
-              </button>
-              <button className="workshop-soft-action workshop-action-button" disabled={!selectedRecording || fetchRecordingsMutation.isPending} onClick={() => void fetchZoomRecordings()} type="button">
-                {fetchRecordingsMutation.isPending ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
-                {fetchRecordingsMutation.isPending ? 'Fetching...' : 'Fetch Zoom Recordings'}
-              </button>
-              <p>Only workshops marked completed by Admin appear here. Add or edit at least one recording link.</p>
-              {markCompletedMutation.isError ? <p className="workshop-error-note">Mark Completed could not be saved. Confirm workshop status writes are enabled and try again.</p> : null}
-              {selectedRecording && recordingCandidatesQuery.data?.items.length ? (
-                <div className="workshop-recording-candidate">
-                  <strong>Zoom recording candidates</strong>
-                  {recordingCandidatesQuery.data.items.map((candidate) => (
-                    <span key={candidate.id}>
-                      {candidate.recordingType ?? 'recording'} · {candidate.fileType ?? 'file'} · {candidate.recordingStart ? formatDate(candidate.recordingStart) : 'time unknown'}
-                      {candidate.playUrl ? (
-                        <a className="inline-link" href={candidate.playUrl} rel="noreferrer" target="_blank">
-                          Preview
-                        </a>
-                      ) : null}
-                      <button disabled={publishRecordingMutation.isPending || candidate.status === 'reviewed'} onClick={() => void publishRecordingCandidate(candidate.id)} type="button">
-                        {publishRecordingMutation.isPending ? 'Publishing...' : candidate.status === 'reviewed' ? 'Published' : 'Publish'}
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+            {markCompletedMutation.isError ? <p className="workshop-error-note workshop-inline-error">Mark Completed could not be saved. Confirm workshop status writes are enabled and try again.</p> : null}
 
             <div className="workshop-list-header">
               <span className="section-eyebrow">MEETING LIST</span>
@@ -757,13 +636,17 @@ export function AdminWorkshopsPage() {
                   <CalendarDays size={14} />
                   Upcoming
                 </button>
-                <button className={activeTab === 'past' ? 'workshop-tab workshop-tab--active' : 'workshop-tab'} onClick={() => setActiveTab('past')} type="button">
+                <button className={activeTab === 'needs-completion' ? 'workshop-tab workshop-tab--active' : 'workshop-tab'} onClick={() => setActiveTab('needs-completion')} type="button">
                   <Clock3 size={14} />
-                  Past
+                  Needs Completion
                 </button>
                 <button className={activeTab === 'completed' ? 'workshop-tab workshop-tab--active' : 'workshop-tab'} onClick={() => setActiveTab('completed')} type="button">
                   <Clapperboard size={14} />
                   Completed
+                </button>
+                <button className={activeTab === 'cancelled' ? 'workshop-tab workshop-tab--active' : 'workshop-tab'} onClick={() => setActiveTab('cancelled')} type="button">
+                  <X size={14} />
+                  Cancelled
                 </button>
               </div>
             </div>
@@ -772,18 +655,20 @@ export function AdminWorkshopsPage() {
               {visibleWorkshops.length > 0 ? (
                 visibleWorkshops.map((item) => {
                   const isAdminCompleted = isCompleted(item);
-                  const isPast = activeTab === 'past';
+                  const isPast = activeTab === 'needs-completion';
+                  const isCancelled = activeTab === 'cancelled';
                   const recordingUrl = item.youtubeVideoUrl ?? item.zoomRecordingUrl;
                   const isMarkingThisWorkshop = markCompletedMutation.isPending && markCompletedMutation.variables === item.id;
+                  const isFetchingThisWorkshop = fetchRecordingsMutation.isPending && fetchRecordingsMutation.variables === item.id;
 
                   return (
-                    <article className={isAdminCompleted ? 'workshop-meeting-row workshop-meeting-row--completed' : 'workshop-meeting-row'} key={item.id}>
+                    <article className={isAdminCompleted ? 'workshop-meeting-row workshop-meeting-row--completed' : isCancelled ? 'workshop-meeting-row workshop-meeting-row--archived' : 'workshop-meeting-row'} key={item.id}>
                       <div className="workshop-meeting-main">
                         {isAdminCompleted ? <Clapperboard size={18} /> : <Video size={18} />}
                         <div>
                           <h3>{item.title}</h3>
                           <p>
-                            <StatusBadge tone={isAdminCompleted ? 'safe' : statusTone(item.status)}>{isAdminCompleted ? 'Completed' : item.status}</StatusBadge>
+                            <StatusBadge tone={isAdminCompleted ? 'safe' : statusTone(item.status)}>{isAdminCompleted ? 'Completed' : isCancelled ? 'Archived' : item.status}</StatusBadge>
                             <span>{formatDateTime(item)}</span>
                           </p>
                           <p>
@@ -805,46 +690,45 @@ export function AdminWorkshopsPage() {
                               </a>
                             </p>
                           ) : null}
-                          {isAdminCompleted ? (
-                            <>
-                              <div className="workshop-recording-candidate">
-                                <strong>Admin-only Zoom recording candidates</strong>
-                                <button disabled={fetchRecordingsMutation.isPending} onClick={() => void fetchZoomRecordings(item)} type="button">
-                                  {fetchRecordingsMutation.isPending ? 'Fetching...' : 'Fetch Zoom Recordings'}
-                                </button>
-                                <span>No Zoom recording candidates fetched yet.</span>
-                              </div>
-                              <button className="workshop-soft-action workshop-soft-action--recording" onClick={() => editWorkshop(item)} type="button">
-                                Edit Recording
-                              </button>
-                            </>
-                          ) : null}
                         </div>
                       </div>
-                      {!isAdminCompleted ? (
-                        <div className="workshop-meeting-actions">
-                          <button className="announcement-row-button workshop-action-button" disabled={editingWorkshopId === item.id} onClick={() => editWorkshop(item)} type="button">
-                            {editingWorkshopId === item.id ? <Loader2 className="workshop-action-spinner" size={14} /> : <Edit3 size={14} />}
-                            {editingWorkshopId === item.id ? 'Editing...' : 'Edit'}
-                          </button>
-                          {isPast ? (
-                            <>
+                      <div className="workshop-meeting-actions">
+                        {!isAdminCompleted && !isCancelled ? (
+                          <>
+                            <button className="announcement-row-button workshop-action-button" disabled={editingWorkshopId === item.id} onClick={() => editWorkshop(item)} type="button">
+                              {editingWorkshopId === item.id ? <Loader2 className="workshop-action-spinner" size={14} /> : <Edit3 size={14} />}
+                              {editingWorkshopId === item.id ? 'Editing...' : 'Edit'}
+                            </button>
+                            {isPast ? (
                               <button className="workshop-soft-action workshop-action-button" disabled={markCompletedMutation.isPending} onClick={() => void markWorkshopCompleted(item)} type="button">
                                 {isMarkingThisWorkshop ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
                                 {isMarkingThisWorkshop ? 'Marking...' : 'Mark Completed'}
                               </button>
-                            </>
-                          ) : null}
-                          <button className="announcement-row-button workshop-action-button" disabled={!item.joinUrl || copiedWorkshopId === item.id} onClick={() => copyJoinUrl(item)} type="button">
-                            {copiedWorkshopId === item.id ? <Check size={14} /> : <Copy size={14} />}
-                            {copiedWorkshopId === item.id ? 'Copied' : 'Copy Link'}
-                          </button>
-                          <button className="workshop-danger-action workshop-action-button" disabled={cancelWorkshopMutation.isPending} onClick={() => setPendingCancelWorkshop(item)} type="button">
-                            <X size={14} />
-                            Cancel
-                          </button>
-                        </div>
-                      ) : null}
+                            ) : null}
+                            <button className="announcement-row-button workshop-action-button" disabled={!item.joinUrl || copiedWorkshopId === item.id} onClick={() => copyJoinUrl(item)} type="button">
+                              {copiedWorkshopId === item.id ? <Check size={14} /> : <Copy size={14} />}
+                              {copiedWorkshopId === item.id ? 'Copied' : 'Copy Link'}
+                            </button>
+                            <button className="workshop-danger-action workshop-action-button" disabled={cancelWorkshopMutation.isPending} onClick={() => setPendingCancelWorkshop(item)} type="button">
+                              <X size={14} />
+                              Cancel
+                            </button>
+                          </>
+                        ) : null}
+                        {isAdminCompleted ? (
+                          <>
+                            <button className="workshop-soft-action workshop-action-button" disabled={fetchRecordingsMutation.isPending} onClick={() => void fetchZoomRecordings(item)} type="button">
+                              {isFetchingThisWorkshop ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
+                              {isFetchingThisWorkshop ? 'Fetching...' : 'Fetch Recordings'}
+                            </button>
+                            <Link className="workshop-neutral-action" to="/admin/recording-candidates">
+                              <Clapperboard size={14} />
+                              Open Recordings
+                            </Link>
+                          </>
+                        ) : null}
+                        {isCancelled ? <span className="workshop-archived-note">No active actions for archived meetings.</span> : null}
+                      </div>
                     </article>
                   );
                 })
@@ -865,12 +749,20 @@ export function AdminWorkshopsPage() {
             <span className="section-eyebrow">DROPDOWN CONTROLLER</span>
             <h2 id="workshop-topic-manager-title">Workshop Topics</h2>
           </div>
-          <button className="workshop-topic-action workshop-topic-action--save" disabled={isSavingTopics} onClick={saveTopicDrafts} type="button">
-            {isSavingTopics ? <Loader2 className="workshop-action-spinner" size={14} /> : <Save size={14} />}
-            {isSavingTopics ? 'Saving...' : 'Save Topics'}
-          </button>
+          <div className="workshop-topic-header-actions">
+            {isTopicManagerOpen ? (
+              <button className="workshop-topic-action workshop-topic-action--save" disabled={isSavingTopics} onClick={saveTopicDrafts} type="button">
+                {isSavingTopics ? <Loader2 className="workshop-action-spinner" size={14} /> : <Save size={14} />}
+                {isSavingTopics ? 'Saving...' : 'Save Topics'}
+              </button>
+            ) : null}
+            <button className="workshop-topic-action workshop-topic-action--edit" onClick={() => setIsTopicManagerOpen((current) => !current)} type="button">
+              {isTopicManagerOpen ? <X size={14} /> : <Edit3 size={14} />}
+              {isTopicManagerOpen ? 'Hide Topics' : 'Manage Topics'}
+            </button>
+          </div>
         </div>
-        <div className="workshop-topic-manager">
+        {isTopicManagerOpen ? <div className="workshop-topic-manager">
           <div className="workshop-topic-manager__rows">
             {topicDrafts.map((topic) => (
               <div className="workshop-topic-row" key={topic.id}>
@@ -901,7 +793,7 @@ export function AdminWorkshopsPage() {
             {isAddingTopic ? <Loader2 className="workshop-action-spinner" size={14} /> : <Plus size={15} />}
             {isAddingTopic ? 'Adding...' : 'Add Topic'}
           </button>
-        </div>
+        </div> : null}
       </section>
 
       {pendingCancelWorkshop ? (

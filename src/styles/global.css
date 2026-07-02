@@ -5885,6 +5885,23 @@ h1 {
   line-height: 1.16;
 }
 
+.workshop-panel-note {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.workshop-recordings-link {
+  justify-self: start;
+  text-decoration: none;
+}
+
+.workshop-inline-error {
+  margin: 0 20px 12px;
+}
+
 .workshop-form {
   gap: 16px;
 }
@@ -6028,6 +6045,13 @@ h1 {
 
 .workshop-topic-panel .announcement-panel__header--row {
   align-items: center;
+}
+
+.workshop-topic-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .workshop-topic-panel .workshop-topic-manager {
@@ -6324,6 +6348,10 @@ h1 {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.workshop-meeting-row--archived {
+  opacity: 0.82;
+}
+
 .workshop-meeting-main {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr);
@@ -6376,6 +6404,13 @@ h1 {
   font-size: 12px;
   font-weight: 650;
   padding: 7px 10px;
+}
+
+.workshop-archived-note {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .workshop-recording-candidate {
@@ -8806,7 +8841,8 @@ h1 {
   }
 
   .workshop-list-header,
-  .workshop-meeting-actions {
+  .workshop-meeting-actions,
+  .workshop-topic-header-actions {
     align-items: stretch;
     flex-direction: column;
     justify-content: flex-start;
@@ -8823,6 +8859,13 @@ h1 {
   .workshop-topic-panel .workshop-topic-action--save {
     align-self: flex-start;
     width: auto;
+  }
+
+  .workshop-recordings-link,
+  .workshop-meeting-actions .workshop-action-button,
+  .workshop-meeting-actions .workshop-neutral-action,
+  .workshop-topic-header-actions .workshop-topic-action {
+    width: 100%;
   }
 
   .workshop-recording-candidate {
