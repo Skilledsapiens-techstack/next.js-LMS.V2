@@ -1,10 +1,16 @@
-import { CalendarDays, ExternalLink, GraduationCap } from 'lucide-react';
+import { Award, BookOpen, CalendarDays, ExternalLink, FileCheck2, GraduationCap, Library, PlayCircle } from 'lucide-react';
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
+import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
+import { useStudentCertificates } from '../features/student/useStudentCertificates';
 import { StudentCohort, useStudentCohorts } from '../features/student/useStudentCohorts';
+import { useStudentProjects } from '../features/student/useStudentProjects';
+import { useStudentRecordings } from '../features/student/useStudentRecordings';
+import { useStudentResources } from '../features/student/useStudentResources';
+import { StudentScheduleItem, useStudentSchedule } from '../features/student/useStudentSchedule';
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
@@ -12,11 +18,11 @@ function asPositiveInteger(value: string | null, defaultValue: number) {
 }
 
 const programDisplayMap: Record<string, string> = {
-  flp: 'Finance',
-  hrlp: 'HR',
-  mclp: 'Management Consulting',
-  pmlp: 'Product Management',
-  smlp: 'Sales & Marketing'
+  flp: 'Finance Leadership Program',
+  hrlp: 'HR Leadership Program',
+  mclp: 'Management Consulting Leadership Program',
+  pmlp: 'Product Management Leadership Program',
+  smlp: 'Sales & Marketing Leadership Program'
 };
 
 function buildPageLink(page: number) {
@@ -43,15 +49,75 @@ function formatStatus(status: string) {
 }
 
 function displayProgramName(cohort: StudentCohort) {
-  const key = (cohort.domainKey ?? cohort.programKey ?? '').trim().toLowerCase();
+  const key = programKeyFor(cohort);
   if (key && programDisplayMap[key]) return programDisplayMap[key];
   if (cohort.programKey) return cohort.programKey.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
   if (cohort.domainKey) return cohort.domainKey.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
   return 'Enrolled Program';
 }
 
-function ProgramCard({ cohort }: { cohort: StudentCohort }) {
+function programKeyFor(cohort: StudentCohort) {
+  return (cohort.domainKey ?? cohort.programKey ?? '').trim().toLowerCase();
+}
+
+function normalize(value: unknown) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function itemMatchesProgram(item: { cohortNames?: string[]; domainKey?: string; programKey?: string; programKeys?: string[] }, cohort: StudentCohort) {
+  const programKey = programKeyFor(cohort);
+  const cohortName = normalize(cohort.name);
+  const directKeys = [item.programKey, item.domainKey, ...(item.programKeys ?? [])].map(normalize).filter(Boolean);
+  const cohortNames = (item.cohortNames ?? []).map(normalize);
+  return (programKey && directKeys.includes(programKey)) || cohortNames.includes(cohortName);
+}
+
+function certificateMatchesProgram(certificate: { cohortName?: string; programKey?: string }, cohort: StudentCohort) {
+  const programKey = programKeyFor(cohort);
+  return (programKey && normalize(certificate.programKey) === programKey) || normalize(certificate.cohortName) === normalize(cohort.name);
+}
+
+function getScheduledAt(item: StudentScheduleItem) {
+  const dateMatch = item.date?.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const timeMatch = item.time?.match(/^(\d{1,2}):(\d{2})/);
+  if (!dateMatch) return null;
+
+  const [, year, month, day] = dateMatch;
+  const hour = timeMatch ? Number(timeMatch[1]) : 0;
+  const minute = timeMatch ? Number(timeMatch[2]) : 0;
+  const scheduledAt = new Date(Number(year), Number(month) - 1, Number(day), hour, minute);
+  return Number.isNaN(scheduledAt.getTime()) ? null : scheduledAt;
+}
+
+function nextSessionFor(items: StudentScheduleItem[]) {
+  return [...items]
+    .sort((left, right) => (getScheduledAt(left)?.getTime() ?? Number.MAX_SAFE_INTEGER) - (getScheduledAt(right)?.getTime() ?? Number.MAX_SAFE_INTEGER))
+    .find(Boolean);
+}
+
+function formatWindow(cohort: StudentCohort) {
+  const start = cohort.startDate ? formatDate(cohort.startDate) : 'Start not set';
+  const end = cohort.endDate ? formatDate(cohort.endDate) : 'End not set';
+  return `${start} to ${end}`;
+}
+
+function programLink(path: string, cohort: StudentCohort) {
+  const programKey = programKeyFor(cohort);
+  return programKey && path === '/student/resources' ? `${path}?programKey=${encodeURIComponent(programKey)}` : path;
+}
+
+type ProgramStats = {
+  certificates: number;
+  projects: number;
+  recordings: number;
+  resources: number;
+  sessions: number;
+  nextSession?: StudentScheduleItem;
+};
+
+function ProgramCard({ cohort, stats }: { cohort: StudentCohort; stats: ProgramStats }) {
   const programTitle = displayProgramName(cohort);
+  const programKey = programKeyFor(cohort);
 
   return (
     <article className="program-card">
@@ -68,6 +134,7 @@ function ProgramCard({ cohort }: { cohort: StudentCohort }) {
 
       <div className="program-card__body">
         <h3>{cohort.name}</h3>
+        <p>{formatWindow(cohort)}</p>
         {cohort.selfPaced ? (
           <div className="program-card__chips">
             <span>Self paced</span>
@@ -75,13 +142,57 @@ function ProgramCard({ cohort }: { cohort: StudentCohort }) {
         ) : null}
       </div>
 
+      <div className="program-card__stats" aria-label={`${programTitle} learning counts`}>
+        <span>
+          <b>{stats.sessions}</b>
+          Sessions
+        </span>
+        <span>
+          <b>{stats.recordings}</b>
+          Recordings
+        </span>
+        <span>
+          <b>{stats.resources}</b>
+          Resources
+        </span>
+        <span>
+          <b>{stats.projects}</b>
+          Projects
+        </span>
+      </div>
+
       <div className="program-card__meta">
+        {programKey ? (
+          <div>
+            <BookOpen size={18} />
+            <span>{programKey.toUpperCase()}</span>
+          </div>
+        ) : null}
         {cohort.startDate ? (
           <div>
             <CalendarDays size={18} />
-            <span>Starts {formatDate(cohort.startDate)}</span>
+            <span>{stats.nextSession ? `Next: ${formatDate(stats.nextSession.date)}${stats.nextSession.time ? ` at ${stats.nextSession.time}` : ''}` : 'No upcoming session'}</span>
           </div>
         ) : null}
+      </div>
+
+      <div className="program-card__actions" aria-label={`${programTitle} shortcuts`}>
+        <Link className="student-action" to="/student/schedule">
+          <CalendarDays size={16} />
+          Schedule
+        </Link>
+        <Link className="student-action" to="/student/recordings">
+          <PlayCircle size={16} />
+          Recordings
+        </Link>
+        <Link className="student-action" to={programLink('/student/resources', cohort)}>
+          <Library size={16} />
+          Resources
+        </Link>
+        <Link className="student-action" to="/student/projects">
+          <FileCheck2 size={16} />
+          Projects
+        </Link>
       </div>
 
       {cohort.whatsappLink ? (
@@ -92,6 +203,13 @@ function ProgramCard({ cohort }: { cohort: StudentCohort }) {
       ) : cohort.whatsappGroupName ? (
         <span className="program-card__note">WhatsApp group: {cohort.whatsappGroupName}</span>
       ) : null}
+
+      {stats.certificates > 0 ? (
+        <Link className="program-card__certificate" to="/student/certificates">
+          <Award size={16} />
+          {stats.certificates} certificate{stats.certificates === 1 ? '' : 's'}
+        </Link>
+      ) : null}
     </article>
   );
 }
@@ -99,10 +217,48 @@ function ProgramCard({ cohort }: { cohort: StudentCohort }) {
 export function StudentCohortsPage() {
   const [searchParams] = useSearchParams();
   const page = asPositiveInteger(searchParams.get('page'), 1);
-  const cohortsQuery = useStudentCohorts({ page });
+  const cohortsQuery = useStudentCohorts({ limit: 100, page });
+  const scheduleQuery = useStudentSchedule({ accessType: 'all', limit: 500, page: 1, status: 'all' });
+  const recordingsQuery = useStudentRecordings({ accessType: 'all', limit: 500, page: 1 });
+  const resourcesQuery = useStudentResources({ accessType: 'all', locked: 'all', limit: 500, page: 1 });
+  const projectsQuery = useStudentProjects({ limit: 500, page: 1 });
+  const certificatesQuery = useStudentCertificates({ limit: 500, page: 1 });
   const data = cohortsQuery.data;
   const totalPages = data?.totalPages ?? 1;
   const hasPagination = useMemo(() => Boolean(data && (data.hasPreviousPage || data.hasNextPage || totalPages > 1)), [data, totalPages]);
+  const cohorts = data?.items ?? [];
+  const programStats = useMemo(() => {
+    const schedule = scheduleQuery.data?.items ?? [];
+    const recordings = recordingsQuery.data?.items ?? [];
+    const resources = resourcesQuery.data?.items ?? [];
+    const projects = projectsQuery.data?.items ?? [];
+    const certificates = certificatesQuery.data?.items ?? [];
+
+    return new Map(
+      cohorts.map((cohort) => {
+        const cohortSchedule = schedule.filter((item) => itemMatchesProgram(item, cohort));
+        const stats: ProgramStats = {
+          certificates: certificates.filter((item) => certificateMatchesProgram(item, cohort)).length,
+          projects: projects.filter((item) => itemMatchesProgram(item, cohort)).length,
+          recordings: recordings.filter((item) => itemMatchesProgram(item, cohort)).length,
+          resources: resources.filter((item) => itemMatchesProgram(item, cohort)).length,
+          sessions: cohortSchedule.length,
+          nextSession: nextSessionFor(cohortSchedule)
+        };
+        return [cohort.id, stats];
+      })
+    );
+  }, [certificatesQuery.data?.items, cohorts, projectsQuery.data?.items, recordingsQuery.data?.items, resourcesQuery.data?.items, scheduleQuery.data?.items]);
+
+  const summary = useMemo(
+    () => ({
+      active: cohorts.filter((cohort) => cohort.status === 'active').length,
+      certificates: Array.from(programStats.values()).reduce((total, stats) => total + stats.certificates, 0),
+      cohorts: cohorts.length,
+      upcoming: cohorts.filter((cohort) => cohort.status === 'upcoming').length
+    }),
+    [cohorts, programStats]
+  );
 
   if (cohortsQuery.isLoading) {
     return (
@@ -123,22 +279,51 @@ export function StudentCohortsPage() {
   }
 
   return (
-    <div className="page-stack">
+    <div className="page-stack student-programs-page">
       <PageHeader
-        description="Programs and cohorts you are currently entitled to access."
+        description="Your enrolled programs, cohort timelines, and the learning modules connected to each program."
         eyebrow="My learning"
         title="My Programs"
       />
 
-      {data && data.items.length > 0 ? (
+      <section className="program-overview" aria-label="Program access summary">
+        <article>
+          <GraduationCap size={20} />
+          <span>Enrolled cohorts</span>
+          <strong>{summary.cohorts}</strong>
+        </article>
+        <article>
+          <BookOpen size={20} />
+          <span>Active programs</span>
+          <strong>{summary.active}</strong>
+        </article>
+        <article>
+          <CalendarDays size={20} />
+          <span>Upcoming cohorts</span>
+          <strong>{summary.upcoming}</strong>
+        </article>
+        <article>
+          <Award size={20} />
+          <span>Certificates</span>
+          <strong>{summary.certificates}</strong>
+        </article>
+      </section>
+
+      {data && cohorts.length > 0 ? (
         <section className="program-card-grid" aria-label="Enrolled programs and cohorts">
-          {data.items.map((cohort) => (
-            <ProgramCard cohort={cohort} key={cohort.id} />
+          {cohorts.map((cohort) => (
+            <ProgramCard cohort={cohort} key={cohort.id} stats={programStats.get(cohort.id) ?? { certificates: 0, projects: 0, recordings: 0, resources: 0, sessions: 0 }} />
           ))}
         </section>
       ) : (
         <EmptyState />
       )}
+
+      {scheduleQuery.isError || recordingsQuery.isError || resourcesQuery.isError || projectsQuery.isError || certificatesQuery.isError ? (
+        <StateBlock title="Partial program data">
+          Your enrolled programs loaded, but one or more linked module counts could not refresh. Open the module directly if a count looks lower than expected.
+        </StateBlock>
+      ) : null}
 
       {hasPagination ? (
         <nav className="pagination-bar" aria-label="Program pagination">

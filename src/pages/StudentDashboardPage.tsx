@@ -18,6 +18,7 @@ import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
 import { StudentAnnouncement, useStudentAnnouncements } from '../features/student/useStudentAnnouncements';
+import { useStudentCohorts } from '../features/student/useStudentCohorts';
 import { JsonRecord, StudentProfile, useStudentDashboard, useStudentProfile } from '../features/student/useStudentDashboard';
 import { StudentRecording, useStudentRecordings } from '../features/student/useStudentRecordings';
 import { StudentResource, useStudentResources } from '../features/student/useStudentResources';
@@ -65,6 +66,19 @@ function countFromBundle(bundle: JsonRecord | undefined, keys: string[]) {
 
 function formatName(profile?: StudentProfile) {
   return profile?.fullName || 'Student';
+}
+
+function uniqueNames(names: Array<string | undefined>) {
+  const seen = new Set<string>();
+  return names
+    .map((name) => name?.trim())
+    .filter((name): name is string => Boolean(name))
+    .filter((name) => {
+      const key = name.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 function formatDate(value?: string) {
@@ -193,6 +207,7 @@ export function StudentDashboardPage() {
   const profileQuery = useStudentProfile();
   const dashboardQuery = useStudentDashboard();
   const announcementsQuery = useStudentAnnouncements({ limit: 3, page: 1, priority: 'all' });
+  const cohortsQuery = useStudentCohorts({ limit: 100, page: 1, status: 'all' });
   const recordingsQuery = useStudentRecordings({ accessType: 'all', limit: 3, page: 1, source: 'all' });
   const scheduleQuery = useStudentSchedule({ accessType: 'all', limit: 3, page: 1, status: 'all' });
   const resourcesQuery = useStudentResources({ accessType: 'all', limit: 3, locked: 'all', page: 1 });
@@ -210,7 +225,7 @@ export function StudentDashboardPage() {
   };
   const summaryCards = buildSummaryCards(scopedCounts);
   const trackRoles = asArray(profile?.trackRoleIds).filter((role): role is string => typeof role === 'string');
-  const verifiedCohortName = profile?.cohortName?.trim();
+  const cohortNames = uniqueNames([...(cohortsQuery.data?.items ?? []).map((cohort) => cohort.name), profile?.cohortName]);
   const scheduleItems = scheduleQuery.data?.items ?? [];
   const recordingItems = recordingsQuery.data?.items ?? [];
   const resourceItems = resourcesQuery.data?.items ?? [];
@@ -255,7 +270,7 @@ export function StudentDashboardPage() {
             <span>{profile?.collegeName ?? 'College not available'}</span>
           </div>
           <div className="student-cohort-list" aria-label="Assigned cohorts">
-            {verifiedCohortName ? <StatusBadge>{verifiedCohortName}</StatusBadge> : <StatusBadge>Cohort pending</StatusBadge>}
+            {cohortNames.length ? cohortNames.map((cohortName) => <StatusBadge key={cohortName}>{cohortName}</StatusBadge>) : <StatusBadge>Cohort pending</StatusBadge>}
             <StatusBadge>{profile?.active ? 'Active access' : 'Inactive access'}</StatusBadge>
             {trackRoles.slice(0, 2).map((role) => (
               <StatusBadge key={role}>{role}</StatusBadge>
