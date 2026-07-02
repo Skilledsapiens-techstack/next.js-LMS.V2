@@ -141,6 +141,14 @@ const RESOURCE_WRITE_COLUMNS = new Set([
   'url'
 ]);
 
+const PROGRAM_WRITE_COLUMNS = new Set([
+  'domain_label',
+  'name',
+  'program_key',
+  'short_name',
+  'status'
+]);
+
 const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/announcements': { table: 'announcements', searchColumns: ['title', 'message', 'audience'] },
   '/admins/audit-logs': {
@@ -154,7 +162,7 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/cohorts': {
     table: 'cohorts',
     filterColumns: { program: 'program_key' },
-    searchColumns: ['name', 'program_key', 'domain_key'],
+    searchColumns: ['name', 'cohort_id', 'program_key', 'domain_key'],
     sortColumns: {
       name: { column: 'name', ascending: true },
       program: { column: 'program_key', ascending: true },
@@ -169,7 +177,7 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/enrollment-webhook-events': { table: 'enrollment_webhook_events', searchColumns: ['event_id', 'payment_id', 'order_id'] },
   '/admins/paid-access': { table: 'paid_access', searchColumns: ['student_email', 'item_id', 'item_type'] },
   '/admins/payment-orders': { table: 'payment_orders', searchColumns: ['student_email', 'item_id', 'item_type', 'razorpay_order_id'] },
-  '/admins/programs': { table: 'programs', searchColumns: ['program_key', 'program_name', 'name'] },
+  '/admins/programs': { table: 'programs', filterColumns: { domain: 'domain_label' }, searchColumns: ['program_key', 'name', 'short_name', 'domain_label'] },
   '/admins/project-roles': { table: 'role_master', filterColumns: { category: 'role_category' }, searchColumns: ['role_name', 'program_key', 'role_category'] },
   '/admins/project-submissions': {
     table: 'project_submission_requests',
@@ -222,6 +230,12 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     normalizeBody: normalizeResourceWriteBody,
     table: 'resources',
     validateBody: validateResourceWriteBody
+  },
+  programs: {
+    columns: PROGRAM_WRITE_COLUMNS,
+    normalizeBody: normalizeProgramWriteBody,
+    table: 'programs',
+    validateBody: validateProgramWriteBody
   }
 };
 
@@ -314,6 +328,12 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
   const resourceUpdate = cleanPath.match(/^\/admins\/resources\/([^/]+)$/);
   if (resourceUpdate) return updateById(context, 'resources', decodeURIComponent(resourceUpdate[1]), options.body, 'updated') as Promise<TResponse>;
 
+  const programStatus = cleanPath.match(/^\/admins\/programs\/([^/]+)\/status$/);
+  if (programStatus) return updateById(context, 'programs', decodeURIComponent(programStatus[1]), options.body, 'status_changed') as Promise<TResponse>;
+
+  const programUpdate = cleanPath.match(/^\/admins\/programs\/([^/]+)$/);
+  if (programUpdate) return updateById(context, 'programs', decodeURIComponent(programUpdate[1]), options.body, 'updated') as Promise<TResponse>;
+
   throw new ApiClientError(`Unsupported Supabase write route: ${cleanPath}`, 404);
 }
 
@@ -332,6 +352,7 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/cohorts') return insertRow(context, 'cohorts', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/workshops') return insertRow(context, 'workshops', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/resources') return insertRow(context, 'resources', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/programs') return insertRow(context, 'programs', options.body, 'created') as Promise<TResponse>;
 
   throw new ApiClientError(`Unsupported Supabase write route: ${cleanPath}`, 404);
 }
@@ -1410,6 +1431,17 @@ function normalizeResourceWriteBody(payload: Record<string, unknown>) {
   };
 }
 
+function normalizeProgramWriteBody(payload: Record<string, unknown>) {
+  return {
+    ...payload,
+    domain_label: typeof payload.domain_label === 'string' ? payload.domain_label.trim() : payload.domain_label,
+    name: typeof payload.name === 'string' ? payload.name.trim() : payload.name,
+    program_key: typeof payload.program_key === 'string' ? payload.program_key.trim().toLowerCase().replace(/[\s-]+/g, '_') : payload.program_key,
+    short_name: typeof payload.short_name === 'string' ? payload.short_name.trim() : payload.short_name,
+    status: typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status
+  };
+}
+
 function validateCohortWriteBody(payload: Record<string, unknown>, inserting: boolean) {
   const name = typeof payload.name === 'string' ? payload.name.trim() : '';
   const status = typeof payload.status === 'string' ? payload.status : undefined;
@@ -1426,6 +1458,21 @@ function validateCohortWriteBody(payload: Record<string, unknown>, inserting: bo
   }
   if (startDate && endDate && startDate > endDate) {
     throw new ApiClientError('Cohort end date cannot be before the start date.', 400);
+  }
+}
+
+function validateProgramWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+  const programKey = typeof payload.program_key === 'string' ? payload.program_key.trim() : '';
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+
+  if (inserting && !name) throw new ApiClientError('Program name is required.', 400);
+  if (inserting && !programKey) throw new ApiClientError('Program key is required.', 400);
+  if (programKey && !/^[a-z0-9_]+$/.test(programKey)) {
+    throw new ApiClientError('Program key can use lowercase letters, numbers, and underscores only.', 400);
+  }
+  if (status && !['active', 'inactive'].includes(status)) {
+    throw new ApiClientError('Program status is invalid.', 400);
   }
 }
 
@@ -1517,8 +1564,8 @@ async function writeAuditLog(
   row: Record<string, unknown>,
   payload: Record<string, unknown>
 ) {
-  if (table !== 'cohorts' && table !== 'students' && table !== 'workshops' && table !== 'resources') return;
-  const entityType = table === 'cohorts' ? 'cohort' : table === 'workshops' ? 'workshop' : table === 'resources' ? 'resource' : 'student';
+  if (table !== 'cohorts' && table !== 'students' && table !== 'workshops' && table !== 'resources' && table !== 'programs') return;
+  const entityType = table === 'cohorts' ? 'cohort' : table === 'workshops' ? 'workshop' : table === 'resources' ? 'resource' : table === 'programs' ? 'program' : 'student';
 
   const auditRow = {
     action: `admin_${entityType}_${action}`,
@@ -1531,7 +1578,7 @@ async function writeAuditLog(
   };
 
   const { error } = await context.supabase.from('audit_logs').insert(auditRow);
-  if (error) throw new ApiClientError(`${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : 'Student'} was saved, but audit logging failed: ${error.message}`, 503);
+  if (error) throw new ApiClientError(`${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : 'Student'} was saved, but audit logging failed: ${error.message}`, 503);
 }
 
 function buildAuditDetails(table: string, row: Record<string, unknown>, payload: Record<string, unknown>) {

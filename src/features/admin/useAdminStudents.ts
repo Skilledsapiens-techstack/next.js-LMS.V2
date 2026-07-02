@@ -36,6 +36,7 @@ export type AdminStudent = {
 
 export type AdminStudentsQuery = {
   cohortName?: string;
+  enabled?: boolean;
   limit?: number;
   page?: number;
   programKey?: string;
@@ -157,7 +158,7 @@ export function useAdminStudents(query: AdminStudentsQuery) {
   const cohortName = query.cohortName?.trim();
 
   return useQuery({
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && query.enabled !== false,
     queryFn: () =>
       apiGet<PaginatedResponse<AdminStudent>>('/admins/students', {
         accessToken: accessToken ?? undefined,

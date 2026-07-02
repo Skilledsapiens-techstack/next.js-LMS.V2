@@ -1,11 +1,23 @@
-import { FileText, MonitorPlay, Plus, RefreshCw, Search, Users, X } from 'lucide-react';
-import { FormEvent, useMemo, useState } from 'react';
+import { Download, FileText, Link2, Mail, MonitorPlay, Plus, RefreshCw, Search, Users, X } from 'lucide-react';
+import type { FormEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
-import { AdminCohort, AdminCohortStatus, useAdminCohorts, useCreateAdminCohort, useUpdateAdminCohort, useUpdateAdminCohortStatus } from '../features/admin/useAdminCohorts';
+import {
+  AdminCohort,
+  AdminCohortImpact,
+  AdminCohortStatus,
+  useAdminCohortImpact,
+  useAdminCohorts,
+  useCreateAdminCohort,
+  useExportAdminCohorts,
+  useUpdateAdminCohort,
+  useUpdateAdminCohortStatus
+} from '../features/admin/useAdminCohorts';
 import { useAdminPrograms } from '../features/admin/useAdminPrograms';
+import { AdminStudent, useAdminStudents, useUpdateAdminStudent } from '../features/admin/useAdminStudents';
 import type { AdminProgram } from '../features/admin/useAdminPrograms';
 
 type ProgramFilter = 'all' | string;
@@ -28,6 +40,11 @@ type PendingStatusChange = {
   cohort: AdminCohort;
   nextStatus: AdminCohortStatus;
 };
+type PendingBulkStatusChange = {
+  count: number;
+  nextStatus: AdminCohortStatus;
+};
+type CohortPreviewTab = 'overview' | 'students' | 'studentView' | 'links' | 'selfPaced' | 'audit';
 
 const statusOptions: Array<AdminCohortStatus | 'all'> = ['all', 'upcoming', 'active', 'completed', 'inactive'];
 
@@ -134,6 +151,17 @@ function formatDate(value: string | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toISOString().slice(0, 10);
 }
 
+function formatDateTime(value: string | undefined) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('en-IN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Kolkata'
+  }).format(date);
+}
+
 function formatWindow(item: AdminCohort) {
   const start = formatDate(item.startDate);
   const end = formatDate(item.endDate);
@@ -159,6 +187,16 @@ function formatOption(value: string) {
 
 function readableError(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function csvEscape(value: unknown) {
+  const raw = value === undefined || value === null ? '' : String(value);
+  if (!/[",\n]/.test(raw)) return raw;
+  return `"${raw.replace(/"/g, '""')}"`;
+}
+
+function isFailureMessage(message: string) {
+  return /could not|failed|error|unable/i.test(message);
 }
 
 function buildPageLink(page: number, search: string, status: AdminCohortStatus | 'all', program: ProgramFilter, sort: SortMode) {
@@ -210,6 +248,36 @@ function resourceDraftsFromCohort(cohort: AdminCohort | null): SelfPacedResource
   return resources.length > 0 ? resources : [createSelfPacedResourceDraft()];
 }
 
+function countFilledRecords(items: unknown[], keys: string[]) {
+  return items.filter((item) => keys.some((key) => textFromRecord(item, key))).length;
+}
+
+function itemUrl(item: unknown) {
+  return textFromRecord(item, 'url') || textFromRecord(item, 'link');
+}
+
+function itemTitle(item: unknown, fallback: string) {
+  return textFromRecord(item, 'title') || textFromRecord(item, 'name') || fallback;
+}
+
+function formatAuditAction(value: string) {
+  return value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function studentCohortNames(student: AdminStudent) {
+  return Array.from(
+    new Set([
+      ...(student.cohortNames ?? []),
+      ...(student.cohorts ?? []).map((cohort) => cohort.cohortName),
+      student.cohortName
+    ].map((name) => String(name ?? '').trim()).filter(Boolean))
+  );
+}
+
+function studentProgramKeys(student: AdminStudent) {
+  return Array.from(new Set([...(student.programKeys ?? []), ...(student.trackRoleIds ?? [])].map((key) => String(key ?? '').trim()).filter(Boolean)));
+}
+
 function formFromCohort(cohort: AdminCohort | null): CohortFormState {
   return {
     cohortId: cohort?.cohortId ?? '',
@@ -232,7 +300,7 @@ function CohortModal({
 }: {
   cohort: AdminCohort | null;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (message: string) => void;
   programOptions: CohortProgramOption[];
 }) {
   const fallbackProgram = cohortProgramTemplates[0];
@@ -247,6 +315,17 @@ function CohortModal({
   const updateCohort = useUpdateAdminCohort();
   const selectedProgram = programOptions.find((program) => program.programKey === selectedProgramKey) ?? programOptions[0] ?? fallbackProgram;
   const isSaving = createCohort.isPending || updateCohort.isPending;
+  const normalizedName = form.name.trim().toLowerCase();
+  const normalizedCohortId = form.cohortId.trim().toLowerCase();
+  const nameDuplicateQuery = useAdminCohorts({ enabled: Boolean(normalizedName), limit: 10, page: 1, search: form.name.trim(), status: 'all' });
+  const idDuplicateQuery = useAdminCohorts({ enabled: Boolean(normalizedCohortId), limit: 10, page: 1, search: form.cohortId.trim(), status: 'all' });
+  const duplicateName = (nameDuplicateQuery.data?.items ?? []).find((item) => item.id !== cohort?.id && item.name.trim().toLowerCase() === normalizedName);
+  const duplicateCohortId = (idDuplicateQuery.data?.items ?? []).find((item) => item.id !== cohort?.id && String(item.cohortId ?? '').trim().toLowerCase() === normalizedCohortId);
+  const duplicateMessage = duplicateName
+    ? `A cohort named "${duplicateName.name}" already exists.`
+    : duplicateCohortId
+      ? `Cohort ID "${duplicateCohortId.cohortId}" is already used by ${duplicateCohortId.name}.`
+      : null;
 
   function updateForm(field: keyof CohortFormState, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -270,11 +349,11 @@ function CohortModal({
       return;
     }
 
-    const studentCount = Number.parseInt(form.studentCount, 10);
-    if (!Number.isFinite(studentCount) || studentCount < 0) {
-      setSubmitError('Student count must be zero or a positive whole number.');
+    if (duplicateMessage) {
+      setSubmitError(duplicateMessage);
       return;
     }
+
     if (form.startDate && form.endDate && form.startDate > form.endDate) {
       setSubmitError('End date cannot be before the start date.');
       return;
@@ -312,7 +391,7 @@ function CohortModal({
         selfPacedSessions: selfPacedSessionsPayload,
         startDate: form.startDate || undefined,
         status: form.status,
-        studentCount,
+        studentCount: cohort?.studentCount ?? 0,
         waGroupName: form.waGroupName.trim() || undefined,
         waLink: form.waLink.trim() || undefined
       };
@@ -322,7 +401,7 @@ function CohortModal({
       } else {
         await createCohort.mutateAsync(payload);
       }
-      onSaved();
+      onSaved(cohort ? 'Cohort updated successfully.' : 'Cohort created successfully.');
       onClose();
     } catch (error) {
       setSubmitError(readableError(error, 'Cohort could not be saved. Confirm cohort writes are enabled and try again.'));
@@ -343,10 +422,12 @@ function CohortModal({
             <label>
               <span>Cohort ID</span>
               <input value={form.cohortId} onChange={(event) => updateForm('cohortId', event.target.value)} placeholder="Auto if blank" type="text" />
+              {duplicateCohortId ? <small className="cohort-field-warning">{`Already used by ${duplicateCohortId.name}.`}</small> : null}
             </label>
             <label>
               <span>Cohort Name</span>
               <input value={form.name} onChange={(event) => updateForm('name', event.target.value)} placeholder="e.g. MCLP-2026-JUL-1" type="text" />
+              {duplicateName ? <small className="cohort-field-warning">A cohort with this name already exists.</small> : null}
             </label>
             <label>
               <span>Program Type</span>
@@ -377,7 +458,10 @@ function CohortModal({
             </label>
             <label>
               <span>Students</span>
-              <input value={form.studentCount} min="0" onChange={(event) => updateForm('studentCount', event.target.value)} type="number" />
+              <input aria-describedby="cohort-student-count-help" readOnly type="text" value={form.studentCount} />
+              <small id="cohort-student-count-help" className="cohort-field-help">
+                Calculated from student assignments. Manage membership from the Students module.
+              </small>
             </label>
             <label>
               <span>WA Link</span>
@@ -480,8 +564,453 @@ function CohortModal({
           <button className="segmented-button" onClick={onClose} type="button">
             Cancel
           </button>
-          <button className="segmented-button segmented-button--active" disabled={isSaving} form="cohort-save-form" type="submit">
-            {isSaving ? 'Saving...' : 'Save Cohort'}
+          <button className="segmented-button segmented-button--active" disabled={isSaving || Boolean(duplicateMessage)} form="cohort-save-form" type="submit">
+            {isSaving ? 'Saving...' : duplicateMessage ? 'Fix Duplicate' : 'Save Cohort'}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function CohortPreviewModal({
+  cohort,
+  impact,
+  isImpactLoading,
+  onClose,
+  onMembershipChanged
+}: {
+  cohort: AdminCohort;
+  impact?: AdminCohortImpact;
+  isImpactLoading: boolean;
+  onClose: () => void;
+  onMembershipChanged: (message: string) => void;
+}) {
+  const sessionCount = countFilledRecords(cohort.selfPacedSessions, ['title', 'url']);
+  const resourceCount = countFilledRecords(cohort.selfPacedResources, ['name', 'title', 'url']);
+  const studentLink = `/admin/students?cohortName=${encodeURIComponent(cohort.name)}`;
+  const [activeTab, setActiveTab] = useState<CohortPreviewTab>('overview');
+  const [assignedPage, setAssignedPage] = useState(1);
+  const [studentSearch, setStudentSearch] = useState('');
+  const [debouncedStudentSearch, setDebouncedStudentSearch] = useState('');
+  const [pendingRemovalStudent, setPendingRemovalStudent] = useState<AdminStudent | null>(null);
+  const trimmedStudentSearch = debouncedStudentSearch.trim();
+  const shouldSearchStudents = activeTab === 'students' && trimmedStudentSearch.length >= 2;
+  const assignedStudentsQuery = useAdminStudents({ cohortName: cohort.name, enabled: activeTab === 'students', limit: 12, page: assignedPage, status: 'all' });
+  const searchStudentsQuery = useAdminStudents({ enabled: shouldSearchStudents, limit: 8, page: 1, search: trimmedStudentSearch, status: 'all' });
+  const updateStudent = useUpdateAdminStudent();
+  const assignedStudents = assignedStudentsQuery.data?.items ?? [];
+  const searchableStudents = (searchStudentsQuery.data?.items ?? []).filter((student) => !studentCohortNames(student).includes(cohort.name));
+  const isMembershipSaving = updateStudent.isPending;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedStudentSearch(studentSearch.trim()), 350);
+    return () => window.clearTimeout(timer);
+  }, [studentSearch]);
+
+  useEffect(() => {
+    setAssignedPage(1);
+    setPendingRemovalStudent(null);
+  }, [cohort.id]);
+
+  async function addStudentToCohort(student: AdminStudent) {
+    try {
+      await updateStudent.mutateAsync({
+        body: {
+          assignmentMode: 'add',
+          cohortIds: [cohort.id],
+          cohortNames: [cohort.name],
+          email: student.email,
+          fullName: student.fullName,
+          programKeys: cohort.programKey ? [cohort.programKey] : undefined
+        },
+        studentId: student.id
+      });
+      await assignedStudentsQuery.refetch();
+      if (shouldSearchStudents) await searchStudentsQuery.refetch();
+      onMembershipChanged(`${student.fullName} added to ${cohort.name}.`);
+    } catch (error) {
+      onMembershipChanged(readableError(error, 'Student could not be added to this cohort.'));
+    }
+  }
+
+  async function removeStudentFromCohort(student: AdminStudent) {
+    const nextCohortNames = studentCohortNames(student).filter((name) => name !== cohort.name);
+    try {
+      await updateStudent.mutateAsync({
+        body: {
+          assignmentMode: 'replace',
+          cohortNames: nextCohortNames,
+          email: student.email,
+          fullName: student.fullName,
+          programKeys: studentProgramKeys(student)
+        },
+        studentId: student.id
+      });
+      await assignedStudentsQuery.refetch();
+      if (shouldSearchStudents) await searchStudentsQuery.refetch();
+      setPendingRemovalStudent(null);
+      onMembershipChanged(`${student.fullName} removed from ${cohort.name}.`);
+    } catch (error) {
+      onMembershipChanged(readableError(error, 'Student could not be removed from this cohort.'));
+    }
+  }
+
+  return (
+    <div className="student-modal-backdrop" role="presentation">
+      <section aria-labelledby="cohort-preview-title" aria-modal="true" className="student-modal cohort-preview-modal" role="dialog">
+        <header className="student-modal__header">
+          <div>
+            <p className="cohort-preview-eyebrow">Cohort Details</p>
+            <h2 id="cohort-preview-title">{cohort.name}</h2>
+          </div>
+          <button aria-label="Close cohort preview" className="student-modal__icon-button" onClick={onClose} type="button">
+            <X size={24} />
+          </button>
+        </header>
+        <div className="student-modal__body cohort-preview-body">
+          <div className="cohort-preview-summary">
+            <div>
+              <span>Status</span>
+              <strong>{formatOption(cohort.status)}</strong>
+            </div>
+            <div>
+              <span>Students</span>
+              <strong>{cohort.studentCount}</strong>
+            </div>
+            <div>
+              <span>Program</span>
+              <strong>{programLabel(cohort)}</strong>
+            </div>
+            <div>
+              <span>Window</span>
+              <strong>{formatWindow(cohort)}</strong>
+            </div>
+          </div>
+
+          <div className="cohort-preview-tabs" role="tablist" aria-label="Cohort detail sections">
+            {[
+              ['overview', 'Overview'],
+              ['students', 'Students'],
+              ['studentView', 'Student View'],
+              ['links', 'Linked LMS Data'],
+              ['selfPaced', 'Self-paced'],
+              ['audit', 'Audit']
+            ].map(([tab, label]) => (
+              <button aria-selected={activeTab === tab} className={activeTab === tab ? 'cohort-preview-tab cohort-preview-tab--active' : 'cohort-preview-tab'} key={tab} onClick={() => setActiveTab(tab as CohortPreviewTab)} role="tab" type="button">
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {activeTab === 'overview' ? (
+            <section className="cohort-preview-section">
+              <h3>Operational Details</h3>
+              <dl className="cohort-preview-details">
+                <div>
+                  <dt>Cohort ID</dt>
+                  <dd>{cohort.cohortId || cohort.id}</dd>
+                </div>
+                <div>
+                  <dt>Program key</dt>
+                  <dd>{cohort.programKey || '-'}</dd>
+                </div>
+                <div>
+                  <dt>WhatsApp group</dt>
+                  <dd>{cohort.waGroupName || '-'}</dd>
+                </div>
+                <div>
+                  <dt>Google group</dt>
+                  <dd>{cohort.googleGroup || '-'}</dd>
+                </div>
+              </dl>
+              <div className="cohort-preview-links">
+                {cohort.waLink ? (
+                  <a className="segmented-button" href={cohort.waLink} rel="noreferrer" target="_blank">
+                    <Link2 size={14} />
+                    Open WA Link
+                  </a>
+                ) : null}
+                {cohort.googleGroup ? (
+                  <a className="segmented-button" href={`mailto:${cohort.googleGroup}`}>
+                    <Mail size={14} />
+                    Mail Group
+                  </a>
+                ) : null}
+                <Link className="segmented-button segmented-button--gold" to={studentLink}>
+                  <Users size={14} />
+                  Full Students View
+                </Link>
+              </div>
+            </section>
+          ) : null}
+
+          {activeTab === 'links' ? (
+          <section className="cohort-preview-section">
+            <h3>Linked LMS data</h3>
+            <div className="cohort-impact-grid" aria-busy={isImpactLoading}>
+              <div>
+                <span>Students</span>
+                <strong>{isImpactLoading ? '...' : impact?.students ?? cohort.studentCount}</strong>
+              </div>
+              <div>
+                <span>Workshops</span>
+                <strong>{isImpactLoading ? '...' : impact?.workshops ?? 0}</strong>
+              </div>
+              <div>
+                <span>Resources</span>
+                <strong>{isImpactLoading ? '...' : impact?.resources ?? 0}</strong>
+              </div>
+              <div>
+                <span>Announcements</span>
+                <strong>{isImpactLoading ? '...' : impact?.announcements ?? 0}</strong>
+              </div>
+            </div>
+          </section>
+          ) : null}
+
+          {activeTab === 'students' ? (
+          <section className="cohort-preview-section">
+            <div className="cohort-membership-header">
+              <div>
+                <h3>Student membership</h3>
+                <p>Manage students for this cohort only. Student profiles and other cohort assignments are preserved.</p>
+              </div>
+              <Link className="segmented-button" to={studentLink}>
+                <Users size={14} />
+                Full Students View
+              </Link>
+            </div>
+            <div className="cohort-membership-grid">
+              <div className="cohort-membership-panel">
+                <strong>Assigned students</strong>
+                {pendingRemovalStudent ? (
+                  <div className="cohort-removal-confirm" role="alert">
+                    <div>
+                      <strong>Remove from this cohort?</strong>
+                      <span>
+                        {pendingRemovalStudent.fullName} will be removed from {cohort.name}. Their profile and other cohort/program access will stay unchanged.
+                      </span>
+                    </div>
+                    <div>
+                      <button className="segmented-button" disabled={isMembershipSaving} onClick={() => setPendingRemovalStudent(null)} type="button">
+                        Cancel
+                      </button>
+                      <button className="segmented-button segmented-button--danger" disabled={isMembershipSaving} onClick={() => void removeStudentFromCohort(pendingRemovalStudent)} type="button">
+                        {isMembershipSaving ? 'Removing...' : 'Confirm Remove'}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {assignedStudentsQuery.isFetching ? <p className="cohort-preview-muted">Loading assigned students...</p> : null}
+                {assignedStudents.length ? (
+                  <div className="cohort-student-list">
+                    {assignedStudents.map((student) => (
+                      <div className="cohort-student-row" key={student.id}>
+                        <div>
+                          <strong>{student.fullName}</strong>
+                          <span>{student.email}</span>
+                        </div>
+                        <button className="segmented-button segmented-button--danger" disabled={isMembershipSaving} onClick={() => setPendingRemovalStudent(student)} type="button">
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : assignedStudentsQuery.isFetching ? null : (
+                  <p className="cohort-preview-muted">No students assigned to this cohort yet.</p>
+                )}
+                <div className="cohort-member-pagination">
+                  <button className="segmented-button" disabled={!assignedStudentsQuery.data?.hasPreviousPage || assignedStudentsQuery.isFetching} onClick={() => setAssignedPage((current) => Math.max(1, current - 1))} type="button">
+                    Previous
+                  </button>
+                  <span>
+                    Page {assignedPage}
+                    {assignedStudentsQuery.data?.total ? ` · ${assignedStudentsQuery.data.total} total` : ''}
+                  </span>
+                  <button className="segmented-button" disabled={!assignedStudentsQuery.data?.hasNextPage || assignedStudentsQuery.isFetching} onClick={() => setAssignedPage((current) => current + 1)} type="button">
+                    Next
+                  </button>
+                </div>
+              </div>
+              <div className="cohort-membership-panel">
+                <label className="cohort-member-search">
+                  <span>Add existing student</span>
+                  <input value={studentSearch} onChange={(event) => setStudentSearch(event.target.value)} placeholder="Search by name, email, or student ID" type="search" />
+                </label>
+                {studentSearch.trim().length > 0 && studentSearch.trim().length < 2 ? <p className="cohort-preview-muted">Type at least 2 characters to search.</p> : null}
+                {shouldSearchStudents && searchStudentsQuery.isFetching ? <p className="cohort-preview-muted">Searching students...</p> : null}
+                {shouldSearchStudents && searchableStudents.length ? (
+                  <div className="cohort-student-list">
+                    {searchableStudents.map((student) => (
+                      <div className="cohort-student-row" key={student.id}>
+                        <div>
+                          <strong>{student.fullName}</strong>
+                          <span>{student.email}</span>
+                        </div>
+                        <button className="segmented-button segmented-button--success" disabled={isMembershipSaving} onClick={() => void addStudentToCohort(student)} type="button">
+                          {isMembershipSaving ? 'Saving...' : 'Add'}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : searchStudentsQuery.isFetching ? null : (
+                  <p className="cohort-preview-muted">{shouldSearchStudents ? 'No available matching students found.' : 'Search is idle until 2 characters.'}</p>
+                )}
+              </div>
+            </div>
+          </section>
+          ) : null}
+
+          {activeTab === 'studentView' ? (
+          <section className="cohort-preview-section">
+            <h3>Student-facing view</h3>
+            <div className="cohort-student-facing">
+              <div className="cohort-student-facing__hero">
+                <div>
+                  <span>Student portal card</span>
+                  <strong>{cohort.name}</strong>
+                  <p>
+                    {cohort.status === 'inactive'
+                      ? 'Inactive cohorts are hidden from normal student learning views.'
+                      : `${programLabel(cohort)} students see this cohort with the mapped sessions, recordings, resources, and projects available to their account.`}
+                  </p>
+                </div>
+                <StatusBadge tone={cohort.status === 'active' ? 'safe' : 'warning'}>{formatOption(cohort.status)}</StatusBadge>
+              </div>
+              <div className="cohort-student-facing__grid">
+                <div>
+                  <span>Program</span>
+                  <strong>{programLabel(cohort)}</strong>
+                </div>
+                <div>
+                  <span>Learning mode</span>
+                  <strong>{cohort.selfPaced ? 'Self-paced' : 'Live cohort'}</strong>
+                </div>
+                <div>
+                  <span>Window</span>
+                  <strong>{formatWindow(cohort)}</strong>
+                </div>
+                <div>
+                  <span>Students</span>
+                  <strong>{cohort.studentCount}</strong>
+                </div>
+              </div>
+              <div className="cohort-student-facing__content">
+                <div>
+                  <strong>Self-paced sessions</strong>
+                  {cohort.selfPacedSessions.length ? (
+                    <ul>
+                      {cohort.selfPacedSessions.slice(0, 4).map((session, index) => (
+                        <li key={`${itemTitle(session, `Session ${index + 1}`)}-${index}`}>{itemTitle(session, `Session ${index + 1}`)}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>No self-paced sessions attached.</p>
+                  )}
+                </div>
+                <div>
+                  <strong>Self-paced resources</strong>
+                  {cohort.selfPacedResources.length ? (
+                    <ul>
+                      {cohort.selfPacedResources.slice(0, 4).map((resource, index) => (
+                        <li key={`${itemTitle(resource, `Resource ${index + 1}`)}-${index}`}>{itemTitle(resource, `Resource ${index + 1}`)}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>No self-paced resources attached.</p>
+                  )}
+                </div>
+              </div>
+              <div className="cohort-student-facing__links">
+                <div>
+                  <span>WhatsApp group</span>
+                  <strong>{cohort.waGroupName || 'Not configured'}</strong>
+                </div>
+                <div>
+                  <span>Google group</span>
+                  <strong>{cohort.googleGroup || 'Not configured'}</strong>
+                </div>
+              </div>
+            </div>
+          </section>
+          ) : null}
+
+          {activeTab === 'selfPaced' ? (
+          <section className="cohort-preview-section">
+            <h3>Self-paced content</h3>
+            <div className="cohort-preview-content-grid">
+              <div>
+                <strong>{sessionCount} sessions</strong>
+                <ul>
+                  {cohort.selfPacedSessions.slice(0, 5).map((session, index) => {
+                    const url = itemUrl(session);
+                    const title = itemTitle(session, `Session ${index + 1}`);
+                    return (
+                      <li key={`${title}-${index}`}>
+                        {url ? (
+                          <a href={url} rel="noreferrer" target="_blank">
+                            {title}
+                          </a>
+                        ) : (
+                          <span>{title}</span>
+                        )}
+                      </li>
+                    );
+                  })}
+                  {cohort.selfPacedSessions.length === 0 ? <li>No sessions added.</li> : null}
+                </ul>
+              </div>
+              <div>
+                <strong>{resourceCount} resources</strong>
+                <ul>
+                  {cohort.selfPacedResources.slice(0, 5).map((resource, index) => {
+                    const url = itemUrl(resource);
+                    const title = itemTitle(resource, `Resource ${index + 1}`);
+                    return (
+                      <li key={`${title}-${index}`}>
+                        {url ? (
+                          <a href={url} rel="noreferrer" target="_blank">
+                            {title}
+                          </a>
+                        ) : (
+                          <span>{title}</span>
+                        )}
+                      </li>
+                    );
+                  })}
+                  {cohort.selfPacedResources.length === 0 ? <li>No resources added.</li> : null}
+                </ul>
+              </div>
+            </div>
+          </section>
+          ) : null}
+
+          {activeTab === 'audit' ? (
+          <section className="cohort-preview-section">
+            <h3>Recent activity</h3>
+            {isImpactLoading ? (
+              <p className="cohort-preview-muted">Loading recent cohort activity...</p>
+            ) : impact?.auditLogs.length ? (
+              <div className="cohort-audit-list">
+                {impact.auditLogs.map((entry) => (
+                  <div key={entry.id}>
+                    <strong>{formatAuditAction(entry.action)}</strong>
+                    <span>
+                      {entry.actorEmail || 'System'} · {formatDateTime(entry.createdAt)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="cohort-preview-muted">No recent cohort actions found.</p>
+            )}
+          </section>
+          ) : null}
+        </div>
+        <footer className="student-modal__footer">
+          <button className="segmented-button segmented-button--active" onClick={onClose} type="button">
+            Done
           </button>
         </footer>
       </section>
@@ -499,15 +1028,48 @@ export function AdminCohortsPage() {
   const [searchInput, setSearchInput] = useState(search);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingCohort, setEditingCohort] = useState<AdminCohort | null>(null);
+  const [previewCohort, setPreviewCohort] = useState<AdminCohort | null>(null);
   const [pendingStatusChange, setPendingStatusChange] = useState<PendingStatusChange | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [pendingBulkStatusChange, setPendingBulkStatusChange] = useState<PendingBulkStatusChange | null>(null);
+  const [selectedCohortIds, setSelectedCohortIds] = useState<Set<string>>(() => new Set());
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const selectedImpactCohort = previewCohort ?? pendingStatusChange?.cohort ?? null;
+  const cohortImpactQuery = useAdminCohortImpact(selectedImpactCohort);
   const cohortsQuery = useAdminCohorts({ limit: 30, page, program: program === 'all' ? undefined : program, search, sort, status });
   const programsQuery = useAdminPrograms({ limit: 100, status: 'active' });
   const updateCohortStatus = useUpdateAdminCohortStatus();
+  const exportCohorts = useExportAdminCohorts();
   const cohortProgramOptions = useMemo(() => mergeCohortProgramOptions(programsQuery.data?.items), [programsQuery.data?.items]);
   const data = cohortsQuery.data;
   const totalPages = data?.totalPages ?? 1;
   const visibleCohorts = data?.items ?? [];
+  const selectedCohorts = useMemo(() => visibleCohorts.filter((cohort) => selectedCohortIds.has(cohort.id)), [selectedCohortIds, visibleCohorts]);
+  const allVisibleSelected = visibleCohorts.length > 0 && visibleCohorts.every((cohort) => selectedCohortIds.has(cohort.id));
+  const isBulkBusy = updateCohortStatus.isPending;
+  const searchParamsKey = searchParams.toString();
+
+  useEffect(() => {
+    setSearchInput(search);
+  }, [search]);
+
+  useEffect(() => {
+    setSelectedCohortIds(new Set());
+  }, [page, program, search, sort, status]);
+
+  useEffect(() => {
+    const nextSearch = searchInput.trim();
+    if (nextSearch === search) return undefined;
+
+    const timer = window.setTimeout(() => {
+      const next = new URLSearchParams(searchParamsKey);
+      next.set('page', '1');
+      if (nextSearch) next.set('search', nextSearch);
+      else next.delete('search');
+      setSearchParams(next, { replace: true });
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [search, searchInput, searchParamsKey, setSearchParams]);
 
   function updateParams(updates: Record<string, string | undefined>) {
     const next = new URLSearchParams(searchParams);
@@ -519,20 +1081,107 @@ export function AdminCohortsPage() {
     setSearchParams(next);
   }
 
-  function handleSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    updateParams({ search: searchInput.trim() || undefined });
+  function toggleCohortSelection(cohortId: string, selected: boolean) {
+    setSelectedCohortIds((current) => {
+      const next = new Set(current);
+      if (selected) next.add(cohortId);
+      else next.delete(cohortId);
+      return next;
+    });
+  }
+
+  function toggleVisibleSelection() {
+    setSelectedCohortIds((current) => {
+      const next = new Set(current);
+      if (allVisibleSelected) {
+        visibleCohorts.forEach((cohort) => next.delete(cohort.id));
+      } else {
+        visibleCohorts.forEach((cohort) => next.add(cohort.id));
+      }
+      return next;
+    });
+  }
+
+  function downloadCohortsCsv(cohorts: AdminCohort[], fileName: string) {
+    if (!cohorts.length) return;
+    const headers = ['cohortId', 'name', 'status', 'programKey', 'domainKey', 'startDate', 'endDate', 'studentCount', 'selfPaced', 'sessions', 'resources', 'waGroupName', 'waLink', 'googleGroup', 'updatedAt'];
+    const lines = [
+      headers.join(','),
+      ...cohorts.map((cohort) =>
+        [
+          cohort.cohortId || cohort.id,
+          cohort.name,
+          cohort.status,
+          cohort.programKey,
+          cohort.domainKey,
+          cohort.startDate,
+          cohort.endDate,
+          cohort.studentCount,
+          cohort.selfPaced,
+          cohort.selfPacedSessions.length,
+          cohort.selfPacedResources.length,
+          cohort.waGroupName,
+          cohort.waLink,
+          cohort.googleGroup,
+          cohort.updatedAt
+        ]
+          .map(csvEscape)
+          .join(',')
+      )
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    window.setTimeout(() => {
+      link.remove();
+      URL.revokeObjectURL(url);
+    }, 0);
+  }
+
+  async function handleExportFiltered() {
+    try {
+      const result = await exportCohorts.mutateAsync({ program: program === 'all' ? undefined : program, search, sort, status });
+      downloadCohortsCsv(result.items, `cohorts-filtered-${new Date().toISOString().slice(0, 10)}.csv`);
+      setActionMessage(`Exported ${result.items.length} filtered cohorts.`);
+    } catch (error) {
+      setActionMessage(readableError(error, 'Filtered cohort export failed.'));
+    }
+  }
+
+  function handleExportSelected() {
+    if (!selectedCohorts.length) return;
+    downloadCohortsCsv(selectedCohorts, `cohorts-selected-${new Date().toISOString().slice(0, 10)}.csv`);
+    setActionMessage(`Exported ${selectedCohorts.length} selected cohorts.`);
+  }
+
+  async function confirmBulkStatusChange() {
+    if (!pendingBulkStatusChange || !selectedCohorts.length) return;
+    setActionMessage(null);
+    try {
+      await Promise.all(selectedCohorts.map((cohort) => updateCohortStatus.mutateAsync({ cohortId: cohort.id, status: pendingBulkStatusChange.nextStatus })));
+      setActionMessage(`Updated ${selectedCohorts.length} cohorts to ${formatOption(pendingBulkStatusChange.nextStatus)}.`);
+      setPendingBulkStatusChange(null);
+      setSelectedCohortIds(new Set());
+      await cohortsQuery.refetch();
+    } catch (error) {
+      setActionMessage(readableError(error, 'Bulk cohort status update failed.'));
+    }
   }
 
   async function confirmStatusChange() {
     if (!pendingStatusChange) return;
-    setActionError(null);
+    setActionMessage(null);
     try {
       await updateCohortStatus.mutateAsync({ cohortId: pendingStatusChange.cohort.id, status: pendingStatusChange.nextStatus });
+      setActionMessage(pendingStatusChange.nextStatus === 'inactive' ? 'Cohort deactivated successfully.' : 'Cohort reactivated successfully.');
       setPendingStatusChange(null);
       await cohortsQuery.refetch();
     } catch (error) {
-      setActionError(readableError(error, 'Cohort status could not be updated. Confirm cohort writes are enabled and try again.'));
+      setActionMessage(readableError(error, 'Cohort status could not be updated. Confirm cohort writes are enabled and try again.'));
     }
   }
 
@@ -555,7 +1204,7 @@ export function AdminCohortsPage() {
   }
 
   return (
-    <div className="page-stack">
+    <div className="page-stack admin-cohorts-page">
       <PageHeader
         actions={
           <button className="segmented-button" disabled={cohortsQuery.isFetching} onClick={() => void cohortsQuery.refetch()} type="button">
@@ -569,7 +1218,7 @@ export function AdminCohortsPage() {
       />
 
       <section className="cohort-toolbar" aria-label="Cohort admin tools">
-        <form className="filter-search filter-search--form cohort-search" onSubmit={handleSearch}>
+        <form className="filter-search filter-search--form cohort-search" onSubmit={(event) => event.preventDefault()}>
           <Search size={18} />
           <label className="sr-only" htmlFor="admin-cohort-search">
             Search cohorts
@@ -597,12 +1246,53 @@ export function AdminCohortsPage() {
         </button>
       </section>
 
-      {actionError ? <p className="cohort-submit-error">{actionError}</p> : null}
+      <section className="cohort-bulkbar" aria-label="Cohort bulk actions">
+        <div>
+          <label className="cohort-selection-control">
+            <input checked={allVisibleSelected} disabled={!visibleCohorts.length} onChange={toggleVisibleSelection} type="checkbox" />
+            <span>{allVisibleSelected ? 'Unselect page' : 'Select page'}</span>
+          </label>
+          <strong>{selectedCohorts.length} selected</strong>
+        </div>
+        <div>
+          <button className="segmented-button" disabled={exportCohorts.isPending} onClick={() => void handleExportFiltered()} type="button">
+            <Download size={15} />
+            {exportCohorts.isPending ? 'Exporting...' : 'Export Filtered'}
+          </button>
+          <button className="segmented-button" disabled={!selectedCohorts.length} onClick={handleExportSelected} type="button">
+            <Download size={15} />
+            Export Selected
+          </button>
+          <button className="segmented-button segmented-button--success" disabled={!selectedCohorts.length || isBulkBusy} onClick={() => setPendingBulkStatusChange({ count: selectedCohorts.length, nextStatus: 'active' })} type="button">
+            Mark Active
+          </button>
+          <button className="segmented-button" disabled={!selectedCohorts.length || isBulkBusy} onClick={() => setPendingBulkStatusChange({ count: selectedCohorts.length, nextStatus: 'completed' })} type="button">
+            Mark Completed
+          </button>
+          <button className="segmented-button segmented-button--danger" disabled={!selectedCohorts.length || isBulkBusy} onClick={() => setPendingBulkStatusChange({ count: selectedCohorts.length, nextStatus: 'inactive' })} type="button">
+            Deactivate Selected
+          </button>
+        </div>
+      </section>
+
+      {actionMessage ? (
+        <div className={isFailureMessage(actionMessage) ? 'admin-student-toast admin-student-toast--error' : 'admin-student-toast'} role="status">
+          <strong>{isFailureMessage(actionMessage) ? 'Action failed' : 'Saved'}</strong>
+          <span>{actionMessage}</span>
+          <button aria-label="Dismiss message" onClick={() => setActionMessage(null)} type="button">
+            <X size={14} />
+          </button>
+        </div>
+      ) : null}
 
       {visibleCohorts.length > 0 ? (
         <section className="cohort-card-grid" aria-label="Cohort records">
           {visibleCohorts.map((cohort) => (
             <article className="cohort-card" key={cohort.id}>
+              <label className="cohort-card__select">
+                <input checked={selectedCohortIds.has(cohort.id)} onChange={(event) => toggleCohortSelection(cohort.id, event.target.checked)} type="checkbox" />
+                <span>Select cohort</span>
+              </label>
               <div className="cohort-card__top" />
               <div className="cohort-card__head">
                 <div>
@@ -647,11 +1337,9 @@ export function AdminCohortsPage() {
                   <Users size={14} />
                   Students
                 </Link>
-                {cohort.selfPaced ? (
-                  <button className="segmented-button" disabled type="button">
-                    Preview
-                  </button>
-                ) : null}
+                <button className="segmented-button" onClick={() => setPreviewCohort(cohort)} type="button">
+                  Details
+                </button>
                 <button
                   className={cohort.status === 'inactive' ? 'segmented-button' : 'segmented-button segmented-button--danger'}
                   disabled={updateCohortStatus.isPending}
@@ -688,8 +1376,41 @@ export function AdminCohortsPage() {
         )}
       </nav>
 
-      {showAddModal ? <CohortModal cohort={null} onClose={() => setShowAddModal(false)} onSaved={() => void cohortsQuery.refetch()} programOptions={cohortProgramOptions} /> : null}
-      {editingCohort ? <CohortModal cohort={editingCohort} onClose={() => setEditingCohort(null)} onSaved={() => void cohortsQuery.refetch()} programOptions={cohortProgramOptions} /> : null}
+      {showAddModal ? (
+        <CohortModal
+          cohort={null}
+          onClose={() => setShowAddModal(false)}
+          onSaved={(message) => {
+            setActionMessage(message);
+            void cohortsQuery.refetch();
+          }}
+          programOptions={cohortProgramOptions}
+        />
+      ) : null}
+      {editingCohort ? (
+        <CohortModal
+          cohort={editingCohort}
+          onClose={() => setEditingCohort(null)}
+          onSaved={(message) => {
+            setActionMessage(message);
+            void cohortsQuery.refetch();
+          }}
+          programOptions={cohortProgramOptions}
+        />
+      ) : null}
+      {previewCohort ? (
+        <CohortPreviewModal
+          cohort={previewCohort}
+          impact={cohortImpactQuery.data}
+          isImpactLoading={cohortImpactQuery.isFetching}
+          onClose={() => setPreviewCohort(null)}
+          onMembershipChanged={(message) => {
+            setActionMessage(message);
+            void cohortImpactQuery.refetch();
+            void cohortsQuery.refetch();
+          }}
+        />
+      ) : null}
       {pendingStatusChange ? (
         <div className="student-modal-backdrop" role="presentation">
           <section aria-labelledby="cohort-status-title" aria-modal="true" className="student-modal" role="dialog">
@@ -703,6 +1424,19 @@ export function AdminCohortsPage() {
               <p>
                 Confirm status change for <strong>{pendingStatusChange.cohort.name}</strong>.
               </p>
+              {pendingStatusChange.nextStatus === 'inactive' ? (
+                <div className="cohort-dependency-warning" role="note">
+                  <strong>Before deactivation</strong>
+                  <ul>
+                    <li>{cohortImpactQuery.isFetching ? 'Checking' : cohortImpactQuery.data?.students ?? pendingStatusChange.cohort.studentCount} students are currently linked to this cohort.</li>
+                    <li>{cohortImpactQuery.isFetching ? 'Checking' : cohortImpactQuery.data?.workshops ?? 0} workshops are tagged to this cohort.</li>
+                    <li>{cohortImpactQuery.isFetching ? 'Checking' : cohortImpactQuery.data?.resources ?? 0} resources are tagged to this cohort.</li>
+                    <li>{cohortImpactQuery.isFetching ? 'Checking' : cohortImpactQuery.data?.announcements ?? 0} cohort announcements are tagged here.</li>
+                    <li>{pendingStatusChange.cohort.selfPacedSessions.length} self-paced sessions and {pendingStatusChange.cohort.selfPacedResources.length} self-paced resources are attached directly.</li>
+                    <li>Inactive cohorts are hidden from new assignment lists and student-facing eligible content checks.</li>
+                  </ul>
+                </div>
+              ) : null}
             </div>
             <footer className="student-modal__footer">
               <button className="segmented-button" onClick={() => setPendingStatusChange(null)} type="button">
@@ -710,6 +1444,41 @@ export function AdminCohortsPage() {
               </button>
               <button className="segmented-button segmented-button--active" disabled={updateCohortStatus.isPending} onClick={() => void confirmStatusChange()} type="button">
                 {updateCohortStatus.isPending ? 'Saving...' : 'Confirm'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+      {pendingBulkStatusChange ? (
+        <div className="student-modal-backdrop" role="presentation">
+          <section aria-labelledby="cohort-bulk-status-title" aria-modal="true" className="student-modal" role="dialog">
+            <header className="student-modal__header">
+              <h2 id="cohort-bulk-status-title">Update Selected Cohorts</h2>
+              <button aria-label="Close bulk status confirmation" className="student-modal__icon-button" onClick={() => setPendingBulkStatusChange(null)} type="button">
+                <X size={24} />
+              </button>
+            </header>
+            <div className="student-modal__body">
+              <p>
+                Confirm changing <strong>{pendingBulkStatusChange.count}</strong> selected cohorts to <strong>{formatOption(pendingBulkStatusChange.nextStatus)}</strong>.
+              </p>
+              {pendingBulkStatusChange.nextStatus === 'inactive' ? (
+                <div className="cohort-dependency-warning" role="note">
+                  <strong>Bulk deactivation warning</strong>
+                  <ul>
+                    <li>Student-facing eligible content checks may hide content tied only to inactive cohorts.</li>
+                    <li>Use Details on a cohort first if you need detailed dependency counts before changing status.</li>
+                    <li>This action updates selected cohorts only on the current page.</li>
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+            <footer className="student-modal__footer">
+              <button className="segmented-button" onClick={() => setPendingBulkStatusChange(null)} type="button">
+                Cancel
+              </button>
+              <button className="segmented-button segmented-button--active" disabled={isBulkBusy} onClick={() => void confirmBulkStatusChange()} type="button">
+                {isBulkBusy ? 'Saving...' : 'Confirm'}
               </button>
             </footer>
           </section>
