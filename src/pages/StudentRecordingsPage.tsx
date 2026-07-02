@@ -1,25 +1,20 @@
-import { ExternalLink, Lock, Search, ShieldCheck, Video } from 'lucide-react';
-import { FormEvent, useMemo, useState } from 'react';
+import { CalendarDays, ExternalLink, HelpCircle, Lock, ShieldCheck, Video } from 'lucide-react';
+import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState, LockedState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
-import { StudentRecording, StudentRecordingAccessType, StudentRecordingSource, useStudentRecordings } from '../features/student/useStudentRecordings';
+import { StudentRecording, StudentRecordingAccessType, useStudentRecordings } from '../features/student/useStudentRecordings';
 
 type AccessFilter = StudentRecordingAccessType | 'all';
-type SourceFilter = StudentRecordingSource | 'all';
+
+const pageSize = 25;
 
 const accessFilters: Array<{ label: string; value: AccessFilter }> = [
   { label: 'All', value: 'all' },
   { label: 'Free', value: 'free' },
   { label: 'Paid', value: 'paid' }
-];
-
-const sourceFilters: Array<{ label: string; value: SourceFilter }> = [
-  { label: 'All sources', value: 'all' },
-  { label: 'YouTube', value: 'youtube' },
-  { label: 'Zoom', value: 'zoom' }
 ];
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
@@ -31,10 +26,6 @@ function asAccessType(value: string | null): AccessFilter {
   return value === 'free' || value === 'paid' ? value : 'all';
 }
 
-function asSource(value: string | null): SourceFilter {
-  return value === 'youtube' || value === 'zoom' ? value : 'all';
-}
-
 function formatDate(value: string | undefined) {
   if (!value) {
     return 'Not set';
@@ -44,12 +35,12 @@ function formatDate(value: string | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function formatDuration(value: number | undefined) {
-  return value === undefined ? 'Not set' : `${value} min`;
+function formatDuration(value: number | undefined | null) {
+  return value == null ? 'Not set' : `${value} min`;
 }
 
 function formatPrice(recording: StudentRecording) {
-  if (recording.price === undefined) {
+  if (recording.price == null) {
     return recording.accessType === 'paid' ? 'Paid' : 'Free';
   }
 
@@ -60,55 +51,72 @@ function formatFilterLabel(value: string) {
   return value === 'all' ? 'All' : value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function buildPageLink(page: number, accessType: AccessFilter, source: SourceFilter, search: string) {
+function getProgramLabel(recording: StudentRecording) {
+  return recording.programKey || recording.domainKey;
+}
+
+function buildPageLink(page: number, accessType: AccessFilter) {
   const params = new URLSearchParams();
   params.set('page', String(page));
   if (accessType !== 'all') params.set('accessType', accessType);
-  if (source !== 'all') params.set('source', source);
-  if (search) params.set('search', search);
   return `?${params.toString()}`;
 }
 
-function RecordingCard({ recording }: { recording: StudentRecording }) {
+function paginateItems<TItem>(items: TItem[], page: number) {
+  const start = (page - 1) * pageSize;
+  return items.slice(start, start + pageSize);
+}
+
+function totalPagesFor(count: number) {
+  return Math.max(1, Math.ceil(count / pageSize));
+}
+
+function RecordingRow({ recording }: { recording: StudentRecording }) {
   const canOpen = !recording.locked && recording.hasAccess && Boolean(recording.recordingUrl);
+  const programLabel = getProgramLabel(recording);
+  const supportLink = `/student/support?subject=${encodeURIComponent(`Recording issue: ${recording.title}`)}`;
 
   return (
-    <article className="recording-card">
-      <div className="recording-card__preview" aria-hidden="true">
-        <span className="recording-card__play">
-          <Video size={24} />
-        </span>
-        <div className="recording-card__badges">
+    <article className="student-recording-row">
+      <div className={recording.locked ? 'student-recording-row__icon student-recording-row__icon--locked' : 'student-recording-row__icon'}>
+        {recording.locked ? <Lock size={18} /> : <Video size={18} />}
+      </div>
+      <div className="student-recording-row__main">
+        <div className="student-recording-row__title">
+          <strong>{recording.title}</strong>
           {recording.source ? <StatusBadge>{formatFilterLabel(recording.source)}</StatusBadge> : null}
           <StatusBadge tone={recording.locked ? 'warning' : 'safe'}>{recording.locked ? 'Locked' : 'Available'}</StatusBadge>
         </div>
+        <p>
+          {formatDate(recording.date)} · {recording.time ?? 'Time not set'} · {formatDuration(recording.durationMinutes)}
+        </p>
+        <div className="student-recording-row__meta">
+          {programLabel ? <span>{programLabel}</span> : null}
+          <span>{formatPrice(recording)}</span>
+        </div>
+        {recording.locked ? (
+          <div className="student-recording-row__notice">
+            <Lock size={15} />
+            <span>{recording.lockReason ?? 'Recording access is locked for this account.'}</span>
+          </div>
+        ) : null}
       </div>
-
-      <div className="recording-card__body">
-        <div>
-          <h2>{recording.title}</h2>
-          <p>
-            {formatDate(recording.date)} · {recording.time ?? 'Time not set'} · {formatDuration(recording.durationMinutes)}
-          </p>
-        </div>
-
-        <div className="recording-card__meta">
-          {recording.programKey ? <StatusBadge>{recording.programKey}</StatusBadge> : null}
-          {recording.domainKey ? <StatusBadge>{recording.domainKey}</StatusBadge> : null}
-          <StatusBadge>{formatPrice(recording)}</StatusBadge>
-        </div>
-
+      <div className="student-recording-row__actions">
         {canOpen ? (
-          <a className="student-action student-action--primary recording-card__action" href={recording.recordingUrl} rel="noreferrer" target="_blank">
+          <a className="student-action student-action--primary" href={recording.recordingUrl} rel="noreferrer" target="_blank">
             <ExternalLink size={16} />
             Open recording
           </a>
-        ) : (
-          <div className="recording-card__locked">
+        ) : recording.paymentLink ? (
+          <a className="student-action student-action--primary" href={recording.paymentLink} rel="noreferrer" target="_blank">
             <Lock size={16} />
-            <span>{recording.lockReason ?? 'Recording access is locked for this account.'}</span>
-          </div>
-        )}
+            Pay to unlock
+          </a>
+        ) : null}
+        <Link className="student-action" to={supportLink}>
+          <HelpCircle size={16} />
+          Report issue
+        </Link>
       </div>
     </article>
   );
@@ -118,46 +126,21 @@ export function StudentRecordingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const accessType = asAccessType(searchParams.get('accessType'));
   const page = asPositiveInteger(searchParams.get('page'), 1);
-  const search = searchParams.get('search')?.trim() ?? '';
-  const source = asSource(searchParams.get('source'));
-  const [searchInput, setSearchInput] = useState(search);
-  const recordingsQuery = useStudentRecordings({ accessType, page, search, source });
-  const data = recordingsQuery.data;
-  const total = data?.total ?? 0;
-  const totalPages = data?.totalPages ?? 1;
-  const lockedCount = useMemo(() => data?.items.filter((item) => item.locked).length ?? 0, [data?.items]);
-  const availableCount = useMemo(() => data?.items.filter((item) => !item.locked && item.hasAccess).length ?? 0, [data?.items]);
+  const recordingsQuery = useStudentRecordings({ accessType, limit: 500, page: 1 });
+  const recordings = recordingsQuery.data?.items ?? [];
+  const total = recordings.length;
+  const totalPages = totalPagesFor(total);
+  const safePage = Math.min(page, totalPages);
+  const visibleRecordings = paginateItems(recordings, safePage);
+  const lockedCount = useMemo(() => recordings.filter((item) => item.locked).length, [recordings]);
+  const availableCount = useMemo(() => recordings.filter((item) => !item.locked && item.hasAccess).length, [recordings]);
+  const latestDate = recordings[0]?.date ? formatDate(recordings[0].date) : 'None';
 
-  function handleSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const next = new URLSearchParams(searchParams);
+  function updateAccessType(nextAccessType: AccessFilter) {
+    const next = new URLSearchParams();
     next.set('page', '1');
-    if (searchInput.trim()) {
-      next.set('search', searchInput.trim());
-    } else {
-      next.delete('search');
-    }
-    setSearchParams(next);
-  }
-
-  function handleAccessType(nextAccessType: AccessFilter) {
-    const next = new URLSearchParams(searchParams);
-    next.set('page', '1');
-    if (nextAccessType === 'all') {
-      next.delete('accessType');
-    } else {
+    if (nextAccessType !== 'all') {
       next.set('accessType', nextAccessType);
-    }
-    setSearchParams(next);
-  }
-
-  function handleSource(nextSource: SourceFilter) {
-    const next = new URLSearchParams(searchParams);
-    next.set('page', '1');
-    if (nextSource === 'all') {
-      next.delete('source');
-    } else {
-      next.set('source', nextSource);
     }
     setSearchParams(next);
   }
@@ -181,62 +164,48 @@ export function StudentRecordingsPage() {
   }
 
   return (
-    <div className="page-stack">
+    <div className="page-stack student-recordings-page">
       <PageHeader
         description="Watch completed workshop recordings that are visible to your profile while locked recordings stay protected."
         eyebrow="Student recordings"
         title="Recordings"
       />
 
-      <div className="metric-grid">
-        <article className="metric-tile">
-          <Video size={22} />
-          <span>Total visible</span>
+      <div className="student-recording-summary">
+        <article>
+          <Video size={20} />
+          <span>Matching recordings</span>
           <strong>{total}</strong>
         </article>
-        <article className="metric-tile">
-          <ShieldCheck size={22} />
-          <span>Available on page</span>
+        <article>
+          <ShieldCheck size={20} />
+          <span>Available</span>
           <strong>{availableCount}</strong>
         </article>
-        <article className="metric-tile">
-          <Lock size={22} />
-          <span>Locked on page</span>
+        <article>
+          <Lock size={20} />
+          <span>Locked</span>
           <strong>{lockedCount}</strong>
         </article>
-        <article className="metric-tile">
-          <Search size={22} />
-          <span>Source filter</span>
-          <strong>{formatFilterLabel(source)}</strong>
+        <article>
+          <CalendarDays size={20} />
+          <span>Latest</span>
+          <strong>{latestDate}</strong>
         </article>
       </div>
 
-      <section className="filter-bar" aria-label="Recording filters">
-        <form className="filter-search filter-search--form" onSubmit={handleSearch}>
-          <Search size={16} />
-          <label className="sr-only" htmlFor="recording-search">
-            Search recordings
-          </label>
-          <input id="recording-search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search recordings" type="search" />
-        </form>
-        <div className="filter-bar__controls">
-          {accessFilters.map((filter) => (
-            <button className={`segmented-button ${accessType === filter.value ? 'segmented-button--active' : ''}`} key={filter.value} onClick={() => handleAccessType(filter.value)} type="button">
-              {filter.label}
-            </button>
-          ))}
-          {sourceFilters.map((filter) => (
-            <button className={`segmented-button ${source === filter.value ? 'segmented-button--active' : ''}`} key={filter.value} onClick={() => handleSource(filter.value)} type="button">
-              {filter.label}
-            </button>
-          ))}
-        </div>
+      <section className="student-recording-chips" aria-label="Recording quick filters">
+        {accessFilters.map((filter) => (
+          <button className={`segmented-button ${accessType === filter.value ? 'segmented-button--active' : ''}`} key={filter.value} onClick={() => updateAccessType(filter.value)} type="button">
+            {filter.label}
+          </button>
+        ))}
       </section>
 
-      {data && data.items.length > 0 ? (
-        <section className="recording-card-grid" aria-label="Visible recordings">
-          {data.items.map((recording) => (
-            <RecordingCard key={recording.id} recording={recording} />
+      {visibleRecordings.length > 0 ? (
+        <section className="student-recording-list" aria-label="Visible recordings">
+          {visibleRecordings.map((recording) => (
+            <RecordingRow key={recording.id} recording={recording} />
           ))}
         </section>
       ) : (
@@ -244,18 +213,18 @@ export function StudentRecordingsPage() {
       )}
 
       <nav className="pagination-bar" aria-label="Recording pagination">
-        {data?.hasPreviousPage ? (
-          <Link className="pagination-link" to={buildPageLink(page - 1, accessType, source, search)}>
+        {safePage > 1 ? (
+          <Link className="pagination-link" to={buildPageLink(safePage - 1, accessType)}>
             Previous page
           </Link>
         ) : (
           <span className="pagination-link pagination-link--disabled">Previous page</span>
         )}
         <span>
-          Page {page} of {totalPages}
+          Page {safePage} of {totalPages} · {total} matching
         </span>
-        {data?.hasNextPage ? (
-          <Link className="pagination-link" to={buildPageLink(page + 1, accessType, source, search)}>
+        {safePage < totalPages ? (
+          <Link className="pagination-link" to={buildPageLink(safePage + 1, accessType)}>
             Next page
           </Link>
         ) : (
@@ -266,7 +235,7 @@ export function StudentRecordingsPage() {
       {lockedCount > 0 ? <LockedState /> : null}
 
       <StateBlock title="Recording access">
-        Only recordings available to your account are shown here. If a session is missing, contact Support with the session name and program details.
+        Only recordings mapped to your account are shown here. If a link is broken or a session is missing, use Report issue with the session name and program details.
       </StateBlock>
     </div>
   );
