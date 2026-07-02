@@ -1,4 +1,4 @@
-import { getSupabaseClient, getSupabaseClientForAccessToken } from './supabaseClient';
+import { getSupabaseClient } from './supabaseClient';
 import { webEnv } from '../config/env';
 
 export type ApiClientOptions = {
@@ -330,11 +330,8 @@ async function createContext(accessToken?: string) {
   const { data, error } = await supabase.auth.getUser(accessToken);
   if (error || !data.user?.email) throw new ApiClientError('Supabase session is invalid.', 401);
 
-  const userSupabase = getSupabaseClientForAccessToken(accessToken);
-  if (!userSupabase) throw new ApiClientError('Supabase is not configured.', 503);
-
   const email = normalizeEmail(data.user.email);
-  return { accessToken, email, supabase: userSupabase, userId: data.user.id };
+  return { accessToken, email, supabase, userId: data.user.id };
 }
 
 async function getStudentProfile(context: Awaited<ReturnType<typeof createContext>>) {
