@@ -27,6 +27,7 @@ export type PaginatedResponse<TItem> = {
   hasPreviousPage: boolean;
   items: TItem[];
   limit: number;
+  summary?: Record<string, unknown>;
   page: number;
   total: number;
   totalPages: number;

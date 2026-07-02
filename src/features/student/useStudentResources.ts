@@ -26,6 +26,19 @@ export type StudentResource = {
   url?: string;
 };
 
+export type StudentResourcesSummary = {
+  available: number;
+  free: number;
+  locked: number;
+  paid: number;
+  recentlyAdded: number;
+  typeCounts: Record<string, number>;
+};
+
+export type StudentResourcesResponse = PaginatedResponse<StudentResource> & {
+  summary?: StudentResourcesSummary;
+};
+
 export type StudentResourcesQuery = {
   accessType?: StudentResourceAccessType | 'all';
   locked?: boolean | 'all';
@@ -49,7 +62,7 @@ export function useStudentResources(query: StudentResourcesQuery) {
   return useQuery({
     enabled: Boolean(accessToken),
     queryFn: () =>
-      apiGet<PaginatedResponse<StudentResource>>('/students/me/resources', {
+      apiGet<StudentResourcesResponse>('/students/me/resources', {
         accessToken: accessToken ?? undefined,
         query: {
           accessType,
