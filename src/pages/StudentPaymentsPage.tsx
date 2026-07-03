@@ -1,5 +1,5 @@
-import { CheckCircle2, CreditCard, IndianRupee, LockKeyhole, ReceiptText, Search, ShieldCheck } from 'lucide-react';
-import { FormEvent, useMemo, useState } from 'react';
+import { CheckCircle2, CreditCard, IndianRupee, LockKeyhole, ReceiptText, ShieldCheck } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
@@ -121,20 +121,6 @@ function matchesFilter(item: CombinedFinanceItem, filter: FinanceFilter) {
   return true;
 }
 
-function matchesSearch(item: CombinedFinanceItem, search: string) {
-  if (!search) return true;
-  const normalizedSearch = search.toLowerCase();
-  const values = [
-    item.id,
-    item.itemId,
-    item.itemType,
-    getItemTitle(item),
-    item.recordType === 'payment' ? item.orderId : item.accessId,
-    item.paymentId
-  ];
-  return values.some((value) => value?.toLowerCase().includes(normalizedSearch));
-}
-
 function renderReference(label: string, value: string | undefined) {
   if (!value) return null;
 
@@ -185,8 +171,6 @@ function toAccessItem(item: StudentPaidAccess): CombinedFinanceItem {
 export function StudentPaymentsPage() {
   const [activeFilter, setActiveFilter] = useState<FinanceFilter>('all');
   const [itemType, setItemType] = useState<FinanceItemType | 'all'>('all');
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
   const paymentsQuery = useStudentPaymentOrders({ limit: 100, page: 1, status: 'all' });
   const accessQuery = useStudentPaidAccess({ limit: 100, page: 1, status: 'all' });
   const isLoading = paymentsQuery.isLoading || accessQuery.isLoading;
@@ -203,8 +187,8 @@ export function StudentPaymentsPage() {
   }, [accessQuery.data?.items, paymentsQuery.data?.items]);
 
   const filteredItems = useMemo(
-    () => allItems.filter((item) => matchesFilter(item, activeFilter) && (itemType === 'all' || item.itemType === itemType) && matchesSearch(item, search)),
-    [activeFilter, allItems, itemType, search]
+    () => allItems.filter((item) => matchesFilter(item, activeFilter) && (itemType === 'all' || item.itemType === itemType)),
+    [activeFilter, allItems, itemType]
   );
 
   const summary = useMemo(() => {
@@ -216,11 +200,6 @@ export function StudentPaymentsPage() {
       unlocked: allItems.filter((item) => item.recordType === 'access' && item.activeNow).length
     };
   }, [allItems]);
-
-  function handleSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSearch(searchInput.trim());
-  }
 
   if (isLoading) {
     return (
@@ -268,13 +247,16 @@ export function StudentPaymentsPage() {
       </section>
 
       <section className="filter-bar finance-filter-bar finance-filter-bar--merged" aria-label="Payments and access filters">
-        <div className="finance-filter-pills" aria-label="Status filters">
-          {filterOptions.map((option) => (
-            <button className={activeFilter === option.value ? 'segmented-button segmented-button--active' : 'segmented-button'} key={option.value} onClick={() => setActiveFilter(option.value)} type="button">
-              {option.label}
-            </button>
-          ))}
-        </div>
+        <label className="announcement-filter-select">
+          Payment status
+          <select value={activeFilter} onChange={(event) => setActiveFilter(event.target.value as FinanceFilter)}>
+            {filterOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="announcement-filter-select">
           Item type
           <select value={itemType} onChange={(event) => setItemType(event.target.value as FinanceItemType | 'all')}>
@@ -285,18 +267,6 @@ export function StudentPaymentsPage() {
             ))}
           </select>
         </label>
-        <form className="finance-search-form" onSubmit={handleSearch}>
-          <div className="filter-search finance-search-input">
-            <Search size={16} />
-            <label className="sr-only" htmlFor="payment-access-search">
-              Search payments and access
-            </label>
-            <input id="payment-access-search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search item, order, or access" type="search" />
-          </div>
-          <button className="segmented-button" type="submit">
-            Search
-          </button>
-        </form>
       </section>
 
       {filteredItems.length > 0 ? (

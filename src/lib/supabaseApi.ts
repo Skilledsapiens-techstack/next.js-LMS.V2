@@ -198,6 +198,15 @@ const ANNOUNCEMENT_WRITE_COLUMNS = new Set([
   'updated_by'
 ]);
 
+const FEATURE_CONTROL_WRITE_COLUMNS = new Set([
+  'module_id',
+  'student_label',
+  'student_path',
+  'status',
+  'upcoming_message',
+  'updated_by'
+]);
+
 const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/announcements': { table: 'announcements', searchColumns: ['title', 'message', 'audience'] },
   '/admins/audit-logs': {
@@ -229,6 +238,11 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/enrollment-exceptions': { table: 'enrollment_exceptions', searchColumns: ['student_email', 'exception_type', 'notes'] },
   '/admins/enrollment-requests': { table: 'enrollment_requests', searchColumns: ['student_email', 'student_name', 'request_id'] },
   '/admins/enrollment-webhook-events': { table: 'enrollment_webhook_events', searchColumns: ['event_id', 'payment_id', 'order_id'] },
+  '/admins/feature-controls': {
+    table: 'feature_controls',
+    searchColumns: ['module_id', 'student_label', 'student_path'],
+    sortColumns: { order: { column: 'sort_order', ascending: true } }
+  },
   '/admins/paid-access': { table: 'paid_access', searchColumns: ['student_email', 'item_id', 'item_type'] },
   '/admins/payment-orders': { table: 'payment_orders', searchColumns: ['student_email', 'item_id', 'item_type', 'razorpay_order_id'] },
   '/admins/programs': { table: 'programs', filterColumns: { domain: 'domain_label' }, searchColumns: ['program_key', 'name', 'short_name', 'domain_label'] },
@@ -254,6 +268,11 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/support-tickets': { table: 'support_tickets', filterColumns: { category: 'category_name' }, searchColumns: ['subject', 'student_email', 'category_name'] },
   '/admins/workshops': { table: 'workshops', filterColumns: { status: 'workshop_status' }, searchColumns: ['title', 'program_key', 'workshop_id', 'zoom_id'] },
   '/students/me/certificates': { table: 'certificates', searchColumns: ['program_name', 'project_title'], studentOwned: true },
+  '/students/me/feature-controls': {
+    table: 'feature_controls',
+    searchColumns: ['module_id', 'student_label', 'student_path'],
+    sortColumns: { order: { column: 'sort_order', ascending: true } }
+  },
   '/students/me/paid-access': { table: 'paid_access', searchColumns: ['item_id', 'item_type'], studentOwned: true },
   '/students/me/payment-orders': { table: 'payment_orders', searchColumns: ['item_id', 'item_type', 'razorpay_order_id'], studentOwned: true },
   '/students/me/project-submissions': {
@@ -313,6 +332,12 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     normalizeBody: normalizeAnnouncementWriteBody,
     table: 'announcements',
     validateBody: validateAnnouncementWriteBody
+  },
+  feature_controls: {
+    columns: FEATURE_CONTROL_WRITE_COLUMNS,
+    normalizeBody: normalizeFeatureControlWriteBody,
+    table: 'feature_controls',
+    validateBody: validateFeatureControlWriteBody
   }
 };
 
@@ -439,6 +464,17 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
       context,
       'announcements',
       decodeURIComponent(announcementUpdate[1]),
+      { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email },
+      'updated'
+    ) as Promise<TResponse>;
+  }
+
+  const featureControlUpdate = cleanPath.match(/^\/admins\/feature-controls\/([^/]+)$/);
+  if (featureControlUpdate) {
+    return updateById(
+      context,
+      'feature_controls',
+      decodeURIComponent(featureControlUpdate[1]),
       { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email },
       'updated'
     ) as Promise<TResponse>;
@@ -2734,6 +2770,27 @@ function normalizeAnnouncementWriteBody(payload: Record<string, unknown>) {
   };
 }
 
+function normalizeFeatureControlWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  const normalizeOptionalText = (key: string) => {
+    if (!has(key)) return undefined;
+    const value = payload[key];
+    if (value === null) return null;
+    const text = String(value ?? '').trim();
+    return text || null;
+  };
+
+  return {
+    ...payload,
+    module_id: has('module_id') && typeof payload.module_id === 'string' ? payload.module_id.trim() : payload.module_id,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    student_label: has('student_label') && typeof payload.student_label === 'string' ? payload.student_label.trim() : payload.student_label,
+    student_path: has('student_path') && typeof payload.student_path === 'string' ? payload.student_path.trim() : payload.student_path,
+    upcoming_message: normalizeOptionalText('upcoming_message'),
+    updated_by: normalizeOptionalText('updated_by')
+  };
+}
+
 function validateCohortWriteBody(payload: Record<string, unknown>, inserting: boolean) {
   const name = typeof payload.name === 'string' ? payload.name.trim() : '';
   const status = typeof payload.status === 'string' ? payload.status : undefined;
@@ -2833,6 +2890,22 @@ function validateAnnouncementWriteBody(payload: Record<string, unknown>, inserti
   if (linkUrl && !isHttpUrl(linkUrl)) throw new ApiClientError('Announcement link must start with http:// or https://.', 400);
 }
 
+function validateFeatureControlWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const moduleId = typeof payload.module_id === 'string' ? payload.module_id.trim() : '';
+  const label = typeof payload.student_label === 'string' ? payload.student_label.trim() : '';
+  const path = typeof payload.student_path === 'string' ? payload.student_path.trim() : '';
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  const message = typeof payload.upcoming_message === 'string' ? payload.upcoming_message.trim() : '';
+
+  if (inserting && !moduleId) throw new ApiClientError('Feature module ID is required.', 400);
+  if (inserting && !label) throw new ApiClientError('Feature student label is required.', 400);
+  if (inserting && !path) throw new ApiClientError('Feature student URL is required.', 400);
+  if (moduleId && !/^[a-z0-9-]+$/.test(moduleId)) throw new ApiClientError('Feature module ID is invalid.', 400);
+  if (status && !['show', 'upcoming', 'hide'].includes(status)) throw new ApiClientError('Feature status is invalid.', 400);
+  if (moduleId === 'dashboard' && status && status !== 'show') throw new ApiClientError('Dashboard must remain visible.', 400);
+  if (message.length > 500) throw new ApiClientError('Upcoming message must be 500 characters or fewer.', 400);
+}
+
 function validateWorkshopWriteBody(payload: Record<string, unknown>, inserting: boolean) {
   const title = typeof payload.title === 'string' ? payload.title.trim() : '';
   const date = typeof payload.date === 'string' ? payload.date.trim() : '';
@@ -2930,7 +3003,8 @@ async function writeAuditLog(
     table !== 'programs' &&
     table !== 'projects' &&
     table !== 'role_master' &&
-    table !== 'certificates'
+    table !== 'certificates' &&
+    table !== 'feature_controls'
   ) return;
   const entityType =
     table === 'cohorts'
@@ -2947,7 +3021,9 @@ async function writeAuditLog(
                 ? 'project_role'
                 : table === 'certificates'
                   ? 'certificate'
-                  : 'student';
+                  : table === 'feature_controls'
+                    ? 'feature_control'
+                    : 'student';
 
   const auditRow = {
     action: `admin_${entityType}_${action}`,
@@ -2962,7 +3038,7 @@ async function writeAuditLog(
   const { error } = await context.supabase.from('audit_logs').insert(auditRow);
   if (error) {
     throw new ApiClientError(
-      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : 'Student'} was saved, but audit logging failed: ${error.message}`,
+      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : entityType === 'feature_control' ? 'Feature control' : 'Student'} was saved, but audit logging failed: ${error.message}`,
       503
     );
   }

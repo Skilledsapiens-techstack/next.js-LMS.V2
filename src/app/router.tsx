@@ -1,8 +1,9 @@
-import { lazy, Suspense } from 'react';
+import { lazy, ReactNode, Suspense } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { ProtectedPortalRoute } from '../auth/ProtectedPortalRoute';
 import { AppShell } from '../layouts/AppShell';
 import { LoadingState } from '../components/ScreenStates';
+import { StudentFeatureGate } from '../components/StudentFeatureGate';
 import { adminNavItems, studentNavItems } from './routeConfig';
 
 const AdminDashboardPage = lazy(() => import('../pages/AdminDashboardPage').then((module) => ({ default: module.AdminDashboardPage })));
@@ -35,6 +36,7 @@ const AdminPaymentOrdersPage = lazy(() => import('../pages/AdminPaymentOrdersPag
 const AdminPaidAccessPage = lazy(() => import('../pages/AdminPaidAccessPage').then((module) => ({ default: module.AdminPaidAccessPage })));
 const AdminSupportPage = lazy(() => import('../pages/AdminSupportPage').then((module) => ({ default: module.AdminSupportPage })));
 const AdminSupportDetailPage = lazy(() => import('../pages/AdminSupportDetailPage').then((module) => ({ default: module.AdminSupportDetailPage })));
+const AdminFeatureControlPage = lazy(() => import('../pages/AdminFeatureControlPage').then((module) => ({ default: module.AdminFeatureControlPage })));
 const LoginPage = lazy(() => import('../pages/LoginPage').then((module) => ({ default: module.LoginPage })));
 const ModulePlaceholderPage = lazy(() => import('../pages/ModulePlaceholderPage').then((module) => ({ default: module.ModulePlaceholderPage })));
 const StudentAnnouncementsPage = lazy(() => import('../pages/StudentAnnouncementsPage').then((module) => ({ default: module.StudentAnnouncementsPage })));
@@ -55,6 +57,10 @@ const UnauthorizedPage = lazy(() => import('../pages/UnauthorizedPage').then((mo
 
 function PageLoader({ children }: { children: React.ReactNode }) {
   return <Suspense fallback={<LoadingState />}>{children}</Suspense>;
+}
+
+function StudentFeaturePage({ children, moduleId }: { children: ReactNode; moduleId: string }) {
+  return <StudentFeatureGate moduleId={moduleId}>{children}</StudentFeatureGate>;
 }
 
 export const router = createBrowserRouter([
@@ -97,7 +103,9 @@ export const router = createBrowserRouter([
             path: 'announcements',
             element: (
               <PageLoader>
-                <StudentAnnouncementsPage />
+                <StudentFeaturePage moduleId="announcements">
+                  <StudentAnnouncementsPage />
+                </StudentFeaturePage>
               </PageLoader>
             )
           },
@@ -105,7 +113,9 @@ export const router = createBrowserRouter([
             path: 'cohorts',
             element: (
               <PageLoader>
-                <StudentCohortsPage />
+                <StudentFeaturePage moduleId="cohorts">
+                  <StudentCohortsPage />
+                </StudentFeaturePage>
               </PageLoader>
             )
           },
@@ -113,7 +123,9 @@ export const router = createBrowserRouter([
             path: 'resources',
             element: (
               <PageLoader>
-                <StudentResourcesPage />
+                <StudentFeaturePage moduleId="resources">
+                  <StudentResourcesPage />
+                </StudentFeaturePage>
               </PageLoader>
             )
           },
@@ -121,7 +133,9 @@ export const router = createBrowserRouter([
             path: 'recordings',
             element: (
               <PageLoader>
-                <StudentRecordingsPage />
+                <StudentFeaturePage moduleId="recordings">
+                  <StudentRecordingsPage />
+                </StudentFeaturePage>
               </PageLoader>
             )
           },
@@ -129,7 +143,9 @@ export const router = createBrowserRouter([
             path: 'schedule',
             element: (
               <PageLoader>
-                <StudentSchedulePage />
+                <StudentFeaturePage moduleId="schedule">
+                  <StudentSchedulePage />
+                </StudentFeaturePage>
               </PageLoader>
             )
           },
@@ -137,7 +153,9 @@ export const router = createBrowserRouter([
             path: 'projects',
             element: (
               <PageLoader>
-                <StudentProjectsPage />
+                <StudentFeaturePage moduleId="projects">
+                  <StudentProjectsPage />
+                </StudentFeaturePage>
               </PageLoader>
             )
           },
@@ -145,7 +163,9 @@ export const router = createBrowserRouter([
             path: 'project-submissions',
             element: (
               <PageLoader>
-                <StudentProjectSubmissionsPage />
+                <StudentFeaturePage moduleId="project-submissions">
+                  <StudentProjectSubmissionsPage />
+                </StudentFeaturePage>
               </PageLoader>
             )
           },
@@ -153,7 +173,9 @@ export const router = createBrowserRouter([
             path: 'certificates',
             element: (
               <PageLoader>
-                <StudentCertificatesPage />
+                <StudentFeaturePage moduleId="certificates">
+                  <StudentCertificatesPage />
+                </StudentFeaturePage>
               </PageLoader>
             )
           },
@@ -161,7 +183,9 @@ export const router = createBrowserRouter([
             path: 'payments',
             element: (
               <PageLoader>
-                <StudentPaymentsPage />
+                <StudentFeaturePage moduleId="payments">
+                  <StudentPaymentsPage />
+                </StudentFeaturePage>
               </PageLoader>
             )
           },
@@ -173,7 +197,9 @@ export const router = createBrowserRouter([
             path: 'support',
             element: (
               <PageLoader>
-                <StudentSupportPage />
+                <StudentFeaturePage moduleId="support">
+                  <StudentSupportPage />
+                </StudentFeaturePage>
               </PageLoader>
             )
           },
@@ -181,7 +207,9 @@ export const router = createBrowserRouter([
             path: 'support/:ticketId',
             element: (
               <PageLoader>
-                <StudentSupportDetailPage />
+                <StudentFeaturePage moduleId="support">
+                  <StudentSupportDetailPage />
+                </StudentFeaturePage>
               </PageLoader>
             )
           },
@@ -189,7 +217,9 @@ export const router = createBrowserRouter([
             path: ':moduleId',
             element: (
               <PageLoader>
-                <ModulePlaceholderPage portal="student" />
+                <StudentFeaturePage moduleId="community">
+                  <ModulePlaceholderPage portal="student" />
+                </StudentFeaturePage>
               </PageLoader>
             )
           }
@@ -361,6 +391,14 @@ export const router = createBrowserRouter([
             element: (
               <PageLoader>
                 <AdminSupportDetailPage />
+              </PageLoader>
+            )
+          },
+          {
+            path: 'feature-control',
+            element: (
+              <PageLoader>
+                <AdminFeatureControlPage />
               </PageLoader>
             )
           },
