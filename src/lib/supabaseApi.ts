@@ -2,6 +2,8 @@ import { createClient } from '@supabase/supabase-js';
 import { getSupabaseClient } from './supabaseClient';
 import { webEnv } from '../config/env';
 
+const CERTIFICATE_VERIFY_BASE_URL = 'https://skilledsapiens.com/verify-your-certificate/';
+
 export type ApiClientOptions = {
   accessToken?: string;
   query?: Record<string, string | number | boolean | undefined>;
@@ -184,6 +186,11 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
     searchColumns: ['action', 'actor_email', 'entity_type'],
     sortColumns: { newest: { column: 'created_at', ascending: false } }
   },
+  '/admins/certificate-program-settings': {
+    table: 'certificate_program_settings',
+    filterColumns: { programKey: 'program_key', status: 'status' },
+    searchColumns: ['program_key', 'status']
+  },
   '/admins/certificate-requests': { table: 'certificate_requests', searchColumns: ['student_email', 'student_name', 'program_name'] },
   '/admins/certificates': { table: 'certificates', searchColumns: ['student_email', 'student_name', 'program_name', 'project_title'] },
   '/admins/cohorts': {
@@ -352,6 +359,9 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
   const projectSubmissionReview = cleanPath.match(/^\/admins\/project-submissions\/([^/]+)\/(approve|reject|changes-requested)$/);
   if (projectSubmissionReview) return reviewProjectSubmission(context, decodeURIComponent(projectSubmissionReview[1]), projectSubmissionReview[2], options.body) as Promise<TResponse>;
 
+  const certificateRevoke = cleanPath.match(/^\/admins\/certificates\/([^/]+)\/revoke$/);
+  if (certificateRevoke) return revokeCertificate(context, decodeURIComponent(certificateRevoke[1]), options.body) as Promise<TResponse>;
+
   const cohortStatus = cleanPath.match(/^\/admins\/cohorts\/([^/]+)\/status$/);
   if (cohortStatus) return updateById(context, 'cohorts', cohortStatus[1], options.body, 'status_changed') as Promise<TResponse>;
 
@@ -415,6 +425,8 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/programs') return insertRow(context, 'programs', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/project-roles') return insertRow(context, 'role_master', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/projects') return insertRow(context, 'projects', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/certificate-program-settings') return saveCertificateProgramSetting(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/admins/certificates/leadership') return issueLeadershipCertificates(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/certificates/live-project') return issueLiveProjectCertificate(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/students/me/project-submissions') return submitStudentProjectReport(context, options.body) as Promise<TResponse>;
 
@@ -973,6 +985,149 @@ async function getLiveProjectCertificateRequests(context: Awaited<ReturnType<typ
   return paginate(requests, query);
 }
 
+async function saveCertificateProgramSetting(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  await getAdminProfile(context);
+  const payload = snakifyMutationBody(body);
+  const programKey = String(payload.program_key ?? '').trim();
+  const modulesCovered = asStringArray(payload.modules_covered);
+  const status = String(payload.status ?? 'active').trim();
+
+  if (!programKey) throw new ApiClientError('Program is required before saving certificate modules.', 400);
+  if (modulesCovered.length === 0) throw new ApiClientError('Add at least one module before saving.', 400);
+  if (!['active', 'inactive'].includes(status)) throw new ApiClientError('Certificate module status is invalid.', 400);
+
+  const row = {
+    modules_covered: modulesCovered,
+    program_key: programKey,
+    status,
+    updated_at: new Date().toISOString()
+  };
+
+  const { data, error } = await context.supabase
+    .from('certificate_program_settings')
+    .upsert(row, { onConflict: 'program_key' })
+    .select('*')
+    .single();
+
+  if (error) throw mutationError(error, 'certificate_program_settings');
+
+  return camelize(enrichRow(data));
+}
+
+async function issueLeadershipCertificates(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  const admin = await getAdminProfile(context);
+  const adminEmail = isRecord(admin) ? String(admin.email ?? context.email) : context.email;
+  const payload = snakifyMutationBody(body);
+  const studentIds = asStringArray(payload.student_ids);
+  const programKey = String(payload.program_key ?? '').trim();
+  const programName = String(payload.program_name ?? programKey).trim();
+  const cohortName = String(payload.cohort_name ?? '').trim();
+  const issueDate = String(payload.issue_date ?? todayIsoDate()).slice(0, 10);
+  const modulesCovered = asStringArray(payload.modules_covered);
+  const sendEmail = payload.send_email !== false;
+
+  if (!programKey) throw new ApiClientError('Program is required before issuing leadership certificates.', 400);
+  if (!cohortName) throw new ApiClientError('Cohort is required before issuing leadership certificates.', 400);
+  if (!isIsoDate(issueDate)) throw new ApiClientError('Issue date is required before issuing leadership certificates.', 400);
+  if (modulesCovered.length === 0) throw new ApiClientError('Add at least one module before issuing leadership certificates.', 400);
+  if (studentIds.length === 0) throw new ApiClientError('Select at least one student before issuing certificates.', 400);
+  if (studentIds.length > 250) throw new ApiClientError('Leadership certificate issuance is limited to 250 students at a time.', 400);
+
+  const { data: students, error: studentsError } = await context.supabase
+    .from('students')
+    .select('id,email,full_name,student_id')
+    .in('id', studentIds)
+    .eq('active', true)
+    .limit(300);
+
+  if (studentsError) throw new ApiClientError(studentsError.message, 503);
+  const studentRows = students ?? [];
+  if (studentRows.length === 0) throw new ApiClientError('No active students found for issuance.', 404);
+
+  const studentEmails = studentRows.map((student) => String(student.email ?? '').trim()).filter(Boolean);
+  const { data: existingCertificates, error: existingError } = await context.supabase
+    .from('certificates')
+    .select('id,certificate_id,student_email')
+    .eq('certificate_type', 'leadership')
+    .eq('program_key', programKey)
+    .eq('cohort_name', cohortName)
+    .in('student_email', studentEmails)
+    .limit(500);
+
+  if (existingError) throw new ApiClientError(existingError.message, 503);
+
+  const existingEmails = new Set((existingCertificates ?? []).map((certificate) => normalizeEmail(certificate.student_email)));
+  const now = new Date();
+  const rows = [];
+  const skipped: Array<{ reason: string; studentId?: string }> = [];
+
+  for (const student of studentRows) {
+    const studentEmail = String(student.email ?? '').trim();
+    if (!studentEmail) {
+      skipped.push({ reason: 'Student email is missing.', studentId: String(student.id ?? '') });
+      continue;
+    }
+    if (existingEmails.has(normalizeEmail(studentEmail))) {
+      skipped.push({ reason: 'Leadership certificate already exists for this student, program, and cohort.', studentId: String(student.id ?? '') });
+      continue;
+    }
+
+    const certificateId = `SS-LP-${programKey.toUpperCase().replace(/[^A-Z0-9]+/g, '-')}-${now.getFullYear()}-${randomHex(8).toUpperCase()}`;
+    const verificationToken = randomHex(24);
+    const verificationUrl = certificateVerificationUrl(certificateId);
+    rows.push({
+      certificate_id: certificateId,
+      certificate_payload: {
+        cohortName,
+        issueDate,
+        modulesCovered,
+        programKey,
+        programName
+      },
+      certificate_type: 'leadership',
+      cohort_name: cohortName,
+      email_requested: sendEmail,
+      generation_status: 'pending',
+      issue_date: issueDate,
+      issued_by: adminEmail,
+      modules_covered: modulesCovered,
+      program_key: programKey,
+      program_name: programName || programKey,
+      status: 'issued',
+      student_email: studentEmail,
+      student_id: student.id,
+      student_name: String(student.full_name ?? studentEmail),
+      verification_token: verificationToken,
+      verification_url: verificationUrl
+    });
+  }
+
+  if (rows.length === 0) {
+    return {
+      certificates: [],
+      message: `No new certificates issued. ${skipped.length} skipped.`,
+      skipped
+    };
+  }
+
+  const { data, error } = await context.supabase.from('certificates').insert(rows).select('*');
+  if (error) throw mutationError(error, 'certificates');
+
+  await writeAuditLog(context, 'certificates', 'leadership_issued', { id: `bulk-${Date.now()}`, certificate_count: rows.length }, {
+    cohort_name: cohortName,
+    program_key: programKey,
+    student_count: rows.length
+  });
+
+  const generationMessage = await triggerCertificateGeneration(context, (data ?? []).map((certificate) => String(certificate.id)), sendEmail);
+
+  return {
+    certificates: (data ?? []).map(enrichRow).map(camelize),
+    message: `${rows.length} leadership certificate${rows.length === 1 ? '' : 's'} issued.${skipped.length ? ` ${skipped.length} skipped.` : ''}${generationMessage ? ` ${generationMessage}` : ''}`,
+    skipped
+  };
+}
+
 async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
   const admin = await getAdminProfile(context);
   const adminEmail = isRecord(admin) ? String(admin.email ?? context.email) : context.email;
@@ -1019,6 +1174,7 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
   const now = new Date();
   const certificateId = `SS-PROJ-${now.getFullYear()}-${randomHex(10).toUpperCase()}`;
   const verificationToken = randomHex(24);
+  const verificationUrl = certificateVerificationUrl(certificateId);
   const endDate = addDays(startDate, durationWeeks * 7 - 1);
   const row = {
     certificate_id: certificateId,
@@ -1055,7 +1211,7 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
     student_name: submission.student_name,
     submission_id: submission.request_id,
     verification_token: verificationToken,
-    verification_url: `/verify-certificate/${verificationToken}`
+    verification_url: verificationUrl
   };
 
   const { data, error } = await context.supabase.from('certificates').insert(row).select('*').single();
@@ -1066,10 +1222,45 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
     send_email: sendEmail
   });
 
+  const generationMessage = await triggerCertificateGeneration(context, [String(data.id)], sendEmail);
+
   return {
     certificate: camelize(enrichRow(data)),
-    message: `${certificateId} issued.`
+    message: `${certificateId} issued.${generationMessage ? ` ${generationMessage}` : ''}`
   };
+}
+
+async function revokeCertificate(context: Awaited<ReturnType<typeof createContext>>, certificateId: string, body: unknown) {
+  const admin = await getAdminProfile(context);
+  const adminEmail = isRecord(admin) ? String(admin.email ?? context.email) : context.email;
+  const payload = snakifyMutationBody(body ?? {});
+  const reason = String(payload.reason ?? '').trim();
+
+  if (!certificateId) throw new ApiClientError('Certificate is required.', 400);
+  if (reason.length < 8) throw new ApiClientError('Add a clear revocation reason before revoking.', 400);
+
+  const { data, error } = await context.supabase
+    .from('certificates')
+    .update({
+      generation_status: 'expired',
+      revocation_reason: reason,
+      revoked_at: new Date().toISOString(),
+      revoked_by: adminEmail,
+      status: 'revoked',
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', certificateId)
+    .neq('status', 'revoked')
+    .select('*')
+    .single();
+
+  if (error) throw mutationError(error, 'certificates');
+
+  await writeAuditLog(context, 'certificates', 'revoked', data, {
+    reason
+  });
+
+  return camelize(enrichRow(data));
 }
 
 async function submitStudentProjectReport(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
@@ -2101,7 +2292,7 @@ async function writeAuditLog(
   row: Record<string, unknown>,
   payload: Record<string, unknown>
 ) {
-  if (table !== 'cohorts' && table !== 'students' && table !== 'workshops' && table !== 'resources' && table !== 'programs' && table !== 'projects' && table !== 'role_master') return;
+  if (table !== 'cohorts' && table !== 'students' && table !== 'workshops' && table !== 'resources' && table !== 'programs' && table !== 'projects' && table !== 'role_master' && table !== 'certificates') return;
   const entityType =
     table === 'cohorts'
       ? 'cohort'
@@ -2115,7 +2306,9 @@ async function writeAuditLog(
               ? 'project'
               : table === 'role_master'
                 ? 'project_role'
-                : 'student';
+                : table === 'certificates'
+                  ? 'certificate'
+                  : 'student';
 
   const auditRow = {
     action: `admin_${entityType}_${action}`,
@@ -2130,7 +2323,7 @@ async function writeAuditLog(
   const { error } = await context.supabase.from('audit_logs').insert(auditRow);
   if (error) {
     throw new ApiClientError(
-      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_role' ? 'Project role' : 'Student'} was saved, but audit logging failed: ${error.message}`,
+      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : 'Student'} was saved, but audit logging failed: ${error.message}`,
       503
     );
   }
@@ -2288,6 +2481,30 @@ function addDays(dateValue: string, days: number) {
 
 function liveProjectCertificateKey(studentEmail: unknown, projectId: unknown, cohortName: unknown) {
   return [normalizeEmail(studentEmail), String(projectId ?? '').trim().toLowerCase(), String(cohortName ?? '').trim().toLowerCase()].join('|');
+}
+
+function certificateVerificationUrl(certificateId: string) {
+  const base = CERTIFICATE_VERIFY_BASE_URL.endsWith('/') ? CERTIFICATE_VERIFY_BASE_URL : `${CERTIFICATE_VERIFY_BASE_URL}/`;
+  return `${base}?certId=${encodeURIComponent(certificateId)}`;
+}
+
+async function triggerCertificateGeneration(context: Awaited<ReturnType<typeof createContext>>, certificateIds: string[], sendEmail: boolean) {
+  const ids = certificateIds.map((id) => id.trim()).filter(Boolean);
+  if (ids.length === 0) return '';
+
+  try {
+    const { data, error } = await context.supabase.functions.invoke('certificate-issuance', {
+      body: {
+        certificateIds: ids,
+        sendEmail
+      }
+    });
+    if (error) throw error;
+    const message = isRecord(data) && typeof data.message === 'string' ? data.message : '';
+    return message || 'PDF generation started.';
+  } catch (error) {
+    return `Certificate row saved, but PDF generation needs retry: ${error instanceof Error ? error.message : 'unknown error'}`;
+  }
 }
 
 function randomHex(length: number) {
