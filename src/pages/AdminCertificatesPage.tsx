@@ -1,5 +1,5 @@
 import { ExternalLink, FileCheck2, Search, ShieldCheck } from 'lucide-react';
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
@@ -12,6 +12,8 @@ import {
   AdminCertificateRequestAdminStatus,
   AdminCertificateStatus,
   AdminCertificateType,
+  IssueLiveProjectCertificateInput,
+  useIssueLiveProjectCertificate,
   useAdminCertificateRequests,
   useAdminCertificates
 } from '../features/admin/useAdminCertificates';
@@ -46,6 +48,17 @@ function asPositiveInteger(value: string | null, defaultValue: number) {
 
 function todayInputValue() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function isValidDateInput(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T00:00:00.000Z`).getTime());
+}
+
+function addDaysInput(value: string, days: number) {
+  if (!isValidDateInput(value)) return '';
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 function formatDate(value: string | undefined) {
@@ -142,10 +155,49 @@ function lockedButtonLabel(label: string) {
   return `${label} (locked)`;
 }
 
-function FinalIssuanceModal({ request, onClose }: { request: AdminCertificateRequest; onClose: () => void }) {
+const durationOptions = [2, 4, 6, 8];
+
+function FinalIssuanceModal({
+  error,
+  isIssuing,
+  onClose,
+  onIssue,
+  request
+}: {
+  error?: string;
+  isIssuing: boolean;
+  onClose: () => void;
+  onIssue: (input: IssueLiveProjectCertificateInput) => Promise<void>;
+  request: AdminCertificateRequest;
+}) {
+  const [durationWeeks, setDurationWeeks] = useState(4);
+  const [issueDate, setIssueDate] = useState(todayInputValue());
+  const [sendEmail, setSendEmail] = useState(true);
+  const [startDate, setStartDate] = useState(request.cohortStartDate?.slice(0, 10) ?? '');
+  const endDate = useMemo(() => addDaysInput(startDate, durationWeeks * 7 - 1), [durationWeeks, startDate]);
+  const missingCohortStartDate = !request.cohortStartDate;
+
+  useEffect(() => {
+    setDurationWeeks(4);
+    setIssueDate(todayInputValue());
+    setSendEmail(true);
+    setStartDate(request.cohortStartDate?.slice(0, 10) ?? '');
+  }, [request]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await onIssue({
+      durationWeeks,
+      issueDate,
+      requestId: request.id,
+      sendEmail,
+      startDate
+    });
+  }
+
   return (
     <div className="student-modal-backdrop" role="presentation">
-      <section aria-labelledby="live-project-issuance-title" aria-modal="true" className="student-modal certificate-final-modal" role="dialog">
+      <form aria-labelledby="live-project-issuance-title" aria-modal="true" className="student-modal certificate-final-modal" onSubmit={handleSubmit} role="dialog">
         <header className="student-modal__header">
           <div>
             <span className="certificate-section-eyebrow">Final Issuance</span>
@@ -179,9 +231,24 @@ function FinalIssuanceModal({ request, onClose }: { request: AdminCertificateReq
             </div>
             <div>
               <span>Submission</span>
-              <strong>{request.requestId}</strong>
+              <strong>{request.requestNumber ?? request.requestId}</strong>
+            </div>
+            <div>
+              <span>Attempt</span>
+              <strong>{request.attemptNumber ?? 1}</strong>
+            </div>
+            <div>
+              <span>Submitted on</span>
+              <strong>{formatDate(request.submittedAt)}</strong>
             </div>
           </div>
+
+          {missingCohortStartDate ? (
+            <div className="certificate-muted-card certificate-muted-card--warning">
+              <ShieldCheck size={17} />
+              <span>Cohort start date is missing. Please select the project start date manually before issuing.</span>
+            </div>
+          ) : null}
 
           <div className="certificate-modal-form">
             <label className="certificate-field">
@@ -198,35 +265,42 @@ function FinalIssuanceModal({ request, onClose }: { request: AdminCertificateReq
             </label>
             <label className="certificate-field">
               <span>Duration</span>
-              <input readOnly value="4 weeks" />
+              <select value={durationWeeks} onChange={(event) => setDurationWeeks(Number(event.target.value))}>
+                {durationOptions.map((weeks) => (
+                  <option key={weeks} value={weeks}>
+                    {weeks} weeks
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="certificate-field">
               <span>Start date *</span>
-              <input readOnly value={formatDate(request.submittedAt)} />
+              <input onChange={(event) => setStartDate(event.target.value)} required type="date" value={startDate} />
             </label>
             <label className="certificate-field">
               <span>End date *</span>
-              <input readOnly value={formatDate(request.adminReviewedAt ?? request.moderatorReviewedAt ?? request.updatedAt)} />
+              <input readOnly required type="date" value={endDate} />
             </label>
             <label className="certificate-field">
               <span>Issue date *</span>
-              <input readOnly value={formatDate(todayInputValue())} />
+              <input onChange={(event) => setIssueDate(event.target.value)} required type="date" value={issueDate} />
             </label>
             <label className="certificate-checkbox">
-              <input checked readOnly type="checkbox" />
+              <input checked={sendEmail} onChange={(event) => setSendEmail(event.target.checked)} type="checkbox" />
               <span>Send certificate email after PDF generation</span>
             </label>
           </div>
+          {error ? <p className="admin-submission-message admin-submission-message--error">{error}</p> : null}
         </div>
         <footer className="student-modal__footer">
-          <button className="segmented-button" onClick={onClose} type="button">
+          <button className="segmented-button" disabled={isIssuing} onClick={onClose} type="button">
             Cancel
           </button>
-          <button className="button-primary" disabled type="button">
-            {lockedButtonLabel('Issue Certificate')} →
+          <button className="button-primary" disabled={isIssuing || !startDate || !endDate || !issueDate} type="submit">
+            {isIssuing ? 'Issuing...' : 'Issue Certificate →'}
           </button>
         </footer>
-      </section>
+      </form>
     </div>
   );
 }
@@ -279,10 +353,17 @@ function RequestQueue({
                   </div>
                 </div>
                 <div className="certificate-request-card__actions">
-                  <button className="segmented-button" disabled type="button">
-                    <ExternalLink size={14} />
-                    {lockedButtonLabel('Open Report')}
-                  </button>
+                  {request.submissionUrl ? (
+                    <a className="segmented-button" href={request.submissionUrl} rel="noreferrer" target="_blank">
+                      <ExternalLink size={14} />
+                      Open Report
+                    </a>
+                  ) : (
+                    <button className="segmented-button" disabled type="button">
+                      <ExternalLink size={14} />
+                      {lockedButtonLabel('Open Report')}
+                    </button>
+                  )}
                   <button className="segmented-button" onClick={() => onReview(request)} type="button">
                     Review & Issue
                   </button>
@@ -314,9 +395,11 @@ export function AdminCertificatesPage() {
   const [moduleStatus, setModuleStatus] = useState<'active' | 'inactive'>('active');
   const [moduleText, setModuleText] = useState('');
   const [selectedRequest, setSelectedRequest] = useState<AdminCertificateRequest | null>(null);
+  const [certificateMessage, setCertificateMessage] = useState('');
 
   const certificatesQuery = useAdminCertificates({ certificateType, generationStatus, page, search, status });
   const requestsQuery = useAdminCertificateRequests({ adminStatus: 'pending', limit: 10, moderatorStatus: 'approved', page: 1 });
+  const issueCertificateMutation = useIssueLiveProjectCertificate();
   const programsQuery = useAdminPrograms({ limit: 100, page: 1, status: 'active' });
   const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, status: 'all' });
   const cohortsPageTwoQuery = useAdminCohorts({ limit: 100, page: 2, status: 'all' });
@@ -385,6 +468,12 @@ export function AdminCertificatesPage() {
       }
       return next;
     });
+  }
+
+  async function handleIssueLiveProjectCertificate(input: IssueLiveProjectCertificateInput) {
+    const result = await issueCertificateMutation.mutateAsync(input);
+    setCertificateMessage(result.message);
+    setSelectedRequest(null);
   }
 
   const pageIsLoading = certificatesQuery.isLoading || requestsQuery.isLoading || programsQuery.isLoading || cohortsPageOneQuery.isLoading;
@@ -534,6 +623,8 @@ export function AdminCertificatesPage() {
 
       <RequestQueue isLoading={requestsQuery.isLoading} items={requestsQuery.data?.items ?? []} onReview={setSelectedRequest} />
 
+      {certificateMessage ? <p className="admin-submission-message">{certificateMessage}</p> : null}
+
       <section className="certificate-section">
         <header className="certificate-section__header">
           <div>
@@ -640,7 +731,15 @@ export function AdminCertificatesPage() {
         </div>
       </section>
 
-      {selectedRequest ? <FinalIssuanceModal request={selectedRequest} onClose={() => setSelectedRequest(null)} /> : null}
+      {selectedRequest ? (
+        <FinalIssuanceModal
+          error={issueCertificateMutation.isError ? issueCertificateMutation.error.message : undefined}
+          isIssuing={issueCertificateMutation.isPending}
+          onClose={() => setSelectedRequest(null)}
+          onIssue={handleIssueLiveProjectCertificate}
+          request={selectedRequest}
+        />
+      ) : null}
     </div>
   );
 }

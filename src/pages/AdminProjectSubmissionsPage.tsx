@@ -1,4 +1,4 @@
-import { Check, ExternalLink, Search, ShieldCheck, X } from 'lucide-react';
+import { Check, ExternalLink, RotateCcw, Search, ShieldCheck, X } from 'lucide-react';
 import { FormEvent, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
@@ -13,11 +13,12 @@ import {
   useReviewAdminProjectSubmission
 } from '../features/admin/useAdminProjectSubmissions';
 
-const statusOptions: AdminProjectSubmissionStatusFilter[] = ['pending', 'duplicates', 'approved', 'rejected', 'submitted', 'under_review', 'all'];
+const statusOptions: AdminProjectSubmissionStatusFilter[] = ['pending', 'duplicates', 'approved', 'changes_requested', 'rejected', 'submitted', 'under_review', 'all'];
 
 const statusLabels: Record<AdminProjectSubmissionStatusFilter, string> = {
   all: 'All statuses',
   approved: 'Approved',
+  changes_requested: 'Changes Requested',
   duplicates: 'Repeat Submissions',
   pending: 'Pending Approval',
   rejected: 'Rejected',
@@ -119,6 +120,16 @@ export function AdminProjectSubmissionsPage() {
     setMessage(`${item.requestNumber ?? item.id} rejected.`);
   }
 
+  async function handleChangesRequested(item: AdminProjectSubmission) {
+    const reviewNote = window.prompt('Add changes requested note for this submission')?.trim();
+    if (!reviewNote) {
+      setMessage('Changes requested needs a review note.');
+      return;
+    }
+    await reviewMutation.mutateAsync({ action: 'changes-requested', requestId: item.id, reviewNote });
+    setMessage(`${item.requestNumber ?? item.id} marked as changes requested.`);
+  }
+
   if (submissionsQuery.isLoading) {
     return (
       <div className="admin-submission-page">
@@ -200,7 +211,7 @@ export function AdminProjectSubmissionsPage() {
           {data && data.items.length > 0 ? (
             <div className="admin-submission-list">
               {data.items.map((item) => (
-                <SubmissionRow disabled={reviewMutation.isPending} item={item} key={item.id} onApprove={handleApprove} onReject={handleReject} />
+                <SubmissionRow disabled={reviewMutation.isPending} item={item} key={item.id} onApprove={handleApprove} onChangesRequested={handleChangesRequested} onReject={handleReject} />
               ))}
             </div>
           ) : (
@@ -236,11 +247,13 @@ function SubmissionRow({
   disabled,
   item,
   onApprove,
+  onChangesRequested,
   onReject
 }: {
   disabled: boolean;
   item: AdminProjectSubmission;
   onApprove: (item: AdminProjectSubmission) => Promise<void>;
+  onChangesRequested: (item: AdminProjectSubmission) => Promise<void>;
   onReject: (item: AdminProjectSubmission) => Promise<void>;
 }) {
   return (
@@ -281,6 +294,10 @@ function SubmissionRow({
             <button className="segmented-button segmented-button--success" disabled={disabled} onClick={() => onApprove(item)} type="button">
               <Check size={14} />
               Approve
+            </button>
+            <button className="segmented-button" disabled={disabled} onClick={() => onChangesRequested(item)} type="button">
+              <RotateCcw size={14} />
+              Request Changes
             </button>
             <button className="segmented-button segmented-button--danger" disabled={disabled} onClick={() => onReject(item)} type="button">
               <X size={14} />

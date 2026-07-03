@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthProvider';
-import { apiGet } from '../../lib/supabaseApi';
+import { apiGet, apiPost } from '../../lib/supabaseApi';
 import { PaginatedResponse } from '../student/useStudentAnnouncements';
 
 export type AdminCertificateStatus = 'draft' | 'issued' | 'revoked';
@@ -32,6 +32,8 @@ export type AdminCertificateRequest = {
   adminEmail?: string;
   adminReviewedAt?: string;
   adminStatus: AdminCertificateRequestAdminStatus;
+  attemptNumber?: number;
+  cohortStartDate?: string;
   cohortName?: string;
   createdAt?: string;
   id: string;
@@ -43,11 +45,27 @@ export type AdminCertificateRequest = {
   projectRole: string;
   projectTitle?: string;
   requestId: string;
+  requestNumber?: string;
   requestType: 'live_project';
+  submissionUrl?: string;
   studentEmail: string;
+  studentId?: string;
   studentName: string;
   submittedAt: string;
   updatedAt?: string;
+};
+
+export type IssueLiveProjectCertificateInput = {
+  durationWeeks: number;
+  issueDate: string;
+  requestId: string;
+  sendEmail: boolean;
+  startDate: string;
+};
+
+export type IssueLiveProjectCertificateResult = {
+  certificate: AdminCertificate;
+  message: string;
 };
 
 export type AdminCertificatesQuery = {
@@ -118,5 +136,23 @@ export function useAdminCertificateRequests(query: AdminCertificateRequestsQuery
       }),
     queryKey: ['admin-certificate-requests', accessToken, page, limit, moderatorStatus, adminStatus, search],
     staleTime: 60_000
+  });
+}
+
+export function useIssueLiveProjectCertificate() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: IssueLiveProjectCertificateInput) =>
+      apiPost<IssueLiveProjectCertificateResult, IssueLiveProjectCertificateInput>('/admins/certificates/live-project', {
+        accessToken: accessToken ?? undefined,
+        body
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-certificates'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-certificate-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['student-certificates'] });
+    }
   });
 }

@@ -149,6 +149,33 @@ const PROGRAM_WRITE_COLUMNS = new Set([
   'status'
 ]);
 
+const PROJECT_ROLE_WRITE_COLUMNS = new Set([
+  'program_key',
+  'role_category',
+  'role_id',
+  'role_name',
+  'status'
+]);
+
+const PROJECT_WRITE_COLUMNS = new Set([
+  'action_items',
+  'brief',
+  'company_name',
+  'deadline',
+  'deliverables',
+  'objectives',
+  'program_key',
+  'program_keys',
+  'program_name',
+  'project_id',
+  'project_role',
+  'resources',
+  'role_id',
+  'status',
+  'submission_link',
+  'title'
+]);
+
 const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/announcements': { table: 'announcements', searchColumns: ['title', 'message', 'audience'] },
   '/admins/audit-logs': {
@@ -202,7 +229,12 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/students/me/certificates': { table: 'certificates', searchColumns: ['program_name', 'project_title'], studentOwned: true },
   '/students/me/paid-access': { table: 'paid_access', searchColumns: ['item_id', 'item_type'], studentOwned: true },
   '/students/me/payment-orders': { table: 'payment_orders', searchColumns: ['item_id', 'item_type', 'razorpay_order_id'], studentOwned: true },
-  '/students/me/project-submissions': { table: 'project_submission_requests', searchColumns: ['project_title', 'request_number'], studentOwned: true },
+  '/students/me/project-submissions': {
+    table: 'project_submission_requests',
+    filterColumns: { projectId: 'project_id' },
+    searchColumns: ['project_title', 'request_number', 'project_id'],
+    studentOwned: true
+  },
   '/students/me/support-tickets': { table: 'support_tickets', searchColumns: ['subject', 'category_name'], studentOwned: true }
 };
 
@@ -236,6 +268,18 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     normalizeBody: normalizeProgramWriteBody,
     table: 'programs',
     validateBody: validateProgramWriteBody
+  },
+  projects: {
+    columns: PROJECT_WRITE_COLUMNS,
+    normalizeBody: normalizeProjectWriteBody,
+    table: 'projects',
+    validateBody: validateProjectWriteBody
+  },
+  role_master: {
+    columns: PROJECT_ROLE_WRITE_COLUMNS,
+    normalizeBody: normalizeProjectRoleWriteBody,
+    table: 'role_master',
+    validateBody: validateProjectRoleWriteBody
   }
 };
 
@@ -248,6 +292,7 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/students/me/dashboard') return getStudentDashboard(context) as Promise<TResponse>;
   if (cleanPath === '/admins/dashboard') return getAdminDashboard(context) as Promise<TResponse>;
   if (cleanPath === '/admins/student-audit-logs') return getStudentAuditLogs(context, options.query) as Promise<TResponse>;
+  if (cleanPath === '/admins/certificate-requests') return getLiveProjectCertificateRequests(context, options.query) as Promise<TResponse>;
 
   const studentAttempts = cleanPath.match(/^\/admins\/students\/([^/]+)\/lp-attempts$/);
   if (studentAttempts) return getStudentAttemptLimit(context, decodeURIComponent(studentAttempts[1])) as Promise<TResponse>;
@@ -304,6 +349,9 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
   const studentUpdate = cleanPath.match(/^\/admins\/students\/([^/]+)$/);
   if (studentUpdate) return updateById(context, 'students', studentUpdate[1], options.body, 'updated') as Promise<TResponse>;
 
+  const projectSubmissionReview = cleanPath.match(/^\/admins\/project-submissions\/([^/]+)\/(approve|reject|changes-requested)$/);
+  if (projectSubmissionReview) return reviewProjectSubmission(context, decodeURIComponent(projectSubmissionReview[1]), projectSubmissionReview[2], options.body) as Promise<TResponse>;
+
   const cohortStatus = cleanPath.match(/^\/admins\/cohorts\/([^/]+)\/status$/);
   if (cohortStatus) return updateById(context, 'cohorts', cohortStatus[1], options.body, 'status_changed') as Promise<TResponse>;
 
@@ -334,6 +382,18 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
   const programUpdate = cleanPath.match(/^\/admins\/programs\/([^/]+)$/);
   if (programUpdate) return updateById(context, 'programs', decodeURIComponent(programUpdate[1]), options.body, 'updated') as Promise<TResponse>;
 
+  const projectRoleStatus = cleanPath.match(/^\/admins\/project-roles\/([^/]+)\/status$/);
+  if (projectRoleStatus) return updateById(context, 'role_master', decodeURIComponent(projectRoleStatus[1]), options.body, 'status_changed') as Promise<TResponse>;
+
+  const projectRoleUpdate = cleanPath.match(/^\/admins\/project-roles\/([^/]+)$/);
+  if (projectRoleUpdate) return updateById(context, 'role_master', decodeURIComponent(projectRoleUpdate[1]), options.body, 'updated') as Promise<TResponse>;
+
+  const projectStatus = cleanPath.match(/^\/admins\/projects\/([^/]+)\/status$/);
+  if (projectStatus) return updateById(context, 'projects', decodeURIComponent(projectStatus[1]), options.body, 'status_changed') as Promise<TResponse>;
+
+  const projectUpdate = cleanPath.match(/^\/admins\/projects\/([^/]+)$/);
+  if (projectUpdate) return updateById(context, 'projects', decodeURIComponent(projectUpdate[1]), options.body, 'updated') as Promise<TResponse>;
+
   throw new ApiClientError(`Unsupported Supabase write route: ${cleanPath}`, 404);
 }
 
@@ -353,6 +413,10 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/workshops') return insertRow(context, 'workshops', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/resources') return insertRow(context, 'resources', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/programs') return insertRow(context, 'programs', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/project-roles') return insertRow(context, 'role_master', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/projects') return insertRow(context, 'projects', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/certificates/live-project') return issueLiveProjectCertificate(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/students/me/project-submissions') return submitStudentProjectReport(context, options.body) as Promise<TResponse>;
 
   throw new ApiClientError(`Unsupported Supabase write route: ${cleanPath}`, 404);
 }
@@ -781,6 +845,349 @@ async function updateStudentAttemptLimit(context: Awaited<ReturnType<typeof crea
   };
 }
 
+async function reviewProjectSubmission(context: Awaited<ReturnType<typeof createContext>>, requestId: string, action: string, body: unknown) {
+  await getAdminProfile(context);
+  const payload = isRecord(body) ? snakify(body) as Record<string, unknown> : {};
+  const reviewNote = typeof payload.review_note === 'string' ? payload.review_note.trim() : '';
+  const status = action === 'approve' ? 'approved' : action === 'changes-requested' ? 'changes_requested' : 'rejected';
+
+  if ((status === 'rejected' || status === 'changes_requested') && !reviewNote) {
+    throw new ApiClientError(status === 'changes_requested' ? 'Changes requested needs a review note.' : 'Reject needs a review note.', 400);
+  }
+
+  const { data, error } = await context.supabase
+    .from('project_submission_requests')
+    .update({
+      remarks: reviewNote || undefined,
+      status,
+      updated_at: new Date().toISOString()
+    })
+    .or(`id.eq.${requestId},request_id.eq.${requestId}`)
+    .select('*')
+    .single();
+
+  if (error) throw mutationError(error, 'project_submission_requests');
+
+  return {
+    message: `Submission marked ${status.replace(/_/g, ' ')}.`,
+    requestId: data.id,
+    status: 'updated'
+  };
+}
+
+async function getLiveProjectCertificateRequests(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  await getAdminProfile(context);
+
+  const [submissionsResult, certificatesResult, cohortsResult, programsResult] = await Promise.all([
+    context.supabase
+      .from('project_submission_requests')
+      .select('*')
+      .eq('status', 'approved')
+      .order('attempt_number', { ascending: false })
+      .order('updated_at', { ascending: false })
+      .limit(5000),
+    context.supabase
+      .from('certificates')
+      .select('id,certificate_id,certificate_type,student_email,project_id,cohort_name,submission_id,status')
+      .eq('certificate_type', 'live_project')
+      .limit(5000),
+    context.supabase.from('cohorts').select('cohort_id,name,program_key,start_date').limit(5000),
+    context.supabase.from('programs').select('program_key,name').limit(500)
+  ]);
+
+  if (submissionsResult.error) throw new ApiClientError(submissionsResult.error.message, 503);
+  if (certificatesResult.error) throw new ApiClientError(certificatesResult.error.message, 503);
+  if (cohortsResult.error) throw new ApiClientError(cohortsResult.error.message, 503);
+  if (programsResult.error) throw new ApiClientError(programsResult.error.message, 503);
+
+  const cohortByNameOrId = new Map<string, Record<string, unknown>>();
+  (cohortsResult.data ?? []).forEach((cohort) => {
+    const name = String(cohort.name ?? '').trim().toLowerCase();
+    const cohortId = String(cohort.cohort_id ?? '').trim().toLowerCase();
+    if (name) cohortByNameOrId.set(name, cohort);
+    if (cohortId) cohortByNameOrId.set(cohortId, cohort);
+  });
+
+  const programNameByKey = new Map<string, string>();
+  (programsResult.data ?? []).forEach((program) => {
+    const key = String(program.program_key ?? '').trim().toLowerCase();
+    const name = String(program.name ?? '').trim();
+    if (key && name) programNameByKey.set(key, name);
+  });
+
+  const certificateKeys = new Set<string>();
+  (certificatesResult.data ?? []).forEach((certificate) => {
+    const submissionId = String(certificate.submission_id ?? '').trim();
+    if (submissionId) certificateKeys.add(`submission:${submissionId}`);
+    certificateKeys.add(
+      liveProjectCertificateKey(certificate.student_email, certificate.project_id, certificate.cohort_name)
+    );
+  });
+
+  const latestByEnrollment = new Map<string, Record<string, unknown>>();
+  (submissionsResult.data ?? []).forEach((submission) => {
+    const key = liveProjectCertificateKey(submission.student_email, submission.project_id, submission.cohort_name);
+    const existing = latestByEnrollment.get(key);
+    const attempt = Number(submission.attempt_number ?? 0);
+    const existingAttempt = Number(existing?.attempt_number ?? 0);
+    if (!existing || attempt > existingAttempt) latestByEnrollment.set(key, submission);
+  });
+
+  const requests = Array.from(latestByEnrollment.values())
+    .filter((submission) => {
+      const submissionId = String(submission.request_id ?? '').trim();
+      const enrollmentKey = liveProjectCertificateKey(submission.student_email, submission.project_id, submission.cohort_name);
+      return !certificateKeys.has(`submission:${submissionId}`) && !certificateKeys.has(enrollmentKey);
+    })
+    .map((submission) => {
+      const cohortName = String(submission.cohort_name ?? '').trim();
+      const cohort = cohortByNameOrId.get(cohortName.toLowerCase()) ?? cohortByNameOrId.get(String(submission.cohort_key ?? '').trim().toLowerCase());
+      const programKey = String(submission.program_key ?? cohort?.program_key ?? '').trim();
+      const requestNumber = String(submission.request_number ?? submission.request_id ?? submission.id);
+      return {
+        admin_status: 'pending',
+        attempt_number: Number(submission.attempt_number ?? 1),
+        cohort_name: cohortName || undefined,
+        cohort_start_date: cohort?.start_date ?? undefined,
+        created_at: submission.created_at,
+        id: String(submission.id),
+        moderator_status: 'approved',
+        program_key: programKey || undefined,
+        program_name: programNameByKey.get(programKey.toLowerCase()) ?? (programKey || undefined),
+        project_id: String(submission.project_id ?? ''),
+        project_role: String(submission.role_name ?? submission.project_role ?? ''),
+        project_title: String(submission.project_title ?? submission.project_id ?? ''),
+        request_id: requestNumber,
+        request_number: requestNumber,
+        request_type: 'live_project',
+        student_email: String(submission.student_email ?? ''),
+        student_id: String(submission.student_id ?? ''),
+        student_name: String(submission.student_name ?? submission.student_email ?? ''),
+        submission_url: String(submission.submission_link ?? ''),
+        submitted_at: submission.submitted_at,
+        updated_at: submission.updated_at
+      };
+    })
+    .sort((left, right) => String(right.updated_at ?? '').localeCompare(String(left.updated_at ?? '')));
+
+  return paginate(requests, query);
+}
+
+async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  const admin = await getAdminProfile(context);
+  const adminEmail = isRecord(admin) ? String(admin.email ?? context.email) : context.email;
+  const payload = snakifyMutationBody(body);
+  const requestId = String(payload.request_id ?? '').trim();
+  const durationWeeks = Number(payload.duration_weeks ?? 4);
+  const startDate = String(payload.start_date ?? '').slice(0, 10);
+  const issueDate = String(payload.issue_date ?? todayIsoDate()).slice(0, 10);
+  const sendEmail = payload.send_email !== false;
+
+  if (!requestId) throw new ApiClientError('Certificate request is required.', 400);
+  if (![2, 4, 6, 8].includes(durationWeeks)) throw new ApiClientError('Duration must be 2, 4, 6, or 8 weeks.', 400);
+  if (!isIsoDate(startDate)) throw new ApiClientError('Start date is required before issuing a live project certificate.', 400);
+  if (!isIsoDate(issueDate)) throw new ApiClientError('Issue date is required before issuing a live project certificate.', 400);
+
+  const { data: submission, error: submissionError } = await context.supabase
+    .from('project_submission_requests')
+    .select('*')
+    .or(`id.eq.${requestId},request_id.eq.${requestId},request_number.eq.${requestId}`)
+    .eq('status', 'approved')
+    .limit(1)
+    .maybeSingle();
+
+  if (submissionError) throw new ApiClientError(submissionError.message, 503);
+  if (!submission) throw new ApiClientError('Approved project submission was not found.', 404);
+
+  const { data: existingCertificates, error: existingError } = await context.supabase
+    .from('certificates')
+    .select('id,certificate_id,submission_id')
+    .eq('certificate_type', 'live_project')
+    .eq('student_email', submission.student_email)
+    .eq('project_id', submission.project_id)
+    .eq('cohort_name', submission.cohort_name)
+    .limit(1);
+
+  if (existingError) throw new ApiClientError(existingError.message, 503);
+  if ((existingCertificates ?? []).length > 0) throw new ApiClientError('A live project certificate already exists for this student, project, and cohort.', 409);
+
+  const [programResult] = await Promise.all([
+    context.supabase.from('programs').select('name').eq('program_key', submission.program_key).limit(1).maybeSingle()
+  ]);
+  if (programResult.error) throw new ApiClientError(programResult.error.message, 503);
+
+  const now = new Date();
+  const certificateId = `SS-PROJ-${now.getFullYear()}-${randomHex(10).toUpperCase()}`;
+  const verificationToken = randomHex(24);
+  const endDate = addDays(startDate, durationWeeks * 7 - 1);
+  const row = {
+    certificate_id: certificateId,
+    certificate_payload: {
+      cohortName: submission.cohort_name,
+      durationWeeks,
+      issueDate,
+      projectEndDate: endDate,
+      projectStartDate: startDate,
+      requestNumber: submission.request_number,
+      submissionId: submission.request_id,
+      submissionLink: submission.submission_link
+    },
+    certificate_type: 'live_project',
+    cohort_name: submission.cohort_name,
+    duration_label: `${durationWeeks} weeks`,
+    email_requested: sendEmail,
+    generation_status: 'pending',
+    issue_date: issueDate,
+    issued_by: adminEmail,
+    modules_covered: [String(submission.role_name ?? ''), String(submission.project_title ?? '')].filter(Boolean),
+    program_key: submission.program_key,
+    program_name: programResult.data?.name ?? submission.program_key,
+    project_end_date: endDate,
+    project_id: submission.project_id,
+    project_role: submission.role_name,
+    project_start_date: startDate,
+    project_title: submission.project_title,
+    role_id: submission.role_id,
+    role_name: submission.role_name,
+    status: 'issued',
+    student_email: submission.student_email,
+    student_id: submission.student_id,
+    student_name: submission.student_name,
+    submission_id: submission.request_id,
+    verification_token: verificationToken,
+    verification_url: `/verify-certificate/${verificationToken}`
+  };
+
+  const { data, error } = await context.supabase.from('certificates').insert(row).select('*').single();
+  if (error) throw mutationError(error, 'certificates');
+
+  await writeAuditLog(context, 'certificates', 'live_project_issued', data, {
+    request_id: requestId,
+    send_email: sendEmail
+  });
+
+  return {
+    certificate: camelize(enrichRow(data)),
+    message: `${certificateId} issued.`
+  };
+}
+
+async function submitStudentProjectReport(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  const payload = snakifyMutationBody(body);
+  const projectId = typeof payload.project_id === 'string' ? payload.project_id.trim() : '';
+  const cohortId = typeof payload.cohort_id === 'string' ? payload.cohort_id.trim() : '';
+  const submissionLink = typeof payload.submission_link === 'string' ? payload.submission_link.trim() : '';
+  const remarks = typeof payload.remarks === 'string' ? payload.remarks.trim() : '';
+  const studentFeedback = typeof payload.student_feedback === 'string' ? payload.student_feedback.trim() : '';
+  const declarationConfirmations = asStringArray(payload.declaration_confirmations).map((item) => item.trim()).filter(Boolean);
+  const declarationAccepted = payload.declaration_accepted === true;
+
+  if (!projectId) throw new ApiClientError('Select a project before submitting.', 400);
+  if (!cohortId) throw new ApiClientError('Select the cohort for this submission.', 400);
+  if (!isHttpUrl(submissionLink)) throw new ApiClientError('Enter a valid report link that starts with http:// or https://.', 400);
+  if (studentFeedback.length < 30) throw new ApiClientError('Add detailed project feedback before submitting.', 400);
+  if (!declarationAccepted) throw new ApiClientError('Confirm the project declaration before submitting.', 400);
+  if (declarationConfirmations.length < 6) throw new ApiClientError('Confirm all project submission declarations before submitting.', 400);
+
+  const [profile, dashboard, projectBundle] = await Promise.all([
+    getStudentProfile(context),
+    callRpc(context, 'student_dashboard_bundle', { p_student_email: context.email }),
+    callRpc(context, 'student_projects_bundle', { p_student_email: context.email })
+  ]);
+
+  const student = isRecord(profile) ? profile : {};
+  const studentId = String(student.id ?? '');
+  const studentName = String(student.fullName ?? student.full_name ?? context.email);
+  const projects = extractItems(projectBundle, ['projects', 'items']).filter(isRecord);
+  const cohorts = extractItems(dashboard, ['cohorts', 'studentCohorts']).filter(isRecord);
+  const submissions = extractItems(projectBundle, ['projectSubmissionRequests', 'project_submission_requests']).filter(isRecord);
+  const limitRows = extractItems(projectBundle, ['projectSubmissionStudentLimits', 'project_submission_student_limits']).filter(isRecord);
+  const maxAttempts = Math.max(1, Number(limitRows[0]?.maxAttempts ?? limitRows[0]?.max_attempts ?? 3) || 3);
+
+  const project = projects.find((item) => String(item.projectId ?? item.project_id ?? item.id) === projectId);
+  if (!project) throw new ApiClientError('This project is not available to your account.', 403);
+  if (String(project.status ?? '').toLowerCase() !== 'active') throw new ApiClientError('This project is not active for submission.', 403);
+
+  const projectExternalId = String(project.projectId ?? project.project_id ?? project.id);
+  const projectPrograms = uniqueStrings([...asStringArray(project.programKeys ?? project.program_keys), String(project.programKey ?? project.program_key ?? '')]).map((item) => item.toLowerCase());
+  const cohort = cohorts.find((item) => String(item.id ?? '') === cohortId || String(item.cohortId ?? item.cohort_id ?? '') === cohortId || String(item.name ?? '') === cohortId);
+  if (!cohort) throw new ApiClientError('This cohort is not available to your account.', 403);
+  if (String(cohort.status ?? '').toLowerCase() !== 'active') throw new ApiClientError('This cohort is not active for submissions.', 403);
+
+  const cohortProgramKey = String(cohort.programKey ?? cohort.program_key ?? '').toLowerCase();
+  if (!cohortProgramKey || !projectPrograms.includes(cohortProgramKey)) {
+    throw new ApiClientError('This project is not mapped to the selected cohort.', 403);
+  }
+
+  const cohortName = String(cohort.name ?? '');
+  const cohortKey = slugifyKey(cohortName || String(cohort.cohortId ?? cohort.cohort_id ?? cohort.id));
+  const cohortSubmissions = submissions
+    .filter((item) => {
+      const submissionProjectId = String(item.projectId ?? item.project_id ?? '');
+      const sameProject = submissionProjectId === projectExternalId;
+      const sameCohort = String(item.cohortKey ?? item.cohort_key ?? '') === cohortKey || String(item.cohortName ?? item.cohort_name ?? '') === cohortName;
+      return sameProject && sameCohort;
+    })
+    .sort((left, right) => Number(right.attemptNumber ?? right.attempt_number ?? 0) - Number(left.attemptNumber ?? left.attempt_number ?? 0));
+  const latest = cohortSubmissions[0];
+  const latestStatus = String(latest?.status ?? '');
+  const isChangesRequestedRetry = latestStatus === 'changes_requested';
+  const isRejectedRetry = latestStatus === 'rejected';
+
+  if (['submitted', 'under_review', 'approved'].includes(latestStatus)) {
+    throw new ApiClientError('A project report has already been submitted for this cohort.', 409);
+  }
+
+  const highestAttempt = cohortSubmissions.reduce((max, item) => Math.max(max, Number(item.attemptNumber ?? item.attempt_number ?? 0)), 0);
+  if (highestAttempt > 0 && !isChangesRequestedRetry && !isRejectedRetry) {
+    throw new ApiClientError('A project report has already been submitted for this cohort.', 409);
+  }
+
+  if (!isChangesRequestedRetry && highestAttempt >= maxAttempts) {
+    throw new ApiClientError(`Your LP submission attempt limit for this cohort is ${maxAttempts}.`, 409);
+  }
+
+  const now = new Date();
+  const attemptNumber = highestAttempt + 1;
+  const deadline = typeof project.deadline === 'string' && project.deadline.trim() ? new Date(`${project.deadline.slice(0, 10)}T23:59:59.999`) : null;
+  const isLate = deadline ? now.getTime() > deadline.getTime() : false;
+  const stamp = compactTimestamp(now);
+  const requestId = `PSR-${Date.now()}`;
+  const requestNumber = `LPR-${stamp}-${String(Date.now()).slice(-4)}`;
+
+  const row = {
+    attempt_number: attemptNumber,
+    cohort_key: cohortKey,
+    cohort_name: cohortName,
+    is_late: isLate,
+    program_key: cohortProgramKey,
+    project_id: projectExternalId,
+    project_title: String(project.title ?? projectExternalId),
+    remarks: remarks || null,
+    request_id: requestId,
+    request_number: requestNumber,
+    role_id: String(project.roleId ?? project.role_id ?? ''),
+    role_name: String(project.projectRole ?? project.project_role ?? project.roleName ?? project.role_name ?? ''),
+    status: 'submitted',
+    student_email: context.email,
+    student_feedback: studentFeedback,
+    student_id: studentId,
+    student_name: studentName,
+    declaration_confirmations: declarationConfirmations,
+    submission_link: submissionLink,
+    submitted_at: now.toISOString()
+  };
+
+  const { data, error } = await context.supabase.from('project_submission_requests').insert(row).select('*').single();
+  if (error) throw mutationError(error, 'project_submission_requests');
+
+  return {
+    isLate,
+    message: isLate ? 'Project report submitted as a late submission.' : 'Project report submitted for admin review.',
+    submission: camelize(data)
+  };
+}
+
 async function updateById(context: Awaited<ReturnType<typeof createContext>>, table: string, id: string, body: unknown, auditAction?: string) {
   const endpoint = getWriteEndpoint(table);
   const metadata = getWriteMetadata(endpoint.table, body);
@@ -1036,7 +1443,7 @@ function applyCommonFilters<TQuery extends SupabaseQuery>(request: TQuery, query
     const normalizedValue = normalizeValue ? normalizeValue(value) : value;
     if (normalizedValue === undefined) return;
 
-    if (endpoint.table === 'resources' && key === 'programKey') {
+    if ((endpoint.table === 'resources' || endpoint.table === 'projects') && key === 'programKey') {
       request = request.contains('program_keys', [String(normalizedValue)]) as TQuery;
       return;
     }
@@ -1164,7 +1571,11 @@ function enrichRow(row: unknown) {
 }
 
 function normalizeProjectList(value: unknown, kind: 'deliverable' | 'document' | 'task') {
-  if (Array.isArray(value)) return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizeProjectListItem(item, kind))
+      .filter(Boolean);
+  }
   if (value === null || value === undefined || value === '') return [];
 
   if (typeof value === 'string') {
@@ -1174,7 +1585,19 @@ function normalizeProjectList(value: unknown, kind: 'deliverable' | 'document' |
       .filter(Boolean)
       .map((entry) => {
         const [title, detail, extra] = entry.split('|').map((part) => part.trim());
-        if (kind === 'document') return { title, type: detail || undefined, link: extra || undefined };
+        if (kind === 'document') {
+          const twoPartLink = detail && !extra && isHttpUrl(detail);
+          const inlineTitleLink = extractHttpUrl(title);
+          const inlineDetailLink = extractHttpUrl(detail);
+          const link = twoPartLink ? detail : extra || inlineTitleLink || inlineDetailLink || undefined;
+          const cleanTitle = inlineTitleLink ? title.replace(inlineTitleLink, '').replace(/[:\-–—|]+$/g, '').trim() : title;
+          const cleanDetail = inlineDetailLink ? detail.replace(inlineDetailLink, '').replace(/[:\-–—|]+$/g, '').trim() : detail;
+          return {
+            title: cleanTitle || title,
+            type: twoPartLink ? undefined : cleanDetail || undefined,
+            link
+          };
+        }
         if (kind === 'deliverable') return { title, format: detail || undefined, note: extra || undefined };
         return { title, description: detail || undefined };
       });
@@ -1188,6 +1611,45 @@ function normalizeProjectList(value: unknown, kind: 'deliverable' | 'document' |
   }
 
   return [];
+}
+
+function normalizeProjectListItem(item: unknown, kind: 'deliverable' | 'document' | 'task') {
+  if (!isRecord(item)) return item;
+  if (kind === 'document') {
+    const rawLink = item.link ?? item.url ?? item.resource_url ?? item.resourceUrl ?? item.file_url ?? item.fileUrl;
+    const rawTitle = item.title ?? item.name ?? item.label ?? (typeof rawLink === 'string' ? rawLink : 'Document');
+    const rawDescription = item.description ?? item.note;
+    const titleLink = typeof rawTitle === 'string' ? extractHttpUrl(rawTitle) : undefined;
+    const descriptionLink = typeof rawDescription === 'string' ? extractHttpUrl(rawDescription) : undefined;
+    const link = typeof rawLink === 'string' && isHttpUrl(rawLink) ? rawLink : titleLink || descriptionLink;
+    const title =
+      typeof rawTitle === 'string' && titleLink
+        ? rawTitle.replace(titleLink, '').replace(/[:\-–—|]+$/g, '').trim() || 'Document'
+        : rawTitle;
+
+    return {
+      ...item,
+      title,
+      type: item.type ?? item.file_type ?? item.fileType,
+      link,
+      description: rawDescription
+    };
+  }
+
+  if (kind === 'deliverable') {
+    return {
+      ...item,
+      title: item.title ?? item.name ?? 'Deliverable',
+      format: item.format ?? item.type,
+      note: item.note ?? item.description
+    };
+  }
+
+  return {
+    ...item,
+    title: item.title ?? item.name ?? 'Task',
+    description: item.description ?? item.note
+  };
 }
 
 function computeActiveNow(row: Record<string, unknown>) {
@@ -1442,6 +1904,49 @@ function normalizeProgramWriteBody(payload: Record<string, unknown>) {
   };
 }
 
+function normalizeProjectRoleWriteBody(payload: Record<string, unknown>) {
+  return {
+    ...payload,
+    program_key: typeof payload.program_key === 'string' ? payload.program_key.trim().toLowerCase() : payload.program_key,
+    role_category: typeof payload.role_category === 'string' ? payload.role_category.trim() : typeof payload.category === 'string' ? payload.category.trim() : payload.role_category,
+    role_id: typeof payload.role_id === 'string' ? payload.role_id.trim().toLowerCase().replace(/[\s-]+/g, '_') : payload.role_id,
+    role_name: typeof payload.role_name === 'string' ? payload.role_name.trim() : typeof payload.name === 'string' ? payload.name.trim() : payload.role_name,
+    status: typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    category: undefined,
+    name: undefined
+  };
+}
+
+function normalizeProjectWriteBody(payload: Record<string, unknown>) {
+  const programKeys =
+    payload.program_keys === undefined
+      ? undefined
+      : uniqueStrings(asStringArray(payload.program_keys).map((key) => key.trim().toLowerCase()).filter(Boolean));
+  const primaryProgramKey = programKeys?.[0] ?? (typeof payload.program_key === 'string' ? payload.program_key.trim().toLowerCase() : payload.program_key);
+  const submissionLink = payload.submission_link === '' ? null : payload.submission_link;
+  const deadline = payload.deadline === '' ? null : payload.deadline;
+
+  return {
+    ...payload,
+    action_items: typeof payload.action_items === 'string' ? payload.action_items.trim() : payload.action_items,
+    brief: typeof payload.brief === 'string' ? payload.brief.trim() : payload.brief,
+    company_name: typeof payload.company_name === 'string' ? payload.company_name.trim() : payload.company_name,
+    deadline,
+    deliverables: typeof payload.deliverables === 'string' ? payload.deliverables.trim() : payload.deliverables,
+    objectives: typeof payload.objectives === 'string' ? payload.objectives.trim() : payload.objectives,
+    program_key: primaryProgramKey,
+    program_keys: programKeys,
+    program_name: typeof payload.program_name === 'string' ? payload.program_name.trim() : payload.program_name,
+    project_id: typeof payload.project_id === 'string' ? payload.project_id.trim() : payload.project_id,
+    project_role: typeof payload.project_role === 'string' ? payload.project_role.trim() : payload.project_role,
+    resources: typeof payload.resources === 'string' ? payload.resources.trim() : payload.resources,
+    role_id: typeof payload.role_id === 'string' ? payload.role_id.trim() : payload.role_id,
+    status: typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    submission_link: submissionLink,
+    title: typeof payload.title === 'string' ? payload.title.trim() : payload.title
+  };
+}
+
 function validateCohortWriteBody(payload: Record<string, unknown>, inserting: boolean) {
   const name = typeof payload.name === 'string' ? payload.name.trim() : '';
   const status = typeof payload.status === 'string' ? payload.status : undefined;
@@ -1474,6 +1979,38 @@ function validateProgramWriteBody(payload: Record<string, unknown>, inserting: b
   if (status && !['active', 'inactive'].includes(status)) {
     throw new ApiClientError('Program status is invalid.', 400);
   }
+}
+
+function validateProjectRoleWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const roleId = typeof payload.role_id === 'string' ? payload.role_id.trim() : '';
+  const roleName = typeof payload.role_name === 'string' ? payload.role_name.trim() : '';
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  const programKey = typeof payload.program_key === 'string' ? payload.program_key.trim() : '';
+
+  if (inserting && !roleId) throw new ApiClientError('Role ID is required.', 400);
+  if (inserting && !roleName) throw new ApiClientError('Role name is required.', 400);
+  if (roleId && !/^[a-z0-9_]+$/.test(roleId)) throw new ApiClientError('Role ID can use lowercase letters, numbers, and underscores only.', 400);
+  if (status && !['active', 'inactive'].includes(status)) throw new ApiClientError('Role status is invalid.', 400);
+  if (programKey && !/^[a-z0-9_]+$/.test(programKey)) throw new ApiClientError('Program key is invalid.', 400);
+}
+
+function validateProjectWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+  const projectId = typeof payload.project_id === 'string' ? payload.project_id.trim() : '';
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  const programKeys = payload.program_keys;
+  const programKey = typeof payload.program_key === 'string' ? payload.program_key.trim() : '';
+  const submissionLink = typeof payload.submission_link === 'string' ? payload.submission_link.trim() : '';
+  const deadline = typeof payload.deadline === 'string' ? payload.deadline.trim() : '';
+  const requiresProgramMapping = inserting || 'program_keys' in payload || 'program_key' in payload || 'title' in payload || 'role_id' in payload;
+
+  if (inserting && !projectId) throw new ApiClientError('Project ID is required.', 400);
+  if (inserting && !title) throw new ApiClientError('Project title is required.', 400);
+  if (status && !['active', 'inactive'].includes(status)) throw new ApiClientError('Project status is invalid.', 400);
+  if (programKeys !== undefined && !Array.isArray(programKeys)) throw new ApiClientError('Project programs must be a list.', 400);
+  if (requiresProgramMapping && (!Array.isArray(programKeys) || programKeys.length === 0 || !programKey)) throw new ApiClientError('Select at least one program.', 400);
+  if (submissionLink && !isHttpUrl(submissionLink)) throw new ApiClientError('Submission link must start with http:// or https://.', 400);
+  if (deadline && Number.isNaN(new Date(`${deadline}T00:00:00.000Z`).getTime())) throw new ApiClientError('Project deadline is invalid.', 400);
 }
 
 function validateWorkshopWriteBody(payload: Record<string, unknown>, inserting: boolean) {
@@ -1564,8 +2101,21 @@ async function writeAuditLog(
   row: Record<string, unknown>,
   payload: Record<string, unknown>
 ) {
-  if (table !== 'cohorts' && table !== 'students' && table !== 'workshops' && table !== 'resources' && table !== 'programs') return;
-  const entityType = table === 'cohorts' ? 'cohort' : table === 'workshops' ? 'workshop' : table === 'resources' ? 'resource' : table === 'programs' ? 'program' : 'student';
+  if (table !== 'cohorts' && table !== 'students' && table !== 'workshops' && table !== 'resources' && table !== 'programs' && table !== 'projects' && table !== 'role_master') return;
+  const entityType =
+    table === 'cohorts'
+      ? 'cohort'
+      : table === 'workshops'
+        ? 'workshop'
+        : table === 'resources'
+          ? 'resource'
+          : table === 'programs'
+            ? 'program'
+            : table === 'projects'
+              ? 'project'
+              : table === 'role_master'
+                ? 'project_role'
+                : 'student';
 
   const auditRow = {
     action: `admin_${entityType}_${action}`,
@@ -1578,7 +2128,12 @@ async function writeAuditLog(
   };
 
   const { error } = await context.supabase.from('audit_logs').insert(auditRow);
-  if (error) throw new ApiClientError(`${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : 'Student'} was saved, but audit logging failed: ${error.message}`, 503);
+  if (error) {
+    throw new ApiClientError(
+      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_role' ? 'Project role' : 'Student'} was saved, but audit logging failed: ${error.message}`,
+      503
+    );
+  }
 }
 
 function buildAuditDetails(table: string, row: Record<string, unknown>, payload: Record<string, unknown>) {
@@ -1615,6 +2170,34 @@ function buildAuditDetails(table: string, row: Record<string, unknown>, payload:
     };
   }
 
+  if (table === 'programs') {
+    return {
+      ...base,
+      name: row.name,
+      programKey: row.program_key,
+      status: row.status
+    };
+  }
+
+  if (table === 'projects') {
+    return {
+      ...base,
+      projectId: row.project_id,
+      status: row.status,
+      title: row.title
+    };
+  }
+
+  if (table === 'role_master') {
+    return {
+      ...base,
+      programKey: row.program_key,
+      roleId: row.role_id,
+      roleName: row.role_name,
+      status: row.status
+    };
+  }
+
   return {
     ...base,
     active: row.active,
@@ -1629,6 +2212,9 @@ function mutationError(error: { code?: string; message: string }, table: string)
     if (table === 'cohorts') return new ApiClientError('A cohort with this name or cohort ID already exists.', 409);
     if (table === 'students') return new ApiClientError('A student with this email already exists.', 409);
     if (table === 'resources') return new ApiClientError('A resource with this Resource ID already exists.', 409);
+    if (table === 'projects') return new ApiClientError('A project with this Project ID already exists.', 409);
+    if (table === 'role_master') return new ApiClientError('A project role with this Role ID already exists.', 409);
+    if (table === 'project_submission_requests') return new ApiClientError('A project report attempt already exists for this cohort.', 409);
     return new ApiClientError('A record with this unique value already exists.', 409);
   }
 
@@ -1666,6 +2252,50 @@ function isValidEmail(value: string) {
 
 function isHttpUrl(value: string) {
   return /^https?:\/\//i.test(value);
+}
+
+function extractHttpUrl(value: string | undefined) {
+  if (!value) return undefined;
+  return value.match(/https?:\/\/[^\s,;]+/i)?.[0];
+}
+
+function slugifyKey(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function compactTimestamp(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isIsoDate(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T00:00:00.000Z`).getTime());
+}
+
+function addDays(dateValue: string, days: number) {
+  const date = new Date(`${dateValue}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function liveProjectCertificateKey(studentEmail: unknown, projectId: unknown, cohortName: unknown) {
+  return [normalizeEmail(studentEmail), String(projectId ?? '').trim().toLowerCase(), String(cohortName ?? '').trim().toLowerCase()].join('|');
+}
+
+function randomHex(length: number) {
+  const bytes = new Uint8Array(Math.ceil(length / 2));
+  globalThis.crypto?.getRandomValues(bytes);
+  const fallback = () => Math.floor(Math.random() * 256);
+  const values = Array.from(bytes, (value) => value || fallback());
+  return values.map((value) => value.toString(16).padStart(2, '0')).join('').slice(0, length);
 }
 
 function toCamelCase(value: string) {

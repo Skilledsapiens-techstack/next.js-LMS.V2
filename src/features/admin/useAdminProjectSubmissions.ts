@@ -3,7 +3,7 @@ import { useAuth } from '../../auth/AuthProvider';
 import { apiGet, apiPatch } from '../../lib/supabaseApi';
 import { PaginatedResponse } from '../student/useStudentAnnouncements';
 
-export type AdminProjectSubmissionStatus = 'submitted' | 'under_review' | 'approved' | 'rejected';
+export type AdminProjectSubmissionStatus = 'submitted' | 'under_review' | 'approved' | 'rejected' | 'changes_requested';
 export type AdminProjectSubmissionStatusFilter = AdminProjectSubmissionStatus | 'pending' | 'duplicates' | 'all';
 
 export type AdminProjectSubmission = {
@@ -42,7 +42,7 @@ export type AdminProjectSubmissionsQuery = {
   submittedDate?: string;
 };
 
-export type AdminProjectSubmissionReviewAction = 'approve' | 'reject';
+export type AdminProjectSubmissionReviewAction = 'approve' | 'reject' | 'changes-requested';
 
 export type AdminProjectSubmissionReviewInput = {
   action: AdminProjectSubmissionReviewAction;
@@ -96,7 +96,7 @@ export function useReviewAdminProjectSubmission() {
     mutationFn: ({ action, requestId, reviewNote }: AdminProjectSubmissionReviewInput) =>
       apiPatch<AdminProjectSubmissionReviewResult, { reviewNote?: string }>(`/admins/project-submissions/${requestId}/${action}`, {
         accessToken: accessToken ?? undefined,
-        body: action === 'reject' ? { reviewNote } : undefined
+        body: action === 'reject' || action === 'changes-requested' ? { reviewNote } : undefined
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-project-submissions'] });
