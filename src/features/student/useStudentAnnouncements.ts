@@ -34,6 +34,7 @@ export type PaginatedResponse<TItem> = {
 };
 
 export type StudentAnnouncementsQuery = {
+  enabled?: boolean;
   limit?: number;
   page?: number;
   priority?: StudentAnnouncementPriority | 'all';
@@ -48,7 +49,7 @@ export function useStudentAnnouncements(query: StudentAnnouncementsQuery) {
   const search = query.search?.trim();
 
   return useQuery({
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && query.enabled !== false,
     queryFn: () =>
       apiGet<PaginatedResponse<StudentAnnouncement>>('/students/me/announcements', {
         accessToken: accessToken ?? undefined,

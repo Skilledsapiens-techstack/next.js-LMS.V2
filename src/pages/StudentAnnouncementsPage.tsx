@@ -1,6 +1,7 @@
 import { ExternalLink, Pin } from 'lucide-react';
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { AnnouncementRichText } from '../components/AnnouncementRichText';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
@@ -132,7 +133,7 @@ function AnnouncementCard({ announcement }: { announcement: StudentAnnouncement 
           {announcement.type ? <span>{announcement.type}</span> : null}
         </div>
         <h2>{announcement.title}</h2>
-        <p>{announcement.message}</p>
+        <AnnouncementRichText text={announcement.message} />
         <div className="announcement-card__footer">
           <span>{dateWindow}</span>
           {audience ? <span>{audience}</span> : null}

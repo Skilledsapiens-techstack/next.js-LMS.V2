@@ -178,6 +178,26 @@ const PROJECT_WRITE_COLUMNS = new Set([
   'title'
 ]);
 
+const ANNOUNCEMENT_WRITE_COLUMNS = new Set([
+  'announcement_id',
+  'audience',
+  'cohort_names',
+  'created_by',
+  'custom_emoji',
+  'end_date',
+  'link_label',
+  'link_url',
+  'message',
+  'pinned',
+  'priority',
+  'program_keys',
+  'start_date',
+  'status',
+  'title',
+  'type',
+  'updated_by'
+]);
+
 const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/announcements': { table: 'announcements', searchColumns: ['title', 'message', 'audience'] },
   '/admins/audit-logs': {
@@ -287,6 +307,12 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     normalizeBody: normalizeProjectRoleWriteBody,
     table: 'role_master',
     validateBody: validateProjectRoleWriteBody
+  },
+  announcements: {
+    columns: ANNOUNCEMENT_WRITE_COLUMNS,
+    normalizeBody: normalizeAnnouncementWriteBody,
+    table: 'announcements',
+    validateBody: validateAnnouncementWriteBody
   }
 };
 
@@ -300,6 +326,7 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/admins/dashboard') return getAdminDashboard(context) as Promise<TResponse>;
   if (cleanPath === '/admins/student-audit-logs') return getStudentAuditLogs(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/certificate-requests') return getLiveProjectCertificateRequests(context, options.query) as Promise<TResponse>;
+  if (cleanPath === '/admins/announcements/recipient-count') return getAnnouncementRecipientCount(context, options.query) as Promise<TResponse>;
 
   const studentAttempts = cleanPath.match(/^\/admins\/students\/([^/]+)\/lp-attempts$/);
   if (studentAttempts) return getStudentAttemptLimit(context, decodeURIComponent(studentAttempts[1])) as Promise<TResponse>;
@@ -386,6 +413,33 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
   const resourceUpdate = cleanPath.match(/^\/admins\/resources\/([^/]+)$/);
   if (resourceUpdate) return updateById(context, 'resources', decodeURIComponent(resourceUpdate[1]), options.body, 'updated') as Promise<TResponse>;
 
+  const announcementArchive = cleanPath.match(/^\/admins\/announcements\/([^/]+)\/archive$/);
+  if (announcementArchive) {
+    return updateById(context, 'announcements', decodeURIComponent(announcementArchive[1]), { status: 'inactive', updatedBy: context.email }, 'archived') as Promise<TResponse>;
+  }
+
+  const announcementStatus = cleanPath.match(/^\/admins\/announcements\/([^/]+)\/status$/);
+  if (announcementStatus) {
+    return updateById(
+      context,
+      'announcements',
+      decodeURIComponent(announcementStatus[1]),
+      { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email },
+      'status_changed'
+    ) as Promise<TResponse>;
+  }
+
+  const announcementUpdate = cleanPath.match(/^\/admins\/announcements\/([^/]+)$/);
+  if (announcementUpdate) {
+    return updateById(
+      context,
+      'announcements',
+      decodeURIComponent(announcementUpdate[1]),
+      { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email },
+      'updated'
+    ) as Promise<TResponse>;
+  }
+
   const programStatus = cleanPath.match(/^\/admins\/programs\/([^/]+)\/status$/);
   if (programStatus) return updateById(context, 'programs', decodeURIComponent(programStatus[1]), options.body, 'status_changed') as Promise<TResponse>;
 
@@ -422,6 +476,19 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/cohorts') return insertRow(context, 'cohorts', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/workshops') return insertRow(context, 'workshops', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/resources') return insertRow(context, 'resources', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/announcements') {
+    return insertRow(
+      context,
+      'announcements',
+      {
+        ...(isRecord(options.body) ? options.body : {}),
+        announcementId: `ANN-${Date.now()}`,
+        createdBy: context.email,
+        updatedBy: context.email
+      },
+      'created'
+    ) as Promise<TResponse>;
+  }
   if (cleanPath === '/admins/programs') return insertRow(context, 'programs', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/project-roles') return insertRow(context, 'role_master', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/projects') return insertRow(context, 'projects', options.body, 'created') as Promise<TResponse>;
@@ -653,6 +720,40 @@ async function getAdminStudentsList(context: Awaited<ReturnType<typeof createCon
 
   const enriched = await enrichAdminStudents(context, data ?? []);
   return createPaginatedResponse(enriched, count ?? 0, page, limit);
+}
+
+async function getAnnouncementRecipientCount(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  await getAdminProfile(context);
+  const audience = String(query?.audience ?? 'all').trim();
+  const cohortNames = splitCommaValues(query?.cohortNames);
+  const programKeys = splitCommaValues(query?.programKeys);
+
+  if (audience === 'all') {
+    const { count, error } = await context.supabase.from('students').select('id', { count: 'exact', head: true }).eq('active', true);
+    if (error) throw new ApiClientError(error.message, 503);
+    return { total: count ?? 0 };
+  }
+
+  const studentIdSets: string[][] = [];
+
+  if (audience === 'cohort' && cohortNames.length > 0) {
+    const { data, error } = await context.supabase.from('student_cohorts').select('student_id').in('cohort_name', cohortNames).limit(10000);
+    if (error) throw new ApiClientError(error.message, 503);
+    studentIdSets.push((data ?? []).map((row) => String(row.student_id ?? '')).filter(Boolean));
+  }
+
+  if (audience === 'program' && programKeys.length > 0) {
+    const { data, error } = await context.supabase.from('student_programs').select('student_id').in('program_key', programKeys).limit(10000);
+    if (error) throw new ApiClientError(error.message, 503);
+    studentIdSets.push((data ?? []).map((row) => String(row.student_id ?? '')).filter(Boolean));
+  }
+
+  const studentIds = uniqueStrings(studentIdSets.flat());
+  if (studentIds.length === 0) return { total: 0 };
+
+  const { count, error } = await context.supabase.from('students').select('id', { count: 'exact', head: true }).eq('active', true).in('id', studentIds);
+  if (error) throw new ApiClientError(error.message, 503);
+  return { total: count ?? 0 };
 }
 
 async function getStudentAuditLogs(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
@@ -2138,6 +2239,49 @@ function normalizeProjectWriteBody(payload: Record<string, unknown>) {
   };
 }
 
+function normalizeAnnouncementWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  const normalizeOptionalText = (key: string) => {
+    if (!has(key)) return undefined;
+    const value = payload[key];
+    if (value === null) return null;
+    const text = String(value ?? '').trim();
+    return text || null;
+  };
+  const normalizeOptionalDate = (key: string) => {
+    if (!has(key)) return undefined;
+    const value = payload[key];
+    if (value === null) return null;
+    const text = String(value ?? '').trim();
+    return text || null;
+  };
+  const audience = has('audience') && typeof payload.audience === 'string' ? payload.audience.trim().toLowerCase() : payload.audience;
+  const type = has('type') && typeof payload.type === 'string' ? payload.type.trim().toLowerCase() : payload.type;
+  const customEmoji = normalizeOptionalText('custom_emoji');
+  const cohortNames = has('cohort_names') ? uniqueStrings(asStringArray(payload.cohort_names)) : undefined;
+  const programKeys = has('program_keys') ? uniqueStrings(asStringArray(payload.program_keys).map((key) => key.trim().toLowerCase()).filter(Boolean)) : undefined;
+
+  return {
+    ...payload,
+    announcement_id: has('announcement_id') ? String(payload.announcement_id ?? '').trim() : payload.announcement_id,
+    audience,
+    cohort_names: cohortNames,
+    custom_emoji: customEmoji === undefined ? undefined : customEmoji,
+    end_date: normalizeOptionalDate('end_date'),
+    link_label: normalizeOptionalText('link_label'),
+    link_url: normalizeOptionalText('link_url'),
+    message: has('message') && typeof payload.message === 'string' ? payload.message.trim() : payload.message,
+    pinned: has('pinned') ? payload.pinned === true : payload.pinned,
+    priority: has('priority') && typeof payload.priority === 'string' ? payload.priority.trim().toLowerCase() : payload.priority,
+    program_keys: programKeys,
+    start_date: normalizeOptionalDate('start_date'),
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    title: has('title') && typeof payload.title === 'string' ? payload.title.trim() : payload.title,
+    type,
+    updated_by: normalizeOptionalText('updated_by')
+  };
+}
+
 function validateCohortWriteBody(payload: Record<string, unknown>, inserting: boolean) {
   const name = typeof payload.name === 'string' ? payload.name.trim() : '';
   const status = typeof payload.status === 'string' ? payload.status : undefined;
@@ -2202,6 +2346,39 @@ function validateProjectWriteBody(payload: Record<string, unknown>, inserting: b
   if (requiresProgramMapping && (!Array.isArray(programKeys) || programKeys.length === 0 || !programKey)) throw new ApiClientError('Select at least one program.', 400);
   if (submissionLink && !isHttpUrl(submissionLink)) throw new ApiClientError('Submission link must start with http:// or https://.', 400);
   if (deadline && Number.isNaN(new Date(`${deadline}T00:00:00.000Z`).getTime())) throw new ApiClientError('Project deadline is invalid.', 400);
+}
+
+function validateAnnouncementWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+  const message = typeof payload.message === 'string' ? payload.message.trim() : '';
+  const audience = typeof payload.audience === 'string' ? payload.audience : undefined;
+  const priority = typeof payload.priority === 'string' ? payload.priority : undefined;
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  const type = typeof payload.type === 'string' ? payload.type : undefined;
+  const cohortNames = payload.cohort_names;
+  const programKeys = payload.program_keys;
+  const startDate = typeof payload.start_date === 'string' ? payload.start_date.trim() : '';
+  const endDate = typeof payload.end_date === 'string' ? payload.end_date.trim() : '';
+  const linkUrl = typeof payload.link_url === 'string' ? payload.link_url.trim() : '';
+
+  if (inserting && !title) throw new ApiClientError('Announcement title is required.', 400);
+  if (inserting && !message) throw new ApiClientError('Announcement message is required.', 400);
+  if ('title' in payload && !title) throw new ApiClientError('Announcement title is required.', 400);
+  if ('message' in payload && !message) throw new ApiClientError('Announcement message is required.', 400);
+  if (title.length > 160) throw new ApiClientError('Announcement title must be 160 characters or fewer.', 400);
+  if (message.length > 2500) throw new ApiClientError('Announcement message must be 2500 characters or fewer.', 400);
+  if (audience && !['all', 'cohort', 'program'].includes(audience)) throw new ApiClientError('Announcement audience is invalid.', 400);
+  if (priority && !['normal', 'important', 'urgent'].includes(priority)) throw new ApiClientError('Announcement priority is invalid.', 400);
+  if (status && !['active', 'inactive'].includes(status)) throw new ApiClientError('Announcement status is invalid.', 400);
+  if (type && !['general', 'alert', 'session', 'resource', 'project', 'custom'].includes(type)) throw new ApiClientError('Announcement type is invalid.', 400);
+  if (cohortNames !== undefined && !Array.isArray(cohortNames)) throw new ApiClientError('Announcement cohorts must be a list.', 400);
+  if (programKeys !== undefined && !Array.isArray(programKeys)) throw new ApiClientError('Announcement programs must be a list.', 400);
+  if (audience === 'cohort' && Array.isArray(cohortNames) && cohortNames.length === 0) throw new ApiClientError('Select at least one cohort.', 400);
+  if (audience === 'program' && Array.isArray(programKeys) && programKeys.length === 0) throw new ApiClientError('Select at least one program.', 400);
+  if (startDate && Number.isNaN(new Date(`${startDate}T00:00:00.000Z`).getTime())) throw new ApiClientError('Announcement start date is invalid.', 400);
+  if (endDate && Number.isNaN(new Date(`${endDate}T00:00:00.000Z`).getTime())) throw new ApiClientError('Announcement end date is invalid.', 400);
+  if (startDate && endDate && startDate > endDate) throw new ApiClientError('Announcement end date cannot be before the start date.', 400);
+  if (linkUrl && !isHttpUrl(linkUrl)) throw new ApiClientError('Announcement link must start with http:// or https://.', 400);
 }
 
 function validateWorkshopWriteBody(payload: Record<string, unknown>, inserting: boolean) {
@@ -2292,7 +2469,17 @@ async function writeAuditLog(
   row: Record<string, unknown>,
   payload: Record<string, unknown>
 ) {
-  if (table !== 'cohorts' && table !== 'students' && table !== 'workshops' && table !== 'resources' && table !== 'programs' && table !== 'projects' && table !== 'role_master' && table !== 'certificates') return;
+  if (
+    table !== 'announcements' &&
+    table !== 'cohorts' &&
+    table !== 'students' &&
+    table !== 'workshops' &&
+    table !== 'resources' &&
+    table !== 'programs' &&
+    table !== 'projects' &&
+    table !== 'role_master' &&
+    table !== 'certificates'
+  ) return;
   const entityType =
     table === 'cohorts'
       ? 'cohort'
@@ -2417,6 +2604,13 @@ function mutationError(error: { code?: string; message: string }, table: string)
 function asStringArray(value: unknown) {
   if (!Array.isArray(value)) return [];
   return value.map((entry) => String(entry).trim()).filter(Boolean);
+}
+
+function splitCommaValues(value: unknown) {
+  return String(value ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 function uniqueStrings(values: unknown[]) {

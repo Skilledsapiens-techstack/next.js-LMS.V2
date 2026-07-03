@@ -1,8 +1,22 @@
 import { Bell, Briefcase, CalendarDays, Folder, List, Pin, TriangleAlert } from 'lucide-react';
-import { ChangeEvent, FormEvent, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, useMemo, useRef, useState } from 'react';
+import { AnnouncementRichText } from '../components/AnnouncementRichText';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
-import { AdminAnnouncement, AdminAnnouncementPriority, AdminAnnouncementStatus, useAdminAnnouncements } from '../features/admin/useAdminAnnouncements';
-import { useAdminCohorts } from '../features/admin/useAdminCohorts';
+import {
+  AdminAnnouncement,
+  AdminAnnouncementPriority,
+  AdminAnnouncementStatus,
+  AdminAnnouncementWritePayload,
+  useAdminAnnouncementRecipientCount,
+  useAdminAnnouncements,
+  useArchiveAdminAnnouncement,
+  useBulkArchiveAdminAnnouncements,
+  useCreateAdminAnnouncement,
+  useUpdateAdminAnnouncement,
+  useUpdateAdminAnnouncementStatus
+} from '../features/admin/useAdminAnnouncements';
+import { AdminCohort, useAdminCohorts } from '../features/admin/useAdminCohorts';
+import { useAdminPrograms } from '../features/admin/useAdminPrograms';
 
 type NotificationType = 'general' | 'alert' | 'session' | 'resource' | 'project' | 'custom';
 type AudienceMode = 'all' | 'cohort' | 'program';
@@ -12,6 +26,8 @@ type AnnouncementFormState = {
   audienceMode: AudienceMode;
   customEmoji: string;
   endDate: string;
+  linkLabel: string;
+  linkUrl: string;
   message: string;
   pinned: boolean;
   priority: AdminAnnouncementPriority;
@@ -22,12 +38,6 @@ type AnnouncementFormState = {
   status: AdminAnnouncementStatus;
   title: string;
   type: NotificationType;
-};
-
-type ProgramTemplate = {
-  name: string;
-  programKey: string;
-  shortName: string;
 };
 
 const notificationTypes: Array<{
@@ -44,26 +54,12 @@ const notificationTypes: Array<{
   { description: 'Your own emoji', icon: List, label: 'Custom', type: 'custom' }
 ];
 
-const programTemplates: ProgramTemplate[] = [
-  { name: 'Management Consulting Leadership Program', programKey: 'mclp', shortName: 'MCLP' },
-  { name: 'Sales & Marketing Leadership Program', programKey: 'smlp', shortName: 'SMLP' },
-  { name: 'HR Leadership Program', programKey: 'hrlp', shortName: 'HRLP' },
-  { name: 'Finance Leadership Program - ER', programKey: 'flp_er', shortName: 'FLP ER' },
-  { name: 'Finance Leadership Program - QF', programKey: 'flp_qf', shortName: 'FLP QF' },
-  { name: 'Product Management Leadership Program', programKey: 'pmlp', shortName: 'PMLP' },
-  { name: 'Live Projects - Management Tracks', programKey: 'live_mgmt', shortName: 'Mgmt Projects' },
-  { name: 'Live Projects - HR Track', programKey: 'live_hr', shortName: 'HR Projects' },
-  { name: 'Live Projects - ER Track', programKey: 'live_er', shortName: 'ER Projects' },
-  { name: 'Live Projects - QF Track', programKey: 'live_qf', shortName: 'QF Projects' },
-  { name: 'Live Projects - PEVC Track', programKey: 'live_pevc', shortName: 'PEVC Projects' },
-  { name: 'Placement Mentorship Program', programKey: 'placement', shortName: 'Placement' },
-  { name: 'GD-PI Mentorship Program', programKey: 'gd_pi', shortName: 'GD-PI' }
-];
-
 const initialFormState: AnnouncementFormState = {
   audienceMode: 'all',
   customEmoji: '',
   endDate: '',
+  linkLabel: '',
+  linkUrl: '',
   message: '',
   pinned: true,
   priority: 'normal',
@@ -175,17 +171,54 @@ function getStatusToken(item: AdminAnnouncement) {
   return `${visibility} · ${item.status}`;
 }
 
+function uniqueCohorts(cohorts: AdminCohort[]) {
+  const seen = new Set<string>();
+  return cohorts.filter((cohort) => {
+    const key = cohort.id || cohort.name;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function isHttpUrl(value: string) {
+  return /^https?:\/\//i.test(value);
+}
+
 export function AdminAnnouncementsPage() {
   const [page] = useState(1);
   const [formState, setFormState] = useState<AnnouncementFormState>(initialFormState);
   const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(null);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
+  const [formMessage, setFormMessage] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
+  const [previewNotice, setPreviewNotice] = useState('');
+  const [selectedAnnouncementIds, setSelectedAnnouncementIds] = useState<string[]>([]);
+  const [statusActionId, setStatusActionId] = useState<string | null>(null);
+  const messageRef = useRef<HTMLTextAreaElement | null>(null);
   const announcementsQuery = useAdminAnnouncements({ limit: 50, page });
-  const cohortsQuery = useAdminCohorts({ limit: 100, page: 1, sort: 'name', status: 'all' });
+  const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, sort: 'name', status: 'all' });
+  const cohortsPageTwoQuery = useAdminCohorts({ enabled: cohortsPageOneQuery.data?.hasNextPage === true, limit: 100, page: 2, sort: 'name', status: 'all' });
+  const cohortsPageThreeQuery = useAdminCohorts({ enabled: cohortsPageTwoQuery.data?.hasNextPage === true, limit: 100, page: 3, sort: 'name', status: 'all' });
+  const programsQuery = useAdminPrograms({ limit: 500, page: 1, status: 'active' });
+  const createAnnouncement = useCreateAdminAnnouncement();
+  const updateAnnouncement = useUpdateAdminAnnouncement();
+  const updateAnnouncementStatus = useUpdateAdminAnnouncementStatus();
+  const archiveAnnouncement = useArchiveAdminAnnouncement();
+  const bulkArchiveAnnouncements = useBulkArchiveAdminAnnouncements();
   const data = announcementsQuery.data;
   const items = data?.items ?? [];
-  const cohorts = cohortsQuery.data?.items ?? [];
+  const cohorts = useMemo(
+    () =>
+      uniqueCohorts([
+        ...(cohortsPageOneQuery.data?.items ?? []),
+        ...(cohortsPageTwoQuery.data?.items ?? []),
+        ...(cohortsPageThreeQuery.data?.items ?? [])
+      ]).filter((cohort) => cohort.status !== 'inactive'),
+    [cohortsPageOneQuery.data?.items, cohortsPageThreeQuery.data?.items, cohortsPageTwoQuery.data?.items]
+  );
+  const programs = programsQuery.data?.items ?? [];
   const lastRefresh = formatDateTime(data?.items[0]?.updatedAt);
+  const isSaving = createAnnouncement.isPending || updateAnnouncement.isPending;
 
   const previewType = notificationTypes.find((item) => item.type === formState.type) ?? notificationTypes[0];
   const PreviewIcon = getTypeIcon(formState.type);
@@ -205,9 +238,16 @@ export function AdminAnnouncementsPage() {
     }
 
     const selected = new Set(formState.selectedProgramKeys);
-    return programTemplates.filter((program) => selected.has(program.programKey)).map((program) => program.name);
-  }, [formState.audienceMode, formState.selectedProgramKeys]);
+    return programs.filter((program) => selected.has(program.programKey)).map((program) => program.name);
+  }, [formState.audienceMode, formState.selectedProgramKeys, programs]);
   const previewAudience = getAudienceLabel(formState.audienceMode, formState.selectedAudience, selectedCohortNames.length, selectedProgramNames.length);
+  const recipientCountQuery = useAdminAnnouncementRecipientCount({
+    audience: formState.audienceMode,
+    cohortNames: selectedCohortNames,
+    programKeys: formState.selectedProgramKeys
+  });
+  const exactRecipientCount = recipientCountQuery.data?.total ?? 0;
+  const recipientCountLabel = recipientCountQuery.isLoading ? 'Counting recipients...' : `${exactRecipientCount} active recipient${exactRecipientCount === 1 ? '' : 's'}`;
 
   const filteredItems = useMemo(() => {
     if (historyFilter === 'all') {
@@ -222,6 +262,8 @@ export function AdminAnnouncementsPage() {
   }, [historyFilter, items]);
 
   function updateForm<K extends keyof AnnouncementFormState>(key: K, value: AnnouncementFormState[K]) {
+    setFormMessage(null);
+    setPreviewNotice('');
     setFormState((current) => ({ ...current, [key]: value }));
   }
 
@@ -267,7 +309,7 @@ export function AdminAnnouncementsPage() {
   }
 
   function selectAllPrograms() {
-    const selectedProgramKeys = programTemplates.map((program) => program.programKey);
+    const selectedProgramKeys = programs.map((program) => program.programKey);
     setFormState((current) => ({ ...current, selectedProgramKeys, selectedAudience: selectedProgramKeys.join(', ') }));
   }
 
@@ -281,16 +323,20 @@ export function AdminAnnouncementsPage() {
     const cohortNameSet = new Set(item.cohortNames.map((name) => name.toLowerCase()));
     const programKeySet = new Set(item.programKeys);
     setEditingAnnouncementId(item.id);
+    setFormMessage(null);
+    setPreviewNotice('Editing existing announcement.');
     setFormState({
       audienceMode,
-      customEmoji: getAnnouncementType(item) === 'custom' ? item.type ?? '' : '',
+      customEmoji: getAnnouncementType(item) === 'custom' ? item.customEmoji ?? '' : '',
       endDate: toDateInputValue(item.endDate),
+      linkLabel: item.linkLabel ?? '',
+      linkUrl: item.linkUrl ?? '',
       message: item.message,
       pinned: item.pinned,
       priority: item.priority,
       selectedAudience,
       selectedCohortIds: audienceMode === 'cohort' ? cohorts.filter((cohort) => cohortNameSet.has(cohort.name.toLowerCase())).map((cohort) => cohort.id) : [],
-      selectedProgramKeys: audienceMode === 'program' ? programTemplates.filter((program) => programKeySet.has(program.programKey)).map((program) => program.programKey) : [],
+      selectedProgramKeys: audienceMode === 'program' ? Array.from(programKeySet) : [],
       startDate: toDateInputValue(item.startDate),
       status: item.status,
       title: item.title,
@@ -298,8 +344,148 @@ export function AdminAnnouncementsPage() {
     });
   }
 
-  function handleDisabledSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleDuplicate(item: AdminAnnouncement) {
+    handleEdit(item);
+    setEditingAnnouncementId(null);
+    setFormState((current) => ({ ...current, status: 'inactive', title: `${item.title} copy` }));
+    setPreviewNotice('Duplicated as a new inactive draft. Review and send when ready.');
+  }
+
+  function insertMessageSnippet(type: 'bold' | 'bullet' | 'divider') {
+    const textarea = messageRef.current;
+    const current = formState.message;
+    const start = textarea?.selectionStart ?? current.length;
+    const end = textarea?.selectionEnd ?? current.length;
+    const selected = current.slice(start, end);
+    const snippet =
+      type === 'bold'
+        ? `**${selected || 'important text'}**`
+        : type === 'bullet'
+          ? `${selected ? '' : '- '} ${selected || 'Key update'}`.replace('-  ', '- ')
+          : `${selected ? `${selected}\n` : ''}\n---\n`;
+    const nextMessage = `${current.slice(0, start)}${snippet}${current.slice(end)}`;
+    updateForm('message', nextMessage);
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      const cursor = start + snippet.length;
+      textarea?.setSelectionRange(cursor, cursor);
+    });
+  }
+
+  function toggleSelectedAnnouncement(announcementId: string) {
+    setSelectedAnnouncementIds((current) => (current.includes(announcementId) ? current.filter((id) => id !== announcementId) : [...current, announcementId]));
+  }
+
+  function toggleAllFilteredAnnouncements() {
+    const visibleIds = filteredItems.map((item) => item.id);
+    setSelectedAnnouncementIds((current) => {
+      const selectedVisibleCount = visibleIds.filter((id) => current.includes(id)).length;
+      if (selectedVisibleCount === visibleIds.length) {
+        return current.filter((id) => !visibleIds.includes(id));
+      }
+      return Array.from(new Set([...current, ...visibleIds]));
+    });
+  }
+
+  async function handleBulkArchive() {
+    if (selectedAnnouncementIds.length === 0) return;
+    setFormMessage(null);
+    try {
+      const result = await bulkArchiveAnnouncements.mutateAsync(selectedAnnouncementIds);
+      setSelectedAnnouncementIds([]);
+      setFormMessage({ tone: 'success', text: `${result.archived} announcement${result.archived === 1 ? '' : 's'} archived.` });
+    } catch (error) {
+      setFormMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Selected announcements could not be archived.' });
+    }
+  }
+
+  function validateForm() {
+    if (!formState.title.trim()) return 'Announcement title is required.';
+    if (!formState.message.trim()) return 'Announcement message is required.';
+    if (formState.title.trim().length > 160) return 'Keep the title within 160 characters.';
+    if (formState.message.trim().length > 2500) return 'Keep the message within 2500 characters.';
+    if (formState.audienceMode === 'cohort' && selectedCohortNames.length === 0) return 'Select at least one cohort.';
+    if (formState.audienceMode === 'program' && formState.selectedProgramKeys.length === 0) return 'Select at least one program.';
+    if (formState.linkUrl.trim() && !isHttpUrl(formState.linkUrl.trim())) return 'Link URL must start with http:// or https://.';
+    if (formState.startDate && formState.endDate && formState.startDate > formState.endDate) return 'End date cannot be before start date.';
+    return '';
+  }
+
+  function buildPayload(): AdminAnnouncementWritePayload {
+    return {
+      audience: formState.audienceMode,
+      cohortNames: formState.audienceMode === 'cohort' ? selectedCohortNames : [],
+      customEmoji: formState.type === 'custom' ? formState.customEmoji.trim() || null : null,
+      endDate: formState.endDate || null,
+      linkLabel: formState.linkLabel.trim() || null,
+      linkUrl: formState.linkUrl.trim() || null,
+      message: formState.message.trim(),
+      pinned: formState.pinned,
+      priority: formState.priority,
+      programKeys: formState.audienceMode === 'program' ? formState.selectedProgramKeys : [],
+      startDate: formState.startDate || null,
+      status: formState.status,
+      title: formState.title.trim(),
+      type: formState.type
+    };
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const validationError = validateForm();
+    if (validationError) {
+      setFormMessage({ tone: 'error', text: validationError });
+      return;
+    }
+
+    try {
+      const payload = buildPayload();
+      if (editingAnnouncementId) {
+        await updateAnnouncement.mutateAsync({ announcementId: editingAnnouncementId, body: payload });
+        setFormMessage({ tone: 'success', text: 'Announcement updated successfully.' });
+      } else {
+        await createAnnouncement.mutateAsync(payload);
+        setFormMessage({ tone: 'success', text: 'Announcement sent successfully.' });
+      }
+      setEditingAnnouncementId(null);
+      setPreviewNotice('');
+      setFormState(initialFormState);
+    } catch (error) {
+      setFormMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Announcement could not be saved.' });
+    }
+  }
+
+  async function handleStatusChange(item: AdminAnnouncement, status: AdminAnnouncementStatus) {
+    setStatusActionId(item.id);
+    setFormMessage(null);
+    try {
+      await updateAnnouncementStatus.mutateAsync({ announcementId: item.id, status });
+      setFormMessage({ tone: 'success', text: `Announcement marked ${status}.` });
+    } catch (error) {
+      setFormMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Announcement status could not be updated.' });
+    } finally {
+      setStatusActionId(null);
+    }
+  }
+
+  async function handleArchive(item: AdminAnnouncement) {
+    setStatusActionId(item.id);
+    setFormMessage(null);
+    try {
+      await archiveAnnouncement.mutateAsync(item.id);
+      setFormMessage({ tone: 'success', text: 'Announcement archived.' });
+    } catch (error) {
+      setFormMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Announcement could not be archived.' });
+    } finally {
+      setStatusActionId(null);
+    }
+  }
+
+  function resetForm() {
+    setEditingAnnouncementId(null);
+    setFormMessage(null);
+    setPreviewNotice('');
+    setFormState(initialFormState);
   }
 
   if (announcementsQuery.isLoading) {
@@ -351,7 +537,7 @@ export function AdminAnnouncementsPage() {
             <h2>Send Notification</h2>
           </header>
 
-          <form className="announcement-form" onSubmit={handleDisabledSubmit}>
+          <form className="announcement-form" onSubmit={handleSubmit}>
             <div className="announcement-field announcement-field--wide">
               <span>Notification Type</span>
               <div className="notification-type-grid">
@@ -404,9 +590,9 @@ export function AdminAnnouncementsPage() {
                   </button>
                 </div>
                 <div className="announcement-cohort-list">
-                  {cohortsQuery.isLoading ? (
+                  {cohortsPageOneQuery.isLoading ? (
                     <p>Loading cohorts.</p>
-                  ) : cohortsQuery.isError ? (
+                  ) : cohortsPageOneQuery.isError || cohortsPageTwoQuery.isError || cohortsPageThreeQuery.isError ? (
                     <p>Cohorts could not be loaded.</p>
                   ) : cohorts.length > 0 ? (
                     cohorts.map((cohort) => (
@@ -435,24 +621,34 @@ export function AdminAnnouncementsPage() {
                   </button>
                 </div>
                 <div className="announcement-cohort-list">
-                  {programTemplates.map((program) => (
+                  {programsQuery.isLoading ? (
+                    <p>Loading programs.</p>
+                  ) : programsQuery.isError ? (
+                    <p>Programs could not be loaded.</p>
+                  ) : programs.length > 0 ? (
+                    programs.map((program) => (
                     <label key={program.programKey}>
                       <input checked={formState.selectedProgramKeys.includes(program.programKey)} onChange={() => toggleProgram(program.programKey)} type="checkbox" />
                       <span>{program.name}</span>
-                      <strong>{program.shortName}</strong>
+                      <strong>{program.shortName ?? program.programKey.toUpperCase()}</strong>
                     </label>
-                  ))}
+                    ))
+                  ) : (
+                    <p>No active programs available.</p>
+                  )}
                 </div>
               </fieldset>
             ) : null}
 
             <div className="announcement-target-preview">
-              Target preview: 129 active students ·{' '}
+              <strong>{recipientCountLabel}</strong>
+              <span>
               {formState.audienceMode === 'cohort' && selectedCohortNames.length > 0
-                ? selectedCohortNames.join(', ')
+                ? `${selectedCohortNames.length} cohort${selectedCohortNames.length === 1 ? '' : 's'} · ${selectedCohortNames.join(', ')}`
                 : formState.audienceMode === 'program' && selectedProgramNames.length > 0
-                  ? selectedProgramNames.join(', ')
+                  ? `${selectedProgramNames.length} program${selectedProgramNames.length === 1 ? '' : 's'} · ${selectedProgramNames.join(', ')}`
                   : previewAudience}
+              </span>
             </div>
 
             <label className="announcement-field">
@@ -493,7 +689,28 @@ export function AdminAnnouncementsPage() {
               <span>
                 Message <b>*</b>
               </span>
-              <textarea placeholder="Full notification message..." value={formState.message} onChange={(event) => updateForm('message', event.target.value)} />
+              <div className="announcement-editor-toolbar" aria-label="Message formatting">
+                <button onClick={() => insertMessageSnippet('bold')} type="button">
+                  Bold
+                </button>
+                <button onClick={() => insertMessageSnippet('bullet')} type="button">
+                  Bullet
+                </button>
+                <button onClick={() => insertMessageSnippet('divider')} type="button">
+                  Divider
+                </button>
+              </div>
+              <textarea ref={messageRef} placeholder="Full notification message..." value={formState.message} onChange={(event) => updateForm('message', event.target.value)} />
+            </label>
+
+            <label className="announcement-field">
+              <span>CTA Label</span>
+              <input placeholder="Optional e.g. Open resource" value={formState.linkLabel} onChange={(event) => updateForm('linkLabel', event.target.value)} />
+            </label>
+
+            <label className="announcement-field">
+              <span>CTA Link</span>
+              <input placeholder="https://..." value={formState.linkUrl} onChange={(event) => updateForm('linkUrl', event.target.value)} />
             </label>
 
             <label className="announcement-pin-control announcement-field--wide">
@@ -504,13 +721,19 @@ export function AdminAnnouncementsPage() {
             </label>
 
             <div className="announcement-form-actions announcement-field--wide">
-              <button className="announcement-secondary-button" type="button">
-                Preview
+              <button className="announcement-secondary-button" onClick={resetForm} type="button">
+                {editingAnnouncementId ? 'Cancel Edit' : 'Reset'}
               </button>
-              <button className="announcement-send-button" disabled type="submit">
-                {editingAnnouncementId ? 'Update Notification' : 'Send Notification'}
+              <button className="announcement-send-button" disabled={isSaving} type="submit">
+                {isSaving ? 'Saving...' : editingAnnouncementId ? 'Update Notification' : 'Send Notification'}
               </button>
             </div>
+            {formMessage ? (
+              <div className={formMessage.tone === 'success' ? 'announcement-form-message announcement-form-message--success announcement-field--wide' : 'announcement-form-message announcement-form-message--error announcement-field--wide'}>
+                {formMessage.text}
+              </div>
+            ) : null}
+            {previewNotice ? <div className="announcement-form-message announcement-field--wide">{previewNotice}</div> : null}
           </form>
         </section>
 
@@ -530,12 +753,17 @@ export function AdminAnnouncementsPage() {
                     <span aria-hidden="true">📌</span>
                     {previewTitle}
                   </h3>
-                  <p>{previewMessage}</p>
+                  <AnnouncementRichText text={previewMessage} />
                   <div className="announcement-token-row">
                     <span className={getTypeTone(formState.type)}>{previewType.label}</span>
                     <span className="announcement-audience-token">{previewAudience}</span>
                     <span className="announcement-time-token">Just now</span>
                   </div>
+                  {formState.linkUrl.trim() ? (
+                    <a className="announcement-card__link" href={formState.linkUrl.trim()} rel="noreferrer" target="_blank">
+                      {formState.linkLabel.trim() || 'Open link'}
+                    </a>
+                  ) : null}
                 </div>
               </article>
             </div>
@@ -547,29 +775,42 @@ export function AdminAnnouncementsPage() {
                 <span className="eyebrow">History</span>
                 <h2>Sent Announcements</h2>
               </div>
-              <label className="sr-only" htmlFor="announcement-history-filter">
-                Filter announcements
-              </label>
-              <select id="announcement-history-filter" value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value as HistoryFilter)}>
-                <option value="all">All</option>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-                {notificationTypes.map((item) => (
-                  <option key={item.type} value={item.type}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+              <div className="announcement-history-tools">
+                <button className="announcement-row-button" disabled={filteredItems.length === 0} onClick={toggleAllFilteredAnnouncements} type="button">
+                  {filteredItems.length > 0 && filteredItems.every((item) => selectedAnnouncementIds.includes(item.id)) ? 'Clear' : 'Select'}
+                </button>
+                <button className="announcement-row-button announcement-row-button--danger" disabled={selectedAnnouncementIds.length === 0 || bulkArchiveAnnouncements.isPending} onClick={handleBulkArchive} type="button">
+                  {bulkArchiveAnnouncements.isPending ? 'Archiving...' : `Archive ${selectedAnnouncementIds.length || ''}`}
+                </button>
+                <label className="sr-only" htmlFor="announcement-history-filter">
+                  Filter announcements
+                </label>
+                <select id="announcement-history-filter" value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value as HistoryFilter)}>
+                  <option value="all">All</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                  {notificationTypes.map((item) => (
+                    <option key={item.type} value={item.type}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </header>
 
             <div className="announcement-history-list">
               {filteredItems.length > 0 ? (
                 filteredItems.map((item) => {
                   const itemType = getAnnouncementType(item);
+                  const HistoryIcon = getTypeIcon(itemType);
+                  const rowBusy = statusActionId === item.id;
                   return (
                     <article className="announcement-history-row" key={item.id}>
-                      <div className={getTypeIconBackground(itemType)}>
-                        <span>{item.type === 'custom' ? item.type : 'null'}</span>
+                      <div className="announcement-history-row__select">
+                        <input checked={selectedAnnouncementIds.includes(item.id)} onChange={() => toggleSelectedAnnouncement(item.id)} type="checkbox" aria-label={`Select ${item.title}`} />
+                        <div className={getTypeIconBackground(itemType)}>
+                          {itemType === 'custom' && item.customEmoji ? <span>{item.customEmoji}</span> : <HistoryIcon size={24} />}
+                        </div>
                       </div>
                       <div className="announcement-history-row__content">
                         <h3>
@@ -586,18 +827,36 @@ export function AdminAnnouncementsPage() {
                           <span>→ {getAnnouncementAudienceLabel(item)}</span>
                           <time>{formatDate(item.startDate ?? item.updatedAt)}</time>
                         </div>
-                        <p>Edited by hr1.skilledsapiens@gmail.com</p>
+                        {item.linkUrl ? (
+                          <a className="announcement-card__link" href={item.linkUrl} rel="noreferrer" target="_blank">
+                            {item.linkLabel || 'Open link'}
+                          </a>
+                        ) : null}
+                        <p>Edited by {item.updatedBy || item.createdBy || 'admin'}</p>
                       </div>
                       <div className="announcement-history-row__actions">
                         <button className="announcement-row-button" onClick={() => handleEdit(item)} type="button">
                           Edit
                         </button>
-                        <select disabled value={item.status} aria-label={`Status for ${item.title}`}>
+                        <button className="announcement-row-button" onClick={() => handleDuplicate(item)} type="button">
+                          Duplicate
+                        </button>
+                        <select
+                          disabled={rowBusy}
+                          value={item.status}
+                          onChange={(event) => handleStatusChange(item, event.target.value as AdminAnnouncementStatus)}
+                          aria-label={`Status for ${item.title}`}
+                        >
                           <option value="active">Active</option>
                           <option value="inactive">Inactive</option>
                         </select>
-                        <button aria-disabled="true" className="announcement-row-button announcement-row-button--danger" type="button">
-                          {item.status === 'inactive' ? 'Deleted' : 'Delete'}
+                        <button
+                          className={item.status === 'inactive' ? 'announcement-row-button' : 'announcement-row-button announcement-row-button--danger'}
+                          disabled={rowBusy}
+                          onClick={() => (item.status === 'inactive' ? handleStatusChange(item, 'active') : handleArchive(item))}
+                          type="button"
+                        >
+                          {rowBusy ? 'Saving...' : item.status === 'inactive' ? 'Reactivate' : 'Archive'}
                         </button>
                       </div>
                     </article>
