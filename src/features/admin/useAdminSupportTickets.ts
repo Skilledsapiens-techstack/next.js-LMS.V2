@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthProvider';
-import { apiGet } from '../../lib/supabaseApi';
+import { apiGet, apiPatch, apiPost } from '../../lib/supabaseApi';
 import { PaginatedResponse } from '../student/useStudentAnnouncements';
 
 export type AdminSupportTicketStatus = 'open' | 'in_review' | 'waiting_for_student' | 'resolved' | 'closed';
@@ -9,12 +9,36 @@ export type AdminSupportConversationMode = 'two_way' | 'admin_only';
 export type AdminSupportMessageAuthorRole = 'student' | 'admin' | 'system';
 export type AdminSupportMessageVisibility = 'public' | 'internal';
 
+export type AdminSupportCategory = {
+  allowAttachments: boolean;
+  categoryKey: string;
+  categoryName: string;
+  conversationMode: AdminSupportConversationMode;
+  defaultPriority: AdminSupportTicketPriority;
+  id: string;
+  sortOrder: number;
+  status: 'active' | 'inactive';
+};
+
+export type AdminSupportFaq = {
+  answer: string;
+  categoryName?: string;
+  cohortNames?: string[];
+  featured: boolean;
+  id: string;
+  programKeys?: string[];
+  question: string;
+  sortOrder: number;
+  status: 'draft' | 'published' | 'archived';
+};
+
 export type AdminSupportTicket = {
   assignedAdminEmail?: string;
   categoryName: string;
   closedAt?: string;
   conversationMode: AdminSupportConversationMode;
   createdAt?: string;
+  description?: string;
   id: string;
   lastAdminReplyAt?: string;
   lastMessageAt?: string;
@@ -47,6 +71,20 @@ export type AdminSupportTicketDetail = {
   ticket: AdminSupportTicket;
 };
 
+export type AdminSupportTicketUpdateInput = {
+  assignedAdminEmail?: string;
+  priority?: AdminSupportTicketPriority;
+  status?: AdminSupportTicketStatus;
+  ticketId: string;
+};
+
+export type AdminSupportTicketReplyInput = {
+  body: string;
+  sendEmail?: boolean;
+  ticketId: string;
+  visibility: AdminSupportMessageVisibility;
+};
+
 export type AdminSupportTicketsQuery = {
   category?: string;
   limit?: number;
@@ -77,6 +115,92 @@ export function useAdminSupportTickets(query: AdminSupportTicketsQuery) {
   });
 }
 
+export function useAdminSupportCategories() {
+  const { accessToken } = useAuth();
+
+  return useQuery({
+    enabled: Boolean(accessToken),
+    queryFn: () =>
+      apiGet<PaginatedResponse<AdminSupportCategory>>('/admins/support-categories', {
+        accessToken: accessToken ?? undefined,
+        query: { limit: 100, status: 'all' }
+      }),
+    queryKey: ['admin-support-categories', accessToken],
+    staleTime: 5 * 60_000
+  });
+}
+
+export function useAdminSupportFaqs() {
+  const { accessToken } = useAuth();
+
+  return useQuery({
+    enabled: Boolean(accessToken),
+    queryFn: () =>
+      apiGet<PaginatedResponse<AdminSupportFaq>>('/admins/support-faqs', {
+        accessToken: accessToken ?? undefined,
+        query: { limit: 100, status: 'all' }
+      }),
+    queryKey: ['admin-support-faqs', accessToken],
+    staleTime: 5 * 60_000
+  });
+}
+
+export function useCreateAdminSupportCategory() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: Partial<AdminSupportCategory>) =>
+      apiPost<{ category: AdminSupportCategory; message: string }, Partial<AdminSupportCategory>>('/admins/support-categories', {
+        accessToken: accessToken ?? undefined,
+        body
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['admin-support-categories'] })
+  });
+}
+
+export function useUpdateAdminSupportCategory() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<AdminSupportCategory> & { id: string }) =>
+      apiPatch<{ category: AdminSupportCategory; message: string }, Partial<AdminSupportCategory>>(`/admins/support-categories/${encodeURIComponent(id)}`, {
+        accessToken: accessToken ?? undefined,
+        body
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['admin-support-categories'] })
+  });
+}
+
+export function useCreateAdminSupportFaq() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: Partial<AdminSupportFaq>) =>
+      apiPost<{ faq: AdminSupportFaq; message: string }, Partial<AdminSupportFaq>>('/admins/support-faqs', {
+        accessToken: accessToken ?? undefined,
+        body
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['admin-support-faqs'] })
+  });
+}
+
+export function useUpdateAdminSupportFaq() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, ...body }: Partial<AdminSupportFaq> & { id: string }) =>
+      apiPatch<{ faq: AdminSupportFaq; message: string }, Partial<AdminSupportFaq>>(`/admins/support-faqs/${encodeURIComponent(id)}`, {
+        accessToken: accessToken ?? undefined,
+        body
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['admin-support-faqs'] })
+  });
+}
+
 export function useAdminSupportTicketDetail(ticketId: string | undefined) {
   const { accessToken } = useAuth();
 
@@ -88,5 +212,77 @@ export function useAdminSupportTicketDetail(ticketId: string | undefined) {
       }),
     queryKey: ['admin-support-ticket-detail', accessToken, ticketId],
     staleTime: 60_000
+  });
+}
+
+export function useUpdateAdminSupportTicket() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ ticketId, ...body }: AdminSupportTicketUpdateInput) =>
+      apiPatch<{ message: string; ticket: AdminSupportTicket }, Omit<AdminSupportTicketUpdateInput, 'ticketId'>>(
+        `/admins/support-tickets/${encodeURIComponent(ticketId)}`,
+        {
+          accessToken: accessToken ?? undefined,
+          body
+        }
+      ),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-support-tickets'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-support-ticket-detail', accessToken, variables.ticketId] });
+    }
+  });
+}
+
+export function useCreateAdminSupportTicketReply() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ body, sendEmail, ticketId, visibility }: AdminSupportTicketReplyInput) =>
+      apiPost<{ message: string; reply: AdminSupportTicketMessage; ticket: AdminSupportTicket }, { body: string; sendEmail?: boolean; visibility: AdminSupportMessageVisibility }>(
+        `/admins/support-tickets/${encodeURIComponent(ticketId)}/messages`,
+        {
+          accessToken: accessToken ?? undefined,
+          body: { body, sendEmail, visibility }
+        }
+      ),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-support-tickets'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-support-ticket-detail', accessToken, variables.ticketId] });
+    }
+  });
+}
+
+export function useCloseAdminSupportTicket() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (ticketId: string) =>
+      apiPatch<{ message: string; ticket: AdminSupportTicket }>(`/admins/support-tickets/${encodeURIComponent(ticketId)}/close`, {
+        accessToken: accessToken ?? undefined
+      }),
+    onSuccess: (_data, ticketId) => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-support-tickets'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-support-ticket-detail', accessToken, ticketId] });
+    }
+  });
+}
+
+export function useReopenAdminSupportTicket() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (ticketId: string) =>
+      apiPatch<{ message: string; ticket: AdminSupportTicket }>(`/admins/support-tickets/${encodeURIComponent(ticketId)}/reopen`, {
+        accessToken: accessToken ?? undefined
+      }),
+    onSuccess: (_data, ticketId) => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-support-tickets'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-support-ticket-detail', accessToken, ticketId] });
+    }
   });
 }

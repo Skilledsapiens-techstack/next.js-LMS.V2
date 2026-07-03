@@ -327,6 +327,10 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/admins/student-audit-logs') return getStudentAuditLogs(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/certificate-requests') return getLiveProjectCertificateRequests(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/announcements/recipient-count') return getAnnouncementRecipientCount(context, options.query) as Promise<TResponse>;
+  if (cleanPath === '/support/categories') return getSupportCategories(context, options.query, false) as Promise<TResponse>;
+  if (cleanPath === '/students/me/support-faqs') return getStudentSupportFaqs(context, options.query) as Promise<TResponse>;
+  if (cleanPath === '/admins/support-categories') return getSupportCategories(context, options.query, true) as Promise<TResponse>;
+  if (cleanPath === '/admins/support-faqs') return getAdminSupportFaqs(context, options.query) as Promise<TResponse>;
 
   const studentAttempts = cleanPath.match(/^\/admins\/students\/([^/]+)\/lp-attempts$/);
   if (studentAttempts) return getStudentAttemptLimit(context, decodeURIComponent(studentAttempts[1])) as Promise<TResponse>;
@@ -458,6 +462,21 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
   const projectUpdate = cleanPath.match(/^\/admins\/projects\/([^/]+)$/);
   if (projectUpdate) return updateById(context, 'projects', decodeURIComponent(projectUpdate[1]), options.body, 'updated') as Promise<TResponse>;
 
+  const adminSupportTicketUpdate = cleanPath.match(/^\/admins\/support-tickets\/([^/]+)$/);
+  if (adminSupportTicketUpdate) return updateSupportTicket(context, decodeURIComponent(adminSupportTicketUpdate[1]), options.body) as Promise<TResponse>;
+
+  const adminSupportCategoryUpdate = cleanPath.match(/^\/admins\/support-categories\/([^/]+)$/);
+  if (adminSupportCategoryUpdate) return updateSupportCategory(context, decodeURIComponent(adminSupportCategoryUpdate[1]), options.body) as Promise<TResponse>;
+
+  const adminSupportFaqUpdate = cleanPath.match(/^\/admins\/support-faqs\/([^/]+)$/);
+  if (adminSupportFaqUpdate) return updateSupportFaq(context, decodeURIComponent(adminSupportFaqUpdate[1]), options.body) as Promise<TResponse>;
+
+  const adminSupportTicketClose = cleanPath.match(/^\/admins\/support-tickets\/([^/]+)\/close$/);
+  if (adminSupportTicketClose) return updateSupportTicket(context, decodeURIComponent(adminSupportTicketClose[1]), { status: 'closed' }) as Promise<TResponse>;
+
+  const adminSupportTicketReopen = cleanPath.match(/^\/admins\/support-tickets\/([^/]+)\/reopen$/);
+  if (adminSupportTicketReopen) return updateSupportTicket(context, decodeURIComponent(adminSupportTicketReopen[1]), { status: 'open' }) as Promise<TResponse>;
+
   throw new ApiClientError(`Unsupported Supabase write route: ${cleanPath}`, 404);
 }
 
@@ -496,6 +515,15 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/certificates/leadership') return issueLeadershipCertificates(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/certificates/live-project') return issueLiveProjectCertificate(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/students/me/project-submissions') return submitStudentProjectReport(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/students/me/support-tickets') return createStudentSupportTicket(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/admins/support-categories') return createSupportCategory(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/admins/support-faqs') return createSupportFaq(context, options.body) as Promise<TResponse>;
+
+  const studentSupportReply = cleanPath.match(/^\/students\/me\/support-tickets\/([^/]+)\/messages$/);
+  if (studentSupportReply) return createSupportTicketMessage(context, decodeURIComponent(studentSupportReply[1]), options.body, 'student') as Promise<TResponse>;
+
+  const adminSupportReply = cleanPath.match(/^\/admins\/support-tickets\/([^/]+)\/messages$/);
+  if (adminSupportReply) return createSupportTicketMessage(context, decodeURIComponent(adminSupportReply[1]), options.body, 'admin') as Promise<TResponse>;
 
   throw new ApiClientError(`Unsupported Supabase write route: ${cleanPath}`, 404);
 }
@@ -857,6 +885,430 @@ async function getSupportTicketDetail(context: Awaited<ReturnType<typeof createC
     messages: (messages ?? []).slice(0, 100).map(camelize),
     ticket: camelize(ticket)
   };
+}
+
+async function getSupportCategories(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query'], admin: boolean) {
+  if (admin) await getAdminProfile(context);
+  const page = Number(query?.page ?? 1);
+  const limit = Math.min(Number(query?.limit ?? 100), 500);
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+  const status = String(query?.status ?? '').trim();
+  const search = String(query?.search ?? '').trim();
+
+  let request = context.supabase.from('support_categories').select('*', { count: 'exact' });
+  if (!admin) request = request.eq('status', 'active');
+  else if (status && status !== 'all') request = request.eq('status', status);
+  if (search) request = request.or(`category_name.ilike.%${search}%,category_key.ilike.%${search}%`);
+
+  const { count, data, error } = await request.order('sort_order', { ascending: true }).order('category_name', { ascending: true }).range(from, to);
+  if (error) throw new ApiClientError(error.message, 503);
+  return createPaginatedResponse((data ?? []).map(camelize), count ?? 0, page, limit);
+}
+
+async function getSupportCategoryForTicket(context: Awaited<ReturnType<typeof createContext>>, rawCategory: unknown) {
+  const categoryName = normalizeSupportCategory(rawCategory);
+  const normalized = categoryName.toLowerCase();
+  const { data, error } = await context.supabase
+    .from('support_categories')
+    .select('*')
+    .eq('status', 'active')
+    .limit(500);
+
+  if (error) throw new ApiClientError(error.message, 503);
+  const key = normalized.replace(/[^a-z0-9]+/g, '_');
+  const row = (data ?? []).find((item) => String(item.category_name ?? '').trim().toLowerCase() === normalized || String(item.category_key ?? '').trim().toLowerCase() === key);
+  if (!row) throw new ApiClientError('Selected support category is not active.', 400);
+  return row;
+}
+
+async function getStudentSupportFaqs(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const student = await getStudentProfile(context);
+  const studentId = String((student as Record<string, unknown>).id ?? '');
+  const page = Number(query?.page ?? 1);
+  const limit = Math.min(Number(query?.limit ?? 25), 200);
+  const search = String(query?.search ?? '').trim().toLowerCase();
+
+  const [cohortResult, programResult, faqResult] = await Promise.all([
+    studentId ? context.supabase.from('student_cohorts').select('cohort_name').eq('student_id', studentId).limit(500) : Promise.resolve({ data: [], error: null }),
+    studentId ? context.supabase.from('student_programs').select('program_key').eq('student_id', studentId).limit(500) : Promise.resolve({ data: [], error: null }),
+    context.supabase.from('support_faqs').select('*').eq('status', 'published').order('featured', { ascending: false }).order('sort_order', { ascending: true }).limit(500)
+  ]);
+
+  if (cohortResult.error) throw new ApiClientError(cohortResult.error.message, 503);
+  if (programResult.error) throw new ApiClientError(programResult.error.message, 503);
+  if (faqResult.error) throw new ApiClientError(faqResult.error.message, 503);
+
+  const cohortNames = new Set((cohortResult.data ?? []).map((row) => String(row.cohort_name ?? '').trim()).filter(Boolean));
+  const programKeys = new Set((programResult.data ?? []).map((row) => String(row.program_key ?? '').trim().toLowerCase()).filter(Boolean));
+  const visible = (faqResult.data ?? [])
+    .filter((faq) => {
+      const faqPrograms = asStringArray(faq.program_keys).map((key) => key.toLowerCase());
+      const faqCohorts = asStringArray(faq.cohort_names);
+      const programVisible = faqPrograms.length === 0 || faqPrograms.some((key) => programKeys.has(key));
+      const cohortVisible = faqCohorts.length === 0 || faqCohorts.some((name) => cohortNames.has(name));
+      return programVisible && cohortVisible;
+    })
+    .map(camelize)
+    .filter((faq) => !search || JSON.stringify(faq).toLowerCase().includes(search));
+
+  const start = (page - 1) * limit;
+  return createPaginatedResponse(visible.slice(start, start + limit), visible.length, page, limit);
+}
+
+async function getAdminSupportFaqs(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  await getAdminProfile(context);
+  const page = Number(query?.page ?? 1);
+  const limit = Math.min(Number(query?.limit ?? 100), 500);
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+  const status = String(query?.status ?? '').trim();
+  const category = String(query?.category ?? '').trim();
+  const search = String(query?.search ?? '').trim();
+
+  let request = context.supabase.from('support_faqs').select('*', { count: 'exact' });
+  if (status && status !== 'all') request = request.eq('status', status);
+  if (category && category !== 'all') request = request.eq('category_name', category);
+  if (search) request = request.or(`question.ilike.%${search}%,answer.ilike.%${search}%,category_name.ilike.%${search}%`);
+
+  const { count, data, error } = await request.order('featured', { ascending: false }).order('sort_order', { ascending: true }).range(from, to);
+  if (error) throw new ApiClientError(error.message, 503);
+  return createPaginatedResponse((data ?? []).map(camelize), count ?? 0, page, limit);
+}
+
+async function createStudentSupportTicket(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  if (!isRecord(body)) throw new ApiClientError('Support ticket payload must be an object.', 400);
+
+  const category = await getSupportCategoryForTicket(context, body.categoryName ?? body.category_name);
+  const categoryName = String(category.category_name ?? '');
+  const priority = normalizeSupportPriority(body.priority);
+  const subject = normalizeBoundedText(body.subject, 'Subject', 8, 120);
+  const description = normalizeBoundedText(body.description ?? body.body, 'Description', 20, 2000);
+  const relatedUrl = String(body.relatedUrl ?? body.related_url ?? '').trim();
+  if (relatedUrl && !isHttpUrl(relatedUrl)) throw new ApiClientError('Related link must start with http:// or https://.', 400);
+
+  const student = await getStudentProfile(context);
+  const now = new Date().toISOString();
+  const ticketId = `SUP-${formatCompactDate(new Date())}-${Math.floor(100000 + Math.random() * 900000)}`;
+  const studentName = String((student as Record<string, unknown>).fullName ?? context.email);
+  const initialBody = relatedUrl ? `${description}\n\nRelated link: ${relatedUrl}` : description;
+
+  const ticketPayload = {
+    category_id: category.id,
+    category_name: categoryName,
+    conversation_mode: category.conversation_mode ?? 'two_way',
+    description,
+    last_message_at: now,
+    last_student_reply_at: now,
+    priority,
+    related_link: relatedUrl || null,
+    status: 'open',
+    student_id: (student as Record<string, unknown>).id ?? null,
+    student_email: context.email,
+    student_name: studentName,
+    subject,
+    ticket_id: ticketId,
+    updated_at: now
+  };
+
+  const { data: ticket, error: ticketError } = await context.supabase.from('support_tickets').insert(ticketPayload).select('*').single();
+  if (ticketError) throw mutationError(ticketError, 'support_tickets');
+
+  let initialMessageId = '';
+  if (String(category.conversation_mode ?? 'two_way') === 'two_way') {
+    const messagePayload = {
+      author_email: context.email,
+      author_name: studentName,
+      author_role: 'student',
+      body: initialBody,
+      ticket_id: ticket.id,
+      visibility: 'public'
+    };
+
+    const { data: message, error: messageError } = await context.supabase.from('support_ticket_messages').insert(messagePayload).select('id').single();
+    if (messageError) throw mutationError(messageError, 'support_ticket_messages');
+    initialMessageId = String(message?.id ?? '');
+  }
+
+  await notifySupportTicketEmail(context, 'ticket_created', String(ticket.id), initialMessageId, false);
+
+  return {
+    message: 'Support ticket created successfully.',
+    ticket: camelize(ticket)
+  };
+}
+
+async function createSupportTicketMessage(context: Awaited<ReturnType<typeof createContext>>, ticketId: string, body: unknown, actorRole: 'admin' | 'student') {
+  if (!isRecord(body)) throw new ApiClientError('Support reply payload must be an object.', 400);
+
+  const ticket = await getSupportTicketForWrite(context, ticketId, actorRole === 'admin');
+  if (actorRole === 'student') {
+    const status = String(ticket.status ?? '');
+    const conversationMode = String(ticket.conversation_mode ?? 'two_way');
+    if (conversationMode !== 'two_way') throw new ApiClientError('This support ticket is read-only.', 403);
+    if (status === 'closed' || status === 'resolved') throw new ApiClientError('This support ticket is already closed.', 409);
+  }
+
+  const text = normalizeBoundedText(body.body ?? body.message, 'Reply', 2, 2000);
+  const visibility = actorRole === 'admin' && body.visibility === 'internal' ? 'internal' : 'public';
+  const now = new Date().toISOString();
+  const authorName = actorRole === 'admin' ? context.email : String((await getStudentProfile(context) as Record<string, unknown>).fullName ?? context.email);
+
+  const messagePayload = {
+    author_email: context.email,
+    author_name: authorName,
+    author_role: actorRole,
+    body: text,
+    ticket_id: ticket.id,
+    visibility
+  };
+
+  const { data: message, error: messageError } = await context.supabase.from('support_ticket_messages').insert(messagePayload).select('*').single();
+  if (messageError) throw mutationError(messageError, 'support_ticket_messages');
+
+  const ticketPatch =
+    actorRole === 'admin'
+      ? { last_admin_reply_at: now, last_message_at: now, status: visibility === 'public' ? 'waiting_for_student' : ticket.status, updated_at: now, updated_by_email: context.email }
+      : { last_message_at: now, last_student_reply_at: now, status: 'in_review', updated_at: now };
+
+  const { data: updatedTicket, error: ticketError } = await context.supabase.from('support_tickets').update(ticketPatch).eq('id', ticket.id).select('*').single();
+  if (ticketError) throw mutationError(ticketError, 'support_tickets');
+  if (actorRole === 'admin') {
+    await writeSupportAuditLog(context, visibility === 'internal' ? 'internal_note_added' : 'replied', updatedTicket, ticketPatch);
+    if (visibility === 'public' && body.sendEmail === true) await notifySupportTicketEmail(context, 'admin_reply', String(updatedTicket.id), String(message.id), true);
+  } else {
+    await notifySupportTicketEmail(context, 'student_reply', String(updatedTicket.id), String(message.id), false);
+  }
+
+  return {
+    message: actorRole === 'admin' ? 'Support reply saved.' : 'Reply sent successfully.',
+    reply: camelize(message),
+    ticket: camelize(updatedTicket)
+  };
+}
+
+async function notifySupportTicketEmail(
+  context: Awaited<ReturnType<typeof createContext>>,
+  event: 'ticket_created' | 'student_reply' | 'admin_reply',
+  ticketId: string,
+  messageId: string,
+  required: boolean
+) {
+  const { data, error } = await context.supabase.functions.invoke('support-ticket-email', {
+    body: {
+      event,
+      message_id: messageId || undefined,
+      ticket_id: ticketId
+    }
+  });
+
+  if (error || (isRecord(data) && data.ok === false)) {
+    const message = error?.message ?? (isRecord(data) && typeof data.error === 'string' ? data.error : 'Support email could not be sent.');
+    if (required) throw new ApiClientError(message, 503);
+  }
+}
+
+async function createSupportCategory(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  await getAdminProfile(context);
+  const payload = normalizeSupportCategoryPayload(body, true, context.email);
+  const { data, error } = await context.supabase.from('support_categories').insert(payload).select('*').single();
+  if (error) throw mutationError(error, 'support_categories');
+  return { category: camelize(data), message: 'Support category created.' };
+}
+
+async function updateSupportCategory(context: Awaited<ReturnType<typeof createContext>>, categoryId: string, body: unknown) {
+  await getAdminProfile(context);
+  const payload = normalizeSupportCategoryPayload(body, false, context.email);
+  const { data, error } = await context.supabase.from('support_categories').update(payload).eq('id', categoryId).select('*').single();
+  if (error) throw mutationError(error, 'support_categories');
+  return { category: camelize(data), message: 'Support category updated.' };
+}
+
+async function createSupportFaq(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  await getAdminProfile(context);
+  const payload = normalizeSupportFaqPayload(body, true, context.email);
+  const { data, error } = await context.supabase.from('support_faqs').insert(payload).select('*').single();
+  if (error) throw mutationError(error, 'support_faqs');
+  return { faq: camelize(data), message: 'Support FAQ created.' };
+}
+
+async function updateSupportFaq(context: Awaited<ReturnType<typeof createContext>>, faqId: string, body: unknown) {
+  await getAdminProfile(context);
+  const payload = normalizeSupportFaqPayload(body, false, context.email);
+  const { data, error } = await context.supabase.from('support_faqs').update(payload).eq('id', faqId).select('*').single();
+  if (error) throw mutationError(error, 'support_faqs');
+  return { faq: camelize(data), message: 'Support FAQ updated.' };
+}
+
+async function updateSupportTicket(context: Awaited<ReturnType<typeof createContext>>, ticketId: string, body: unknown) {
+  await getAdminProfile(context);
+  if (!isRecord(body)) throw new ApiClientError('Support ticket update payload must be an object.', 400);
+
+  const currentTicket = await getSupportTicketForWrite(context, ticketId, true);
+  const payload: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by_email: context.email };
+
+  if (body.status !== undefined) {
+    const status = normalizeSupportStatus(body.status);
+    payload.status = status;
+    if (status === 'resolved') payload.resolved_at = new Date().toISOString();
+    if (status === 'closed') payload.closed_at = new Date().toISOString();
+    if (status === 'open' || status === 'in_review' || status === 'waiting_for_student') {
+      payload.closed_at = null;
+      payload.resolved_at = null;
+    }
+  }
+
+  if (body.priority !== undefined) payload.priority = normalizeSupportPriority(body.priority);
+  if (body.assignedAdminEmail !== undefined || body.assigned_admin_email !== undefined) {
+    const assignedAdminEmail = String(body.assignedAdminEmail ?? body.assigned_admin_email ?? '').trim().toLowerCase();
+    payload.assigned_admin_email = assignedAdminEmail || null;
+  }
+
+  if (Object.keys(payload).length === 2) throw new ApiClientError('No support ticket changes were provided.', 400);
+
+  const { data, error } = await context.supabase.from('support_tickets').update(payload).eq('id', currentTicket.id).select('*').single();
+  if (error) throw mutationError(error, 'support_tickets');
+
+  await writeSupportAuditLog(context, 'updated', data, payload);
+
+  return {
+    message: 'Support ticket updated successfully.',
+    ticket: camelize(data)
+  };
+}
+
+async function getSupportTicketForWrite(context: Awaited<ReturnType<typeof createContext>>, ticketId: string, admin: boolean) {
+  if (admin) await getAdminProfile(context);
+  let ticketQuery = context.supabase.from('support_tickets').select('*').or(`id.eq.${ticketId},ticket_id.eq.${ticketId}`).limit(1);
+  if (!admin) ticketQuery = ticketQuery.eq('student_email', context.email);
+  const { data, error } = await ticketQuery;
+  if (error) throw new ApiClientError(error.message, 503);
+  const ticket = data?.[0];
+  if (!ticket) throw new ApiClientError('Support ticket was not found.', 404);
+  return ticket;
+}
+
+async function writeSupportAuditLog(context: Awaited<ReturnType<typeof createContext>>, action: string, row: Record<string, unknown>, payload: Record<string, unknown>) {
+  const auditRow = {
+    action: `admin_support_ticket_${action}`,
+    actor_email: context.email,
+    actor_role: 'admin',
+    details: {
+      changedFields: Object.keys(payload).sort(),
+      ticketId: row.ticket_id ?? row.id
+    },
+    entity_id: String(row.id ?? ''),
+    entity_type: 'support_ticket',
+    status: 'success'
+  };
+
+  const { error } = await context.supabase.from('audit_logs').insert(auditRow);
+  if (error) return;
+}
+
+function normalizeSupportCategory(value: unknown) {
+  const categoryName = String(value ?? '').trim();
+  if (categoryName.length < 2) throw new ApiClientError('Select a support category.', 400);
+  if (categoryName.length > 80) throw new ApiClientError('Support category must be 80 characters or fewer.', 400);
+  return categoryName;
+}
+
+function normalizeSupportPriority(value: unknown) {
+  const priority = String(value ?? 'normal').trim().toLowerCase();
+  if (!['low', 'normal', 'high', 'urgent'].includes(priority)) throw new ApiClientError('Support priority is invalid.', 400);
+  return priority;
+}
+
+function normalizeSupportStatus(value: unknown) {
+  const status = String(value ?? '').trim().toLowerCase();
+  if (!['open', 'in_review', 'waiting_for_student', 'resolved', 'closed'].includes(status)) throw new ApiClientError('Support status is invalid.', 400);
+  return status;
+}
+
+function normalizeSupportCategoryStatus(value: unknown) {
+  const status = String(value ?? 'active').trim().toLowerCase();
+  if (!['active', 'inactive'].includes(status)) throw new ApiClientError('Support category status is invalid.', 400);
+  return status;
+}
+
+function normalizeSupportConversationMode(value: unknown) {
+  const mode = String(value ?? 'two_way').trim().toLowerCase();
+  if (!['two_way', 'admin_only'].includes(mode)) throw new ApiClientError('Support conversation mode is invalid.', 400);
+  return mode;
+}
+
+function normalizeSupportFaqStatus(value: unknown) {
+  const status = String(value ?? 'published').trim().toLowerCase();
+  if (!['draft', 'published', 'archived'].includes(status)) throw new ApiClientError('Support FAQ status is invalid.', 400);
+  return status;
+}
+
+function normalizeSupportSortOrder(value: unknown) {
+  const sortOrder = Number(value ?? 100);
+  if (!Number.isFinite(sortOrder)) throw new ApiClientError('Sort order must be a number.', 400);
+  return Math.max(1, Math.min(9999, Math.round(sortOrder)));
+}
+
+function normalizeSupportKey(value: unknown, fallback: string) {
+  const raw = String(value ?? fallback).trim().toLowerCase();
+  const key = raw.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  if (key.length < 2) throw new ApiClientError('Category key is required.', 400);
+  if (key.length > 80) throw new ApiClientError('Category key must be 80 characters or fewer.', 400);
+  return key;
+}
+
+function normalizeSupportCategoryPayload(body: unknown, creating: boolean, adminEmail: string) {
+  if (!isRecord(body)) throw new ApiClientError('Support category payload must be an object.', 400);
+  const now = new Date().toISOString();
+  const categoryName = normalizeBoundedText(body.categoryName ?? body.category_name, 'Category name', 2, 80);
+  return {
+    allow_attachments: body.allowAttachments ?? body.allow_attachments ?? true,
+    category_key: normalizeSupportKey(body.categoryKey ?? body.category_key, categoryName),
+    category_name: categoryName,
+    conversation_mode: normalizeSupportConversationMode(body.conversationMode ?? body.conversation_mode),
+    created_by: creating ? adminEmail : undefined,
+    default_priority: normalizeSupportPriority(body.defaultPriority ?? body.default_priority),
+    sort_order: normalizeSupportSortOrder(body.sortOrder ?? body.sort_order),
+    status: normalizeSupportCategoryStatus(body.status),
+    updated_at: now,
+    updated_by: adminEmail
+  };
+}
+
+function normalizeSupportFaqPayload(body: unknown, creating: boolean, adminEmail: string) {
+  if (!isRecord(body)) throw new ApiClientError('Support FAQ payload must be an object.', 400);
+  const now = new Date().toISOString();
+  const question = normalizeBoundedText(body.question, 'FAQ question', 5, 240);
+  const answer = normalizeBoundedText(body.answer, 'FAQ answer', 10, 3000);
+  const categoryName = String(body.categoryName ?? body.category_name ?? '').trim();
+  return {
+    answer,
+    category_key: categoryName ? normalizeSupportKey(body.categoryKey ?? body.category_key, categoryName) : null,
+    category_name: categoryName || null,
+    cohort_names: uniqueStrings([...asStringArray(body.cohortNames ?? body.cohort_names), ...splitCommaValues(body.cohorts)]),
+    created_by: creating ? adminEmail : undefined,
+    featured: Boolean(body.featured),
+    program_keys: uniqueStrings([...asStringArray(body.programKeys ?? body.program_keys), ...splitCommaValues(body.programs)].map((key) => String(key).toLowerCase())),
+    question,
+    sort_order: normalizeSupportSortOrder(body.sortOrder ?? body.sort_order),
+    status: normalizeSupportFaqStatus(body.status),
+    updated_at: now,
+    updated_by: adminEmail
+  };
+}
+
+function normalizeBoundedText(value: unknown, label: string, minLength: number, maxLength: number) {
+  const text = String(value ?? '').trim();
+  if (text.length < minLength) throw new ApiClientError(`${label} must be at least ${minLength} characters.`, 400);
+  if (text.length > maxLength) throw new ApiClientError(`${label} must be ${maxLength} characters or fewer.`, 400);
+  return text;
+}
+
+function formatCompactDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}${month}${day}`;
 }
 
 async function getEnrollmentDetail(context: Awaited<ReturnType<typeof createContext>>, requestId: string) {

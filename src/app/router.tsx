@@ -49,7 +49,6 @@ const StudentProjectSubmissionsPage = lazy(() =>
   import('../pages/StudentProjectSubmissionsPage').then((module) => ({ default: module.StudentProjectSubmissionsPage }))
 );
 const StudentPaymentsPage = lazy(() => import('../pages/StudentPaymentsPage').then((module) => ({ default: module.StudentPaymentsPage })));
-const StudentPaidAccessPage = lazy(() => import('../pages/StudentPaidAccessPage').then((module) => ({ default: module.StudentPaidAccessPage })));
 const StudentSupportPage = lazy(() => import('../pages/StudentSupportPage').then((module) => ({ default: module.StudentSupportPage })));
 const StudentSupportDetailPage = lazy(() => import('../pages/StudentSupportDetailPage').then((module) => ({ default: module.StudentSupportDetailPage })));
 const UnauthorizedPage = lazy(() => import('../pages/UnauthorizedPage').then((module) => ({ default: module.UnauthorizedPage })));
@@ -168,11 +167,7 @@ export const router = createBrowserRouter([
           },
           {
             path: 'access',
-            element: (
-              <PageLoader>
-                <StudentPaidAccessPage />
-              </PageLoader>
-            )
+            element: <Navigate to="/student/payments" replace />
           },
           {
             path: 'support',

@@ -6,6 +6,7 @@ import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { StudentAnnouncement, StudentAnnouncementPriority, useStudentAnnouncements } from '../features/student/useStudentAnnouncements';
+import { useStudentCohorts } from '../features/student/useStudentCohorts';
 
 type DateFilter = 'all' | 'active' | 'expired';
 type PinnedFilter = 'all' | 'pinned';
@@ -20,6 +21,7 @@ const pinnedFilters: Array<{ label: string; value: PinnedFilter }> = [
   { label: 'All notices', value: 'all' },
   { label: 'Pinned only', value: 'pinned' }
 ];
+const defaultTypeOptions = ['general', 'custom', 'resource', 'session', 'project', 'alert'];
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
@@ -79,6 +81,10 @@ function cleanFilterValue(value: string | null) {
   return trimmed ? trimmed : 'all';
 }
 
+function cleanTypeFilter(value: string | null) {
+  return cleanFilterValue(value).toLowerCase();
+}
+
 function normalizeFilterValue(value: string) {
   return value.trim().toLowerCase();
 }
@@ -102,7 +108,7 @@ function matchesFilters(announcement: StudentAnnouncement, filters: FilterState)
   if (filters.date === 'expired' && !isExpired(announcement)) return false;
 
   if (filters.audience !== 'all') {
-    const audienceValues = [...announcement.programKeys, ...announcement.cohortNames].map(normalizeFilterValue);
+    const audienceValues = announcement.cohortNames.map(normalizeFilterValue);
     if (!audienceValues.includes(normalizeFilterValue(filters.audience))) return false;
   }
 
@@ -158,14 +164,15 @@ export function StudentAnnouncementsPage() {
     date: asDateFilter(searchParams.get('date')),
     pinned: asPinnedFilter(searchParams.get('pinned')),
     priority: asPriority(searchParams.get('priority')),
-    type: cleanFilterValue(searchParams.get('type'))
+    type: cleanTypeFilter(searchParams.get('type'))
   };
   const announcementsQuery = useStudentAnnouncements({ limit: 100, page });
+  const cohortsQuery = useStudentCohorts({ limit: 200, page: 1, status: 'all' });
   const data = announcementsQuery.data;
   const totalPages = data?.totalPages ?? 1;
   const hasPagination = useMemo(() => Boolean(data && (data.hasPreviousPage || data.hasNextPage || totalPages > 1)), [data, totalPages]);
-  const typeOptions = useMemo(() => uniqueSorted(data?.items.map((item) => item.type ?? 'General') ?? []), [data?.items]);
-  const audienceOptions = useMemo(() => uniqueSorted(data?.items.flatMap((item) => [...item.programKeys, ...item.cohortNames]) ?? []), [data?.items]);
+  const typeOptions = useMemo(() => uniqueSorted([...defaultTypeOptions, ...(data?.items.map((item) => item.type ?? 'general') ?? [])]), [data?.items]);
+  const cohortOptions = useMemo(() => uniqueSorted(cohortsQuery.data?.items.map((cohort) => cohort.name) ?? []), [cohortsQuery.data?.items]);
   const filteredItems = useMemo(() => data?.items.filter((announcement) => matchesFilters(announcement, filters)) ?? [], [data?.items, filters.audience, filters.date, filters.pinned, filters.priority, filters.type]);
 
   function setFilter(key: keyof FilterState, value: string) {
@@ -206,16 +213,17 @@ export function StudentAnnouncementsPage() {
       />
 
       <section className="filter-bar announcement-filters" aria-label="Announcement filters">
-        <div className="filter-bar__controls announcement-filter-row" aria-label="Category filters" role="group">
-          <button className={filters.type === 'all' ? 'segmented-button segmented-button--active' : 'segmented-button'} onClick={() => setFilter('type', 'all')} type="button">
-            All
-          </button>
-          {typeOptions.map((type) => (
-            <button className={filters.type === type ? 'segmented-button segmented-button--active' : 'segmented-button'} key={type} onClick={() => setFilter('type', type)} type="button">
-              {filterLabel(type)}
-            </button>
-          ))}
-        </div>
+        <label className="announcement-filter-select">
+          Notification type
+          <select value={filters.type} onChange={(event) => setFilter('type', event.target.value)}>
+            <option value="all">All notification types</option>
+            {typeOptions.map((type) => (
+              <option key={type} value={type}>
+                {filterLabel(type)}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <label className="announcement-filter-select">
           Priority
@@ -251,10 +259,10 @@ export function StudentAnnouncementsPage() {
         </label>
 
         <label className="announcement-filter-select">
-          Program / cohort
+          Cohort
           <select value={filters.audience} onChange={(event) => setFilter('audience', event.target.value)}>
-            <option value="all">All programs and cohorts</option>
-            {audienceOptions.map((option) => (
+            <option value="all">All my cohorts</option>
+            {cohortOptions.map((option) => (
               <option key={option} value={option}>
                 {option}
               </option>

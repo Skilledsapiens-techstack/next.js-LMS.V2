@@ -1,10 +1,11 @@
-import { ArrowLeft, Clock3, MessageSquareText, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Clock3, MessageSquareText, RefreshCw, Send, ShieldCheck } from 'lucide-react';
+import { FormEvent, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
-import { StudentSupportTicket, useStudentSupportTicketDetail } from '../features/student/useStudentSupportTickets';
+import { StudentSupportTicket, useCreateStudentSupportTicketReply, useStudentSupportTicketDetail } from '../features/student/useStudentSupportTickets';
 
 function formatDate(value: string | undefined) {
   if (!value) {
@@ -44,7 +45,27 @@ function renderTicketMeta(ticket: StudentSupportTicket) {
 export function StudentSupportDetailPage() {
   const { ticketId } = useParams();
   const ticketQuery = useStudentSupportTicketDetail(ticketId);
+  const replyMutation = useCreateStudentSupportTicketReply();
   const data = ticketQuery.data;
+  const [replyBody, setReplyBody] = useState('');
+  const [replyMessage, setReplyMessage] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
+
+  const canReply =
+    Boolean(data?.ticket.canReply ?? data?.ticket.conversationMode === 'two_way') && data?.ticket.status !== 'closed' && data?.ticket.status !== 'resolved';
+
+  async function handleReplySubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!ticketId) return;
+    setReplyMessage(null);
+
+    try {
+      await replyMutation.mutateAsync({ body: replyBody, ticketId });
+      setReplyBody('');
+      setReplyMessage({ tone: 'success', text: 'Reply sent successfully.' });
+    } catch (error) {
+      setReplyMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Reply could not be sent.' });
+    }
+  }
 
   if (ticketQuery.isLoading) {
     return (
@@ -118,9 +139,32 @@ export function StudentSupportDetailPage() {
 
       {data.hasMoreMessages ? <StateBlock title="Thread capped">Only the latest allowed message window is shown in this read-only view.</StateBlock> : null}
 
-      <StateBlock title="Read-only support detail">
-        Reply, attachment, escalation, status update, and internal note workflows stay disabled until controlled write enablement.
-      </StateBlock>
+      <section className="data-panel">
+        <div className="data-panel__header">
+          <div>
+            <h2>Reply to support</h2>
+            <p>{canReply ? 'Add extra context when the support team asks for details.' : 'This ticket is closed or read-only.'}</p>
+          </div>
+        </div>
+        <form className="support-query-form" onSubmit={handleReplySubmit}>
+          <label>
+            <span>Message *</span>
+            <textarea
+              disabled={!canReply || replyMutation.isPending}
+              maxLength={2000}
+              onChange={(event) => setReplyBody(event.target.value)}
+              placeholder="Type your reply for the support team."
+              rows={5}
+              value={replyBody}
+            />
+          </label>
+          {replyMessage ? <div className={replyMessage.tone === 'success' ? 'auth-alert auth-alert--success' : 'auth-alert auth-alert--error'}>{replyMessage.text}</div> : null}
+          <button className="student-action student-action--primary support-submit" disabled={!canReply || replyMutation.isPending} type="submit">
+            {replyMutation.isPending ? <RefreshCw size={17} /> : <Send size={17} />}
+            {replyMutation.isPending ? 'Sending reply...' : 'Send reply'}
+          </button>
+        </form>
+      </section>
     </div>
   );
 }

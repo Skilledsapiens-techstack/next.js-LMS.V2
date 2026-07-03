@@ -1,22 +1,24 @@
-import { BookOpenCheck, FileText, HelpCircle, LifeBuoy, MessageSquareText, Paperclip, Send, ShieldCheck } from 'lucide-react';
-import { FormEvent, useMemo, useState } from 'react';
+import { BookOpenCheck, HelpCircle, LifeBuoy, MessageSquareText, RefreshCw, Send, ShieldCheck } from 'lucide-react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
-import { StudentSupportTicket, StudentSupportTicketStatus, useStudentSupportTickets } from '../features/student/useStudentSupportTickets';
+import {
+  StudentSupportTicket,
+  StudentSupportCategory,
+  StudentSupportFaq,
+  StudentSupportTicketStatus,
+  useCreateStudentSupportTicket,
+  useStudentSupportCategories,
+  useStudentSupportFaqs,
+  useStudentSupportTickets
+} from '../features/student/useStudentSupportTickets';
 
-type SupportTab = 'guide' | 'faqs' | 'query' | 'project';
-
-const tabs: Array<{ id: SupportTab; label: string }> = [
-  { id: 'guide', label: 'How to use this Portal' },
-  { id: 'faqs', label: 'Program FAQs' },
-  { id: 'query', label: 'Raise Query' },
-  { id: 'project', label: 'Live Project Support Data' }
-];
-
-const categoryOptions = ['Login / Access', 'Resources', 'Recordings', 'Schedule / Workshop', 'Live Project', 'Certificate', 'Payments', 'Other'];
-const priorityOptions = ['Normal', 'Urgent'];
+const priorityOptions = [
+  { label: 'Normal', value: 'normal' },
+  { label: 'Urgent', value: 'urgent' }
+] as const;
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
@@ -40,6 +42,17 @@ function formatDate(value: string | undefined) {
 
 function formatOption(value: string) {
   return value.replace(/_/g, ' ');
+}
+
+function supportHint(categoryName: string | undefined) {
+  const normalized = categoryName?.toLowerCase() ?? '';
+  if (normalized.includes('recording')) return 'Mention recording title, session date, and what is missing or not opening.';
+  if (normalized.includes('resource')) return 'Mention resource name, program/cohort, and whether the link is locked or not opening.';
+  if (normalized.includes('schedule') || normalized.includes('workshop')) return 'Mention workshop title, date, and the join/link issue.';
+  if (normalized.includes('project')) return 'Mention project title, role, cohort, and the exact submission concern.';
+  if (normalized.includes('certificate')) return 'Mention certificate type, program/cohort, and correction needed.';
+  if (normalized.includes('payment')) return 'Mention payment date, amount, and payment reference if available.';
+  return 'Mention the module name, program/cohort, and the exact help you need.';
 }
 
 function statusTone(status: StudentSupportTicketStatus) {
@@ -102,84 +115,99 @@ function SupportGuide() {
   );
 }
 
-function SupportFaqs() {
-  const faqs = [
-    {
-      title: 'Program access',
-      description: 'If a program or cohort is missing, raise a query with your registered email and cohort name.'
-    },
-    {
-      title: 'Recordings and resources',
-      description: 'Access is based on your active program and cohort entitlement.'
-    },
-    {
-      title: 'Certificates',
-      description: 'Certificate actions will appear only when the certificate workflow is ready for your account.'
-    }
-  ];
+function SupportFaqs({ faqs, isLoading }: { faqs: StudentSupportFaq[]; isLoading: boolean }) {
+  if (isLoading) return <LoadingState />;
 
   return (
-    <section className="support-info-grid" aria-label="Program FAQs">
-      {faqs.map((item) => (
-        <article className="support-info-card" key={item.title}>
+    <section className="support-faq-list" aria-label="Program FAQs">
+      {faqs.length > 0 ? (
+        faqs.map((item) => (
+          <details className={item.featured ? 'support-faq-item support-faq-item--featured' : 'support-faq-item'} key={item.id}>
+            <summary>
+              <BookOpenCheck size={17} />
+              <span>{item.question}</span>
+            </summary>
+            <p>{item.answer}</p>
+          </details>
+        ))
+      ) : (
+        <article className="support-info-card support-info-card--wide">
           <BookOpenCheck size={22} />
           <div>
-            <h2>{item.title}</h2>
-            <p>{item.description}</p>
+            <h2>No FAQs published yet</h2>
+            <p>Published FAQs mapped to your programs and cohorts will appear here.</p>
           </div>
         </article>
-      ))}
+      )}
     </section>
   );
 }
 
-function LiveProjectSupportData() {
-  return (
-    <section className="support-info-grid" aria-label="Live project support data">
-      <article className="support-info-card support-info-card--wide">
-        <FileText size={22} />
-        <div>
-          <h2>Live project help</h2>
-          <p>For project support, include the project title, role, expected deliverable, and the exact submission concern.</p>
-        </div>
-      </article>
-      <article className="support-info-card support-info-card--wide">
-        <ShieldCheck size={22} />
-        <div>
-          <h2>Submission checks</h2>
-          <p>Keep final files clean, named clearly, and aligned to the project instructions before submitting.</p>
-        </div>
-      </article>
-    </section>
-  );
-}
+function RaiseQueryForm({ categories }: { categories: StudentSupportCategory[] }) {
+  const createTicketMutation = useCreateStudentSupportTicket();
+  const firstCategory = categories[0]?.categoryName ?? '';
+  const [categoryName, setCategoryName] = useState(firstCategory);
+  const [createdTicket, setCreatedTicket] = useState<StudentSupportTicket | null>(null);
+  const [description, setDescription] = useState('');
+  const [formMessage, setFormMessage] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
+  const [priority, setPriority] = useState<'normal' | 'urgent'>('normal');
+  const [relatedUrl, setRelatedUrl] = useState('');
+  const [subject, setSubject] = useState('');
+  const selectedCategory = categories.find((item) => item.categoryName === categoryName);
 
-function RaiseQueryForm() {
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  useEffect(() => {
+    if (!categoryName && firstCategory) setCategoryName(firstCategory);
+  }, [categoryName, firstCategory]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setFormMessage(null);
+
+    try {
+      const result = await createTicketMutation.mutateAsync({
+        categoryName,
+        description,
+        priority,
+        relatedUrl: relatedUrl.trim() || undefined,
+        subject
+      });
+      setCreatedTicket(result.ticket);
+      setDescription('');
+      setPriority('normal');
+      setRelatedUrl('');
+      setSubject('');
+      setFormMessage({ tone: 'success', text: `Query submitted. Ticket ${result.ticket.ticketId ?? result.ticket.id} is now visible in your recent queries.` });
+    } catch (error) {
+      setCreatedTicket(null);
+      setFormMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Support ticket could not be created.' });
+    }
   }
 
   return (
     <form className="support-query-form" onSubmit={handleSubmit}>
       <div className="support-note">
-        <Paperclip size={18} />
-        <p>Attachment limit: one file only, maximum 1 MB. Supported: PNG, JPG, WebP, PDF, or TXT.</p>
+        <ShieldCheck size={18} />
+        <p>Share only LMS issue details. Do not include passwords, OTPs, card details, or private account access information.</p>
       </div>
 
       <div className="support-form-grid">
         <label>
           <span>Category *</span>
-          <select defaultValue={categoryOptions[0]}>
-            {categoryOptions.map((option) => (
-              <option key={option}>{option}</option>
+          <select disabled={categories.length === 0} required value={categoryName} onChange={(event) => setCategoryName(event.target.value)}>
+            {categories.map((option) => (
+              <option key={option.id} value={option.categoryName}>
+                {option.categoryName}
+              </option>
             ))}
           </select>
         </label>
         <label>
-          <span>Priority *</span>
-          <select defaultValue={priorityOptions[0]}>
+          <span>Priority</span>
+          <select value={priority} onChange={(event) => setPriority(event.target.value as 'normal' | 'urgent')}>
             {priorityOptions.map((option) => (
-              <option key={option}>{option}</option>
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
             ))}
           </select>
         </label>
@@ -187,37 +215,52 @@ function RaiseQueryForm() {
 
       <label>
         <span>Subject *</span>
-        <input maxLength={120} placeholder="Short summary of the issue" type="text" />
+        <input maxLength={120} onChange={(event) => setSubject(event.target.value)} placeholder="Example: Recording link is not opening" required type="text" value={subject} />
       </label>
 
       <label>
         <span>Description *</span>
-        <textarea maxLength={2000} placeholder="Explain what happened, where it happened, and what help you need." rows={7} />
+        <textarea
+          maxLength={2000}
+          onChange={(event) => setDescription(event.target.value)}
+          placeholder={supportHint(categoryName)}
+          required
+          rows={6}
+          value={description}
+        />
       </label>
 
       <label>
-        <span>Related module / item link</span>
-        <input placeholder="Optional URL from LMS, Zoom, resource, or certificate page" type="url" />
+        <span>Related link, if any</span>
+        <input onChange={(event) => setRelatedUrl(event.target.value)} placeholder="Optional LMS, Zoom, resource, or certificate link" type="url" value={relatedUrl} />
       </label>
 
-      <label>
-        <span>Attachment</span>
-        <input accept=".png,.jpg,.jpeg,.webp,.pdf,.txt" type="file" />
-      </label>
+      {formMessage ? (
+        <div className={formMessage.tone === 'success' ? 'auth-alert auth-alert--success support-success-alert' : 'auth-alert auth-alert--error'}>
+          <span>{formMessage.text}</span>
+          {createdTicket ? (
+            <Link to={`/student/support/${createdTicket.id}`}>
+              View ticket
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
 
-      <button className="student-action student-action--primary support-submit" disabled type="submit">
-        <Send size={17} />
-        Create Support Ticket
+      {selectedCategory?.conversationMode === 'admin_only' ? <p className="support-form-note">This category is handled by the admin team as a managed request.</p> : null}
+
+      <button className="student-action student-action--primary support-submit" disabled={createTicketMutation.isPending || categories.length === 0 || !categoryName} type="submit">
+        {createTicketMutation.isPending ? <RefreshCw size={17} /> : <Send size={17} />}
+        {createTicketMutation.isPending ? 'Submitting query...' : 'Submit query'}
       </button>
-      <p className="support-form-note">Ticket submission will be enabled after support workflow controls are completed.</p>
     </form>
   );
 }
 
 export function StudentSupportPage() {
   const [searchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState<SupportTab>('query');
   const page = asPositiveInteger(searchParams.get('page'), 1);
+  const categoriesQuery = useStudentSupportCategories();
+  const faqsQuery = useStudentSupportFaqs();
   const ticketsQuery = useStudentSupportTickets({ limit: 8, page, status: 'all' });
   const data = ticketsQuery.data;
   const totalPages = data?.totalPages ?? 1;
@@ -245,96 +288,90 @@ export function StudentSupportPage() {
   return (
     <div className="page-stack support-page">
       <PageHeader
-        description="Portal guidance, program FAQs, query submission, and live project support data in one place."
+        description="Raise a query, track replies, and find quick help for your LMS account."
         eyebrow="Student help desk"
-        title="Support & Guidelines"
+        title="Support"
       />
 
-      <section className="support-tabs" aria-label="Support sections">
-        {tabs.map((tab) => (
-          <button className={activeTab === tab.id ? 'support-tab support-tab--active' : 'support-tab'} key={tab.id} onClick={() => setActiveTab(tab.id)} type="button">
-            {tab.label}
-          </button>
-        ))}
+      <section className="support-desk-grid" aria-label="Support desk">
+        <article className="support-panel support-panel--primary">
+          <div className="support-panel__header">
+            <LifeBuoy size={22} />
+            <div>
+              <h2>Raise a query</h2>
+              <p>Tell us what is not working. Keep it short, clear, and include the module or item name where possible.</p>
+            </div>
+          </div>
+          <RaiseQueryForm categories={categoriesQuery.data?.items ?? []} />
+        </article>
+
+        <aside className="support-panel support-ticket-panel">
+          <div className="support-panel__header">
+            <MessageSquareText size={22} />
+            <div>
+              <h2>Recent queries</h2>
+              <p>
+                {visibleTickets.length > 0
+                  ? `${visibleTickets.length} recent quer${visibleTickets.length === 1 ? 'y' : 'ies'}, ${openCount} active on this page.`
+                  : 'Your query history and replies will appear here.'}
+              </p>
+            </div>
+          </div>
+
+          {visibleTickets.length > 0 ? (
+            <div className="support-ticket-list">
+              {visibleTickets.map((ticket) => (
+                <TicketCard key={ticket.id} ticket={ticket} />
+              ))}
+            </div>
+          ) : (
+            <div className="support-empty-state">
+              <MessageSquareText size={24} />
+              <div>
+                <h2>No queries yet</h2>
+                <p>Submit a query and it will appear here for tracking.</p>
+              </div>
+            </div>
+          )}
+
+          {data && totalPages > 1 ? (
+            <nav className="pagination-bar" aria-label="Support pagination">
+              {data.hasPreviousPage ? (
+                <Link className="pagination-link" to={buildPageLink(page - 1)}>
+                  Previous page
+                </Link>
+              ) : (
+                <span className="pagination-link pagination-link--disabled">Previous page</span>
+              )}
+              <span>
+                Page {page} of {totalPages}
+              </span>
+              {data.hasNextPage ? (
+                <Link className="pagination-link" to={buildPageLink(page + 1)}>
+                  Next page
+                </Link>
+              ) : (
+                <span className="pagination-link pagination-link--disabled">Next page</span>
+              )}
+            </nav>
+          ) : null}
+        </aside>
       </section>
 
-      {activeTab === 'guide' ? <SupportGuide /> : null}
-      {activeTab === 'faqs' ? <SupportFaqs /> : null}
-      {activeTab === 'project' ? <LiveProjectSupportData /> : null}
-
-      {activeTab === 'query' ? (
-        <section className="support-desk-grid" aria-label="Support desk">
-          <article className="support-panel">
-            <div className="support-panel__header">
-              <LifeBuoy size={22} />
-              <div>
-                <h2>Raise a Student Query</h2>
-                <p>Create a support ticket for access issues, resources, recordings, schedules, projects, certificates, payments, or other LMS help.</p>
-              </div>
-            </div>
-            <RaiseQueryForm />
-          </article>
-
-          <aside className="support-panel support-ticket-panel">
-            <div className="support-panel__header">
-              <MessageSquareText size={22} />
-              <div>
-                <h2>My Support Tickets</h2>
-                <p>
-                  {visibleTickets.length > 0
-                    ? `${visibleTickets.length} ticket${visibleTickets.length === 1 ? '' : 's'} shown, ${openCount} active on this page.`
-                    : 'Track ticket status and continue conversations when replies are available.'}
-                </p>
-              </div>
-            </div>
-
-            {visibleTickets.length > 0 ? (
-              <div className="support-ticket-list">
-                {visibleTickets.map((ticket) => (
-                  <TicketCard key={ticket.id} ticket={ticket} />
-                ))}
-              </div>
-            ) : (
-              <div className="support-empty-state">
-                <MessageSquareText size={24} />
-                <div>
-                  <h2>No support tickets yet</h2>
-                  <p>Your support ticket history will appear here.</p>
-                </div>
-              </div>
-            )}
-
-            {data && totalPages > 1 ? (
-              <nav className="pagination-bar" aria-label="Support pagination">
-                {data.hasPreviousPage ? (
-                  <Link className="pagination-link" to={buildPageLink(page - 1)}>
-                    Previous page
-                  </Link>
-                ) : (
-                  <span className="pagination-link pagination-link--disabled">Previous page</span>
-                )}
-                <span>
-                  Page {page} of {totalPages}
-                </span>
-                {data.hasNextPage ? (
-                  <Link className="pagination-link" to={buildPageLink(page + 1)}>
-                    Next page
-                  </Link>
-                ) : (
-                  <span className="pagination-link pagination-link--disabled">Next page</span>
-                )}
-              </nav>
-            ) : null}
-          </aside>
-        </section>
-      ) : null}
-
-      <section className="support-conversation-panel">
-        <MessageSquareText size={22} />
+      <section className="support-help-section" aria-label="Support guidance">
         <div>
-          <h2>Ticket Conversation</h2>
-          <p>Select a support ticket to view messages.</p>
+          <span className="eyebrow">Quick help</span>
+          <h2>Before you submit</h2>
         </div>
+        <SupportGuide />
+      </section>
+
+      <section className="support-help-section" aria-label="Program FAQs">
+        <div>
+          <span className="eyebrow">Guidance</span>
+          <h2>Frequently asked questions</h2>
+        </div>
+        <SupportFaqs faqs={faqsQuery.data?.items ?? []} isLoading={faqsQuery.isLoading} />
       </section>
     </div>
   );

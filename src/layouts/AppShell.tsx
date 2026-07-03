@@ -1,5 +1,5 @@
 import { Bell, LogOut, Menu, ShieldCheck, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { NavItem, Portal } from '../app/routeConfig';
 import { useAuth } from '../auth/AuthProvider';
@@ -21,7 +21,7 @@ const studentSections: NavSection[] = [
   { title: 'My Progress', moduleIds: ['projects', 'project-submissions', 'certificates'] },
   { title: 'Community', moduleIds: ['community'] },
   { title: 'Help', moduleIds: ['announcements', 'support'] },
-  { title: 'Account', moduleIds: ['payments', 'access'] }
+  { title: 'Account', moduleIds: ['payments'] }
 ];
 
 const adminSections: NavSection[] = [
@@ -69,6 +69,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   const [isNavOpen, setIsNavOpen] = useState(false);
   const [isAnnouncementOpen, setIsAnnouncementOpen] = useState(false);
   const [dismissedBannerId, setDismissedBannerId] = useState<string | null>(null);
+  const announcementMenuRef = useRef<HTMLDivElement | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const { signOut } = useAuth();
@@ -86,6 +87,25 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   useEffect(() => {
     setIsAnnouncementOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    if (!isAnnouncementOpen) return;
+
+    function closeOnOutsideClick(event: MouseEvent | TouchEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (announcementMenuRef.current?.contains(target)) return;
+      setIsAnnouncementOpen(false);
+    }
+
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    document.addEventListener('touchstart', closeOnOutsideClick);
+
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick);
+      document.removeEventListener('touchstart', closeOnOutsideClick);
+    };
+  }, [isAnnouncementOpen]);
 
   async function handleSignOut() {
     setIsNavOpen(false);
@@ -156,7 +176,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
           </div>
           <div className="topbar-actions">
             {portal === 'student' ? (
-              <div className="topbar-announcements">
+              <div className="topbar-announcements" ref={announcementMenuRef}>
                 <button
                   aria-expanded={isAnnouncementOpen}
                   aria-label={`Open announcements${activeAnnouncementCount > 0 ? `, ${activeAnnouncementCount} active` : ''}`}
@@ -170,8 +190,13 @@ export function AppShell({ navItems, portal }: AppShellProps) {
                 {isAnnouncementOpen ? (
                   <section className="topbar-announcement-menu" aria-label="Latest announcements">
                     <div className="topbar-announcement-menu__header">
-                      <strong>Announcements</strong>
-                      <small>{activeAnnouncementCount} active</small>
+                      <div>
+                        <strong>Announcements</strong>
+                        <small>{activeAnnouncementCount} active</small>
+                      </div>
+                      <button aria-label="Close announcements" className="topbar-announcement-close" onClick={() => setIsAnnouncementOpen(false)} type="button">
+                        <X size={16} />
+                      </button>
                     </div>
                     {announcementItems.length > 0 ? (
                       <div className="topbar-announcement-menu__list">
