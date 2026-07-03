@@ -5,6 +5,7 @@ import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import {
   StudentCertificate,
+  useGenerateStudentCertificatePdf,
   useStudentCertificates
 } from '../features/student/useStudentCertificates';
 
@@ -36,7 +37,15 @@ function certificateTone(certificate: StudentCertificate) {
   return certificate.status === 'issued' && certificate.generationStatus === 'ready' ? 'safe' : certificate.generationStatus === 'failed' || certificate.generationStatus === 'expired' ? 'warning' : 'neutral';
 }
 
-function CertificateCard({ certificate }: { certificate: StudentCertificate }) {
+function CertificateCard({
+  certificate,
+  isPreparing,
+  onDownload
+}: {
+  certificate: StudentCertificate;
+  isPreparing: boolean;
+  onDownload: (certificate: StudentCertificate) => void;
+}) {
   const title = certificate.certificateType === 'live_project' ? certificate.projectTitle : certificate.programName ?? certificate.programKey;
   const shouldShowProjectTitle = certificate.certificateType === 'live_project' && Boolean(certificate.projectTitle);
   const programLabel = certificate.programName ?? certificate.programKey;
@@ -52,6 +61,9 @@ function CertificateCard({ certificate }: { certificate: StudentCertificate }) {
           Certificate ID: <strong>{certificate.certificateId}</strong>
         </p>
         <p>Issued: {formatDate(certificate.issueDate)}</p>
+        <button className="segmented-button" disabled={isPreparing} onClick={() => onDownload(certificate)} type="button">
+          {isPreparing ? 'Preparing...' : certificate.generationStatus === 'ready' ? 'Download PDF' : 'Generate PDF'}
+        </button>
       </div>
     </article>
   );
@@ -61,9 +73,21 @@ export function StudentCertificatesPage() {
   const [searchParams] = useSearchParams();
   const page = asPositiveInteger(searchParams.get('page'), 1);
   const certificatesQuery = useStudentCertificates({ page });
+  const generateCertificatePdfMutation = useGenerateStudentCertificatePdf();
   const data = certificatesQuery.data;
   const totalPages = data?.totalPages ?? 1;
   const hasPagination = useMemo(() => Boolean(data && (data.hasPreviousPage || data.hasNextPage || totalPages > 1)), [data, totalPages]);
+
+  async function handleDownloadCertificate(certificate: StudentCertificate) {
+    const result = await generateCertificatePdfMutation.mutateAsync({
+      certificateId: certificate.id,
+      force: certificate.generationStatus !== 'ready'
+    });
+    const firstResult = result.results[0];
+    if (firstResult?.signedUrl) {
+      window.open(firstResult.signedUrl, '_blank', 'noopener,noreferrer');
+    }
+  }
 
   if (certificatesQuery.isLoading) {
     return (
@@ -94,7 +118,12 @@ export function StudentCertificatesPage() {
       {data && data.items.length > 0 ? (
         <section className="certificate-card-grid" aria-label="Certificate records">
           {data.items.map((certificate) => (
-            <CertificateCard certificate={certificate} key={certificate.id} />
+            <CertificateCard
+              certificate={certificate}
+              isPreparing={generateCertificatePdfMutation.isPending}
+              key={certificate.id}
+              onDownload={(item) => void handleDownloadCertificate(item)}
+            />
           ))}
         </section>
       ) : (

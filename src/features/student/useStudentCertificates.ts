@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthProvider';
-import { apiGet } from '../../lib/supabaseApi';
+import { apiGet, apiInvokeFunction } from '../../lib/supabaseApi';
 import { PaginatedResponse } from './useStudentAnnouncements';
 
 export type StudentCertificateStatus = 'draft' | 'issued';
@@ -15,12 +15,26 @@ export type StudentCertificate = {
   generationStatus: StudentCertificateGenerationStatus;
   id: string;
   issueDate: string;
+  pdfExpiresAt?: string;
+  pdfGeneratedAt?: string;
   programKey?: string;
   programName?: string;
   projectId?: string;
   projectTitle?: string;
   status: StudentCertificateStatus;
   updatedAt?: string;
+};
+
+export type StudentCertificatePdfResult = {
+  message: string;
+  results: Array<{
+    certificate?: StudentCertificate;
+    certificateId?: string;
+    error?: string;
+    expiresAt?: string;
+    signedUrl?: string;
+    status: 'generated' | 'reused' | 'failed';
+  }>;
 };
 
 export type StudentCertificatesQuery = {
@@ -57,5 +71,19 @@ export function useStudentCertificates(query: StudentCertificatesQuery) {
       }),
     queryKey: ['student-certificates', accessToken, page, limit, status, generationStatus, certificateType, search],
     staleTime: 60_000
+  });
+}
+
+export function useGenerateStudentCertificatePdf() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ certificateId, force = false }: { certificateId: string; force?: boolean }) =>
+      apiInvokeFunction<StudentCertificatePdfResult, { certificateId: string; force: boolean }>('certificate-issuance', {
+        accessToken: accessToken ?? undefined,
+        body: { certificateId, force }
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['student-certificates'] })
   });
 }

@@ -12,10 +12,17 @@ import {
   AdminCertificateRequestAdminStatus,
   AdminCertificateStatus,
   AdminCertificateType,
+  AdminCertificateProgramSetting,
+  IssueLeadershipCertificatesInput,
   IssueLiveProjectCertificateInput,
-  useIssueLiveProjectCertificate,
   useAdminCertificateRequests,
-  useAdminCertificates
+  useAdminCertificates,
+  useAdminCertificateProgramSettings,
+  useGenerateAdminCertificatePdf,
+  useIssueLeadershipCertificates,
+  useIssueLiveProjectCertificate,
+  useRevokeAdminCertificate,
+  useSaveCertificateProgramSetting
 } from '../features/admin/useAdminCertificates';
 import { AdminProgram, useAdminPrograms } from '../features/admin/useAdminPrograms';
 import { useAdminStudents } from '../features/admin/useAdminStudents';
@@ -156,6 +163,25 @@ function lockedButtonLabel(label: string) {
 }
 
 const durationOptions = [2, 4, 6, 8];
+
+type CertificateWorkspaceTab = 'leadership' | 'live-projects' | 'issued';
+
+const certificateTabs: Array<{ description: string; id: CertificateWorkspaceTab; label: string }> = [
+  { description: 'Bulk issue program completion certificates and manage module templates.', id: 'leadership', label: 'Leadership Programs' },
+  { description: 'Review approved live project submissions and issue project certificates.', id: 'live-projects', label: 'Live Projects' },
+  { description: 'Search, verify, revoke, and monitor generated certificate records.', id: 'issued', label: 'Issued Certificates' }
+];
+
+function modulesFromText(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function moduleTextFromSetting(setting: AdminCertificateProgramSetting | undefined, fallback: string) {
+  return setting?.modulesCovered?.length ? setting.modulesCovered.join('\n') : fallback;
+}
 
 function FinalIssuanceModal({
   error,
@@ -377,8 +403,73 @@ function RequestQueue({
   );
 }
 
+function RevokeCertificateModal({
+  certificate,
+  error,
+  isRevoking,
+  onClose,
+  onRevoke
+}: {
+  certificate: AdminCertificate;
+  error?: string;
+  isRevoking: boolean;
+  onClose: () => void;
+  onRevoke: (reason: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState('');
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await onRevoke(reason);
+  }
+
+  return (
+    <div className="student-modal-backdrop" role="presentation">
+      <form aria-labelledby="certificate-revoke-title" aria-modal="true" className="student-modal certificate-revoke-modal" onSubmit={handleSubmit} role="dialog">
+        <header className="student-modal__header">
+          <div>
+            <span className="certificate-section-eyebrow">Revoke Certificate</span>
+            <h2 id="certificate-revoke-title">{certificate.certificateId}</h2>
+          </div>
+          <button aria-label="Close revoke certificate" className="student-modal__icon-button" onClick={onClose} type="button">
+            ×
+          </button>
+        </header>
+        <div className="student-modal__body">
+          <div className="certificate-muted-card">
+            <ShieldCheck size={17} />
+            <span>
+              This will mark the certificate as revoked and expire its PDF status. Students will still see the certificate record as revoked.
+            </span>
+          </div>
+          <label className="certificate-field">
+            <span>Reason *</span>
+            <textarea
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Example: Incorrect student details, duplicate certificate, or issued against wrong cohort."
+              required
+              value={reason}
+            />
+          </label>
+          {error ? <p className="admin-submission-message admin-submission-message--error">{error}</p> : null}
+        </div>
+        <footer className="student-modal__footer">
+          <button className="segmented-button" disabled={isRevoking} onClick={onClose} type="button">
+            Cancel
+          </button>
+          <button className="segmented-button segmented-button--danger" disabled={isRevoking || reason.trim().length < 8} type="submit">
+            {isRevoking ? 'Revoking...' : 'Revoke Certificate'}
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
 export function AdminCertificatesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = (searchParams.get('tab') as CertificateWorkspaceTab | null) ?? 'leadership';
+  const [activeTab, setActiveTab] = useState<CertificateWorkspaceTab>(certificateTabs.some((tab) => tab.id === initialTab) ? initialTab : 'leadership');
   const page = asPositiveInteger(searchParams.get('page'), 1);
   const status = parseCertificateStatus(searchParams.get('status'));
   const generationStatus = parseGenerationStatus(searchParams.get('generationStatus'));
@@ -395,11 +486,17 @@ export function AdminCertificatesPage() {
   const [moduleStatus, setModuleStatus] = useState<'active' | 'inactive'>('active');
   const [moduleText, setModuleText] = useState('');
   const [selectedRequest, setSelectedRequest] = useState<AdminCertificateRequest | null>(null);
+  const [certificateToRevoke, setCertificateToRevoke] = useState<AdminCertificate | null>(null);
   const [certificateMessage, setCertificateMessage] = useState('');
 
   const certificatesQuery = useAdminCertificates({ certificateType, generationStatus, page, search, status });
   const requestsQuery = useAdminCertificateRequests({ adminStatus: 'pending', limit: 10, moderatorStatus: 'approved', page: 1 });
+  const certificateSettingsQuery = useAdminCertificateProgramSettings();
   const issueCertificateMutation = useIssueLiveProjectCertificate();
+  const issueLeadershipMutation = useIssueLeadershipCertificates();
+  const generateCertificatePdfMutation = useGenerateAdminCertificatePdf();
+  const revokeCertificateMutation = useRevokeAdminCertificate();
+  const saveSettingMutation = useSaveCertificateProgramSetting();
   const programsQuery = useAdminPrograms({ limit: 100, page: 1, status: 'active' });
   const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, status: 'all' });
   const cohortsPageTwoQuery = useAdminCohorts({ limit: 100, page: 2, status: 'all' });
@@ -413,6 +510,11 @@ export function AdminCertificatesPage() {
   );
   const selectedProgram = useMemo(() => programs.find((program) => program.programKey === selectedProgramKey), [programs, selectedProgramKey]);
   const moduleProgram = useMemo(() => programs.find((program) => program.programKey === moduleProgramKey), [programs, moduleProgramKey]);
+  const certificateSettings = certificateSettingsQuery.data?.items ?? [];
+  const settingsByProgramKey = useMemo(
+    () => new Map(certificateSettings.map((setting) => [setting.programKey, setting])),
+    [certificateSettings]
+  );
   const filteredCohorts = useMemo(
     () => allCohorts.filter((cohort) => isCohortForProgram(cohort, selectedProgram)).sort((a, b) => a.name.localeCompare(b.name)),
     [allCohorts, selectedProgram]
@@ -446,16 +548,19 @@ export function AdminCertificatesPage() {
 
   function handleProgramChange(programKey: string) {
     const program = programs.find((item) => item.programKey === programKey);
+    const setting = settingsByProgramKey.get(programKey);
     setSelectedProgramKey(programKey);
     setSelectedCohortName('');
     setSelectedStudentIds(new Set());
-    setModulesCovered(leadershipModuleDefaults[programShortKey(program)] ?? '');
+    setModulesCovered(moduleTextFromSetting(setting, leadershipModuleDefaults[programShortKey(program)] ?? ''));
   }
 
   function handleModuleProgramChange(programKey: string) {
     const program = programs.find((item) => item.programKey === programKey);
+    const setting = settingsByProgramKey.get(programKey);
     setModuleProgramKey(programKey);
-    setModuleText(leadershipModuleDefaults[programShortKey(program)] ?? '');
+    setModuleStatus(setting?.status ?? 'active');
+    setModuleText(moduleTextFromSetting(setting, leadershipModuleDefaults[programShortKey(program)] ?? ''));
   }
 
   function toggleStudent(studentId: string) {
@@ -476,8 +581,79 @@ export function AdminCertificatesPage() {
     setSelectedRequest(null);
   }
 
-  const pageIsLoading = certificatesQuery.isLoading || requestsQuery.isLoading || programsQuery.isLoading || cohortsPageOneQuery.isLoading;
-  const pageHasError = certificatesQuery.isError || requestsQuery.isError || programsQuery.isError || cohortsPageOneQuery.isError;
+  async function handleIssueLeadershipCertificates(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const body: IssueLeadershipCertificatesInput = {
+      cohortName: selectedCohortName,
+      issueDate,
+      modulesCovered: modulesFromText(modulesCovered),
+      programKey: selectedProgramKey,
+      programName: selectedProgram?.name,
+      sendEmail,
+      studentIds: [...selectedStudentIds]
+    };
+    const result = await issueLeadershipMutation.mutateAsync(body);
+    setCertificateMessage(result.message);
+    setSelectedStudentIds(new Set());
+  }
+
+  async function handleSaveProgramModules(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const result = await saveSettingMutation.mutateAsync({
+      modulesCovered: modulesFromText(moduleText),
+      programKey: moduleProgramKey,
+      status: moduleStatus
+    });
+    setCertificateMessage(`Module template saved for ${programLabel(moduleProgram, result.programKey)}.`);
+  }
+
+  async function handleRevokeCertificate(reason: string) {
+    if (!certificateToRevoke) return;
+    const result = await revokeCertificateMutation.mutateAsync({ certificateId: certificateToRevoke.id, reason });
+    setCertificateMessage(`${result.certificateId} revoked.`);
+    setCertificateToRevoke(null);
+  }
+
+  async function handleGenerateCertificatePdf(certificate: AdminCertificate) {
+    const result = await generateCertificatePdfMutation.mutateAsync({
+      certificateId: certificate.id,
+      force: certificate.generationStatus !== 'ready'
+    });
+    const firstResult = result.results[0];
+    if (firstResult?.status === 'failed') {
+      setCertificateMessage(firstResult.error ?? 'PDF generation failed.');
+      return;
+    }
+    if (firstResult?.signedUrl) {
+      window.open(firstResult.signedUrl, '_blank', 'noopener,noreferrer');
+    }
+    setCertificateMessage(result.message);
+  }
+
+  async function handleEmailCertificatePdf(certificate: AdminCertificate) {
+    const result = await generateCertificatePdfMutation.mutateAsync({
+      certificateId: certificate.id,
+      force: certificate.generationStatus !== 'ready',
+      sendEmail: true
+    });
+    const firstResult = result.results[0];
+    if (firstResult?.status === 'failed') {
+      setCertificateMessage(firstResult.error ?? 'Certificate email failed.');
+      return;
+    }
+    setCertificateMessage(`Certificate PDF email sent to ${certificate.studentEmail}.`);
+  }
+
+  function changeTab(tab: CertificateWorkspaceTab) {
+    setActiveTab(tab);
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', tab);
+    if (tab !== 'issued') next.set('page', '1');
+    setSearchParams(next);
+  }
+
+  const pageIsLoading = certificatesQuery.isLoading || requestsQuery.isLoading || certificateSettingsQuery.isLoading || programsQuery.isLoading || cohortsPageOneQuery.isLoading;
+  const pageHasError = certificatesQuery.isError || requestsQuery.isError || certificateSettingsQuery.isError || programsQuery.isError || cohortsPageOneQuery.isError;
 
   if (pageIsLoading) {
     return (
@@ -505,15 +681,33 @@ export function AdminCertificatesPage() {
         title="Certificates"
       />
 
-      <section className="admin-certificate-workspace-grid">
-        <article className="certificate-section">
-          <header className="certificate-section__header">
-            <div>
-              <span className="certificate-section-eyebrow">Issuance</span>
-              <h2>Leadership Certificates</h2>
-            </div>
-          </header>
-          <div className="certificate-section__body certificate-form">
+      <nav className="certificate-workspace-tabs" aria-label="Certificate workspace tabs">
+        {certificateTabs.map((tab) => (
+          <button
+            aria-selected={activeTab === tab.id}
+            className={activeTab === tab.id ? 'certificate-workspace-tab certificate-workspace-tab--active' : 'certificate-workspace-tab'}
+            key={tab.id}
+            onClick={() => changeTab(tab.id)}
+            type="button"
+          >
+            <strong>{tab.label}</strong>
+            <span>{tab.description}</span>
+          </button>
+        ))}
+      </nav>
+
+      {certificateMessage ? <p className="admin-submission-message">{certificateMessage}</p> : null}
+
+      {activeTab === 'leadership' ? (
+        <section className="admin-certificate-workspace-grid">
+          <form className="certificate-section" onSubmit={handleIssueLeadershipCertificates}>
+            <header className="certificate-section__header">
+              <div>
+                <span className="certificate-section-eyebrow">Issuance</span>
+                <h2>Leadership Certificates</h2>
+              </div>
+            </header>
+            <div className="certificate-section__body certificate-form">
             <label className="certificate-field">
               <span>Program *</span>
               <select value={selectedProgramKey} onChange={(event) => handleProgramChange(event.target.value)}>
@@ -574,13 +768,14 @@ export function AdminCertificatesPage() {
                 </div>
               ) : null}
             </div>
-            <button className="button-primary certificate-form__submit" disabled type="button">
-              {lockedButtonLabel('Issue Selected Certificates')} →
+            {issueLeadershipMutation.isError ? <p className="admin-submission-message admin-submission-message--error">{issueLeadershipMutation.error.message}</p> : null}
+            <button className="button-primary certificate-form__submit" disabled={issueLeadershipMutation.isPending || !selectedProgramKey || !selectedCohortName || selectedStudentIds.size === 0 || modulesFromText(modulesCovered).length === 0} type="submit">
+              {issueLeadershipMutation.isPending ? 'Issuing...' : `Issue ${selectedStudentIds.size || ''} Selected Certificate${selectedStudentIds.size === 1 ? '' : 's'} →`}
             </button>
           </div>
-        </article>
+          </form>
 
-        <article className="certificate-section">
+        <form className="certificate-section" onSubmit={handleSaveProgramModules}>
           <header className="certificate-section__header">
             <div>
               <span className="certificate-section-eyebrow">Configuration</span>
@@ -614,18 +809,19 @@ export function AdminCertificatesPage() {
               <ShieldCheck size={17} />
               <span>{moduleProgram ? `Module template selected for ${programLabel(moduleProgram, moduleProgramKey)}.` : 'Select a program to review or configure its certificate modules.'}</span>
             </div>
-            <button className="button-primary certificate-form__submit" disabled type="button">
-              {lockedButtonLabel('Save Program Modules')} →
+            {saveSettingMutation.isError ? <p className="admin-submission-message admin-submission-message--error">{saveSettingMutation.error.message}</p> : null}
+            <button className="button-primary certificate-form__submit" disabled={saveSettingMutation.isPending || !moduleProgramKey || modulesFromText(moduleText).length === 0} type="submit">
+              {saveSettingMutation.isPending ? 'Saving...' : 'Save Program Modules →'}
             </button>
           </div>
-        </article>
-      </section>
+        </form>
+        </section>
+      ) : null}
 
-      <RequestQueue isLoading={requestsQuery.isLoading} items={requestsQuery.data?.items ?? []} onReview={setSelectedRequest} />
+      {activeTab === 'live-projects' ? <RequestQueue isLoading={requestsQuery.isLoading} items={requestsQuery.data?.items ?? []} onReview={setSelectedRequest} /> : null}
 
-      {certificateMessage ? <p className="admin-submission-message">{certificateMessage}</p> : null}
-
-      <section className="certificate-section">
+      {activeTab === 'issued' ? (
+        <section className="certificate-section">
         <header className="certificate-section__header">
           <div>
             <span className="certificate-section-eyebrow">Registry</span>
@@ -692,14 +888,39 @@ export function AdminCertificatesPage() {
                     </div>
                   </div>
                   <div className="certificate-registry-row__actions">
-                    <button className="segmented-button" disabled type="button">
-                      {lockedButtonLabel('Verify')}
+                    {certificate.verificationUrl ? (
+                      <a className="segmented-button" href={certificate.verificationUrl} rel="noreferrer" target="_blank">
+                        Verify
+                      </a>
+                    ) : (
+                      <button className="segmented-button" disabled type="button">
+                        {lockedButtonLabel('Verify')}
+                      </button>
+                    )}
+                    <button
+                      className="segmented-button"
+                      disabled={certificate.status === 'revoked' || generateCertificatePdfMutation.isPending}
+                      onClick={() => void handleGenerateCertificatePdf(certificate)}
+                      type="button"
+                    >
+                      {generateCertificatePdfMutation.isPending
+                        ? 'Preparing...'
+                        : certificate.status === 'revoked'
+                          ? lockedButtonLabel('PDF')
+                          : certificate.generationStatus === 'ready'
+                            ? 'Download PDF'
+                            : 'Generate PDF'}
                     </button>
-                    <button className="segmented-button" disabled type="button">
-                      {certificate.generationStatus === 'ready' ? lockedButtonLabel('Regenerate PDF') : lockedButtonLabel('Generate PDF Now')}
+                    <button
+                      className="segmented-button"
+                      disabled={certificate.status === 'revoked' || generateCertificatePdfMutation.isPending}
+                      onClick={() => void handleEmailCertificatePdf(certificate)}
+                      type="button"
+                    >
+                      {generateCertificatePdfMutation.isPending ? 'Sending...' : certificate.status === 'revoked' ? lockedButtonLabel('Email') : 'Email PDF'}
                     </button>
-                    <button className="segmented-button segmented-button--danger" disabled type="button">
-                      {lockedButtonLabel('Revoke')}
+                    <button className="segmented-button segmented-button--danger" disabled={certificate.status === 'revoked'} onClick={() => setCertificateToRevoke(certificate)} type="button">
+                      {certificate.status === 'revoked' ? 'Revoked' : 'Revoke'}
                     </button>
                   </div>
                 </article>
@@ -730,6 +951,7 @@ export function AdminCertificatesPage() {
           </nav>
         </div>
       </section>
+      ) : null}
 
       {selectedRequest ? (
         <FinalIssuanceModal
@@ -738,6 +960,15 @@ export function AdminCertificatesPage() {
           onClose={() => setSelectedRequest(null)}
           onIssue={handleIssueLiveProjectCertificate}
           request={selectedRequest}
+        />
+      ) : null}
+      {certificateToRevoke ? (
+        <RevokeCertificateModal
+          certificate={certificateToRevoke}
+          error={revokeCertificateMutation.isError ? revokeCertificateMutation.error.message : undefined}
+          isRevoking={revokeCertificateMutation.isPending}
+          onClose={() => setCertificateToRevoke(null)}
+          onRevoke={handleRevokeCertificate}
         />
       ) : null}
     </div>
