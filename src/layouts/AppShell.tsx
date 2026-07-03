@@ -1,9 +1,10 @@
-import { LogOut, Menu, ShieldCheck, X } from 'lucide-react';
-import { useState } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Bell, LogOut, Menu, ShieldCheck, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { NavItem, Portal } from '../app/routeConfig';
 import { useAuth } from '../auth/AuthProvider';
 import { StatusBadge } from '../components/StatusBadge';
+import { StudentAnnouncement, useStudentAnnouncements } from '../features/student/useStudentAnnouncements';
 
 type AppShellProps = {
   navItems: NavItem[];
@@ -43,18 +44,48 @@ function groupNavItems(navItems: NavItem[], portal: Portal) {
     .filter((section) => section.items.length > 0);
 }
 
+function sortAnnouncements(items: StudentAnnouncement[]) {
+  return [...items].sort((left, right) => {
+    const leftPinned = left.pinned ? 1 : 0;
+    const rightPinned = right.pinned ? 1 : 0;
+    if (leftPinned !== rightPinned) return rightPinned - leftPinned;
+    const priorityRank: Record<string, number> = { urgent: 3, important: 2, normal: 1 };
+    const priorityDiff = (priorityRank[right.priority] ?? 0) - (priorityRank[left.priority] ?? 0);
+    if (priorityDiff !== 0) return priorityDiff;
+    return new Date(right.updatedAt ?? 0).getTime() - new Date(left.updatedAt ?? 0).getTime();
+  });
+}
+
+function announcementMeta(announcement: StudentAnnouncement) {
+  if (announcement.pinned) return 'Pinned';
+  if (announcement.priority === 'urgent') return 'Urgent';
+  if (announcement.priority === 'important') return 'Important';
+  return 'Announcement';
+}
+
 export function AppShell({ navItems, portal }: AppShellProps) {
   const portalLabel = portal === 'student' ? 'Student Portal' : 'Admin Portal';
   const workspaceLabel = portal === 'student' ? 'Learning workspace' : 'Admin workspace';
   const [isNavOpen, setIsNavOpen] = useState(false);
+  const [isAnnouncementOpen, setIsAnnouncementOpen] = useState(false);
+  const [dismissedBannerId, setDismissedBannerId] = useState<string | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const { signOut } = useAuth();
+  const announcementsQuery = useStudentAnnouncements({ enabled: portal === 'student', limit: 5, page: 1, priority: 'all' });
   const navSections = groupNavItems(navItems, portal);
   const activeNavItem = [...navItems]
     .sort((left, right) => right.path.length - left.path.length)
     .find((item) => location.pathname === item.path || (item.path !== `/${portal}` && location.pathname.startsWith(`${item.path}/`)));
   const topbarTitle = activeNavItem?.label ?? workspaceLabel;
+  const announcementItems = useMemo(() => sortAnnouncements(announcementsQuery.data?.items ?? []), [announcementsQuery.data?.items]);
+  const activeAnnouncementCount = portal === 'student' ? announcementsQuery.data?.total ?? 0 : 0;
+  const countLabel = activeAnnouncementCount > 99 ? '99+' : String(activeAnnouncementCount);
+  const bannerAnnouncement = announcementItems.find((item) => item.pinned || item.priority === 'urgent');
+
+  useEffect(() => {
+    setIsAnnouncementOpen(false);
+  }, [location.pathname]);
 
   async function handleSignOut() {
     setIsNavOpen(false);
@@ -124,10 +155,64 @@ export function AppShell({ navItems, portal }: AppShellProps) {
             </div>
           </div>
           <div className="topbar-actions">
+            {portal === 'student' ? (
+              <div className="topbar-announcements">
+                <button
+                  aria-expanded={isAnnouncementOpen}
+                  aria-label={`Open announcements${activeAnnouncementCount > 0 ? `, ${activeAnnouncementCount} active` : ''}`}
+                  className="topbar-announcement-button"
+                  onClick={() => setIsAnnouncementOpen((current) => !current)}
+                  type="button"
+                >
+                  <Bell size={18} />
+                  {activeAnnouncementCount > 0 ? <span>{countLabel}</span> : null}
+                </button>
+                {isAnnouncementOpen ? (
+                  <section className="topbar-announcement-menu" aria-label="Latest announcements">
+                    <div className="topbar-announcement-menu__header">
+                      <strong>Announcements</strong>
+                      <small>{activeAnnouncementCount} active</small>
+                    </div>
+                    {announcementItems.length > 0 ? (
+                      <div className="topbar-announcement-menu__list">
+                        {announcementItems.map((announcement) => (
+                          <Link className="topbar-announcement-item" key={announcement.id} to="/student/announcements">
+                            <span>{announcementMeta(announcement)}</span>
+                            <strong>{announcement.title}</strong>
+                            <small>{announcement.message}</small>
+                          </Link>
+                        ))}
+                      </div>
+                    ) : (
+                      <p>No active announcements right now.</p>
+                    )}
+                    <Link className="topbar-announcement-view-all" to="/student/announcements">
+                      View all announcements
+                    </Link>
+                  </section>
+                ) : null}
+              </div>
+            ) : null}
             <StatusBadge tone="safe">Protected session</StatusBadge>
             <ShieldCheck size={20} />
           </div>
         </header>
+
+        {portal === 'student' && bannerAnnouncement && dismissedBannerId !== bannerAnnouncement.id ? (
+          <section className="student-announcement-banner" aria-label="Pinned announcement">
+            <div>
+              <span>{announcementMeta(bannerAnnouncement)}</span>
+              <strong>{bannerAnnouncement.title}</strong>
+              <p>{bannerAnnouncement.message}</p>
+            </div>
+            <div className="student-announcement-banner__actions">
+              <Link to="/student/announcements">View</Link>
+              <button aria-label="Dismiss announcement banner" onClick={() => setDismissedBannerId(bannerAnnouncement.id)} type="button">
+                <X size={17} />
+              </button>
+            </div>
+          </section>
+        ) : null}
 
         <main className="page-frame">
           <Outlet />
