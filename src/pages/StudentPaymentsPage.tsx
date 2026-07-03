@@ -1,18 +1,59 @@
-import { CreditCard, IndianRupee, ReceiptText, Search } from 'lucide-react';
-import { FormEvent, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { CheckCircle2, CreditCard, IndianRupee, LockKeyhole, ReceiptText, ShieldCheck } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
-import { StudentPaymentItemType, StudentPaymentOrderStatus, useStudentPaymentOrders } from '../features/student/useStudentPaymentOrders';
+import { StudentPaidAccess, StudentPaidAccessItemType, useStudentPaidAccess } from '../features/student/useStudentPaidAccess';
+import { StudentPaymentItemType, StudentPaymentOrder, StudentPaymentOrderStatus, useStudentPaymentOrders } from '../features/student/useStudentPaymentOrders';
 
-const statusOptions: Array<StudentPaymentOrderStatus | 'all'> = ['all', 'created', 'paid', 'failed', 'cancelled'];
-const itemTypeOptions: Array<StudentPaymentItemType | 'all'> = ['all', 'group', 'workshop', 'resource'];
+type FinanceFilter = 'all' | 'pending' | 'paid' | 'unlocked' | 'failed';
+type FinanceItemType = StudentPaymentItemType | StudentPaidAccessItemType;
+type CombinedFinanceItem =
+  | {
+      amount: number;
+      createdAt?: string;
+      currency: string;
+      id: string;
+      itemId: string;
+      itemTitle?: string;
+      itemType: FinanceItemType;
+      orderId?: string;
+      paymentId?: string;
+      receipt?: string;
+      recordType: 'payment';
+      status: StudentPaymentOrderStatus;
+      updatedAt?: string;
+    }
+  | {
+      accessId?: string;
+      activeNow: boolean;
+      amount?: number;
+      currency?: string;
+      expiresAt?: string;
+      grantedAt?: string;
+      id: string;
+      itemId: string;
+      itemType: FinanceItemType;
+      paymentId?: string;
+      recordType: 'access';
+      source?: string;
+      status: 'active' | 'inactive';
+    };
 
-function asPositiveInteger(value: string | null, defaultValue: number) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
-}
+const filterOptions: Array<{ label: string; value: FinanceFilter }> = [
+  { label: 'All', value: 'all' },
+  { label: 'Pending', value: 'pending' },
+  { label: 'Paid', value: 'paid' },
+  { label: 'Unlocked', value: 'unlocked' },
+  { label: 'Failed', value: 'failed' }
+];
+
+const itemTypeOptions: Array<{ label: string; value: FinanceItemType | 'all' }> = [
+  { label: 'All item types', value: 'all' },
+  { label: 'Groups', value: 'group' },
+  { label: 'Workshops', value: 'workshop' },
+  { label: 'Resources', value: 'resource' }
+];
 
 function formatDate(value: string | undefined) {
   if (!value) {
@@ -23,7 +64,11 @@ function formatDate(value: string | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function formatMoney(amount: number, currency: string) {
+function formatMoney(amount: number | undefined, currency: string | undefined) {
+  if (amount === undefined || !currency) {
+    return 'Not recorded';
+  }
+
   try {
     return new Intl.NumberFormat(undefined, { currency, style: 'currency' }).format(amount);
   } catch {
@@ -35,33 +80,49 @@ function formatOption(value: string) {
   return value.replace(/_/g, ' ');
 }
 
-function getStatusTone(status: StudentPaymentOrderStatus) {
-  if (status === 'paid') return 'safe';
-  if (status === 'failed' || status === 'cancelled') return 'warning';
+function itemTimestamp(item: CombinedFinanceItem) {
+  return item.recordType === 'payment' ? item.updatedAt ?? item.createdAt : item.grantedAt ?? item.expiresAt;
+}
+
+function getItemTitle(item: CombinedFinanceItem) {
+  if (item.recordType === 'payment') return item.itemTitle ?? item.orderId ?? item.itemId;
+  return item.accessId ?? item.itemId;
+}
+
+function getItemAmount(item: CombinedFinanceItem) {
+  return item.recordType === 'payment' ? formatMoney(item.amount, item.currency) : formatMoney(item.amount, item.currency);
+}
+
+function getItemTone(item: CombinedFinanceItem) {
+  if (item.recordType === 'access') return item.activeNow ? 'safe' : 'warning';
+  if (item.status === 'paid') return 'safe';
+  if (item.status === 'failed' || item.status === 'cancelled') return 'warning';
   return 'neutral';
 }
 
-function parseStatus(value: string | null): StudentPaymentOrderStatus | 'all' {
-  return statusOptions.includes(value as StudentPaymentOrderStatus | 'all') ? (value as StudentPaymentOrderStatus | 'all') : 'all';
+function getItemStatusLabel(item: CombinedFinanceItem) {
+  if (item.recordType === 'access') return item.activeNow ? 'unlocked' : formatOption(item.status);
+  return formatOption(item.status);
 }
 
-function parseItemType(value: string | null): StudentPaymentItemType | 'all' {
-  return itemTypeOptions.includes(value as StudentPaymentItemType | 'all') ? (value as StudentPaymentItemType | 'all') : 'all';
+function getItemIcon(item: CombinedFinanceItem) {
+  if (item.recordType === 'access') return item.activeNow ? <CheckCircle2 size={20} /> : <LockKeyhole size={20} />;
+  if (item.status === 'paid') return <IndianRupee size={20} />;
+  if (item.status === 'created') return <CreditCard size={20} />;
+  return <ReceiptText size={20} />;
 }
 
-function buildPageLink(page: number, search: string, status: StudentPaymentOrderStatus | 'all', itemType: StudentPaymentItemType | 'all') {
-  const params = new URLSearchParams();
-  params.set('page', String(page));
-  if (search) params.set('search', search);
-  if (status !== 'all') params.set('status', status);
-  if (itemType !== 'all') params.set('itemType', itemType);
-  return `?${params.toString()}`;
+function matchesFilter(item: CombinedFinanceItem, filter: FinanceFilter) {
+  if (filter === 'all') return true;
+  if (filter === 'pending') return item.recordType === 'payment' && item.status === 'created';
+  if (filter === 'paid') return item.recordType === 'payment' && item.status === 'paid';
+  if (filter === 'unlocked') return item.recordType === 'access' && item.activeNow;
+  if (filter === 'failed') return item.recordType === 'payment' && (item.status === 'failed' || item.status === 'cancelled');
+  return true;
 }
 
 function renderReference(label: string, value: string | undefined) {
-  if (!value) {
-    return null;
-  }
+  if (!value) return null;
 
   return (
     <span className="finance-reference">
@@ -71,53 +132,88 @@ function renderReference(label: string, value: string | undefined) {
   );
 }
 
+function toPaymentItem(item: StudentPaymentOrder): CombinedFinanceItem {
+  return {
+    amount: item.amount,
+    createdAt: item.createdAt,
+    currency: item.currency,
+    id: item.id,
+    itemId: item.itemId,
+    itemTitle: item.itemTitle,
+    itemType: item.itemType,
+    orderId: item.orderId ?? item.razorpayOrderId,
+    paymentId: item.razorpayPaymentId,
+    receipt: item.receipt,
+    recordType: 'payment',
+    status: item.status,
+    updatedAt: item.updatedAt
+  };
+}
+
+function toAccessItem(item: StudentPaidAccess): CombinedFinanceItem {
+  return {
+    accessId: item.accessId,
+    activeNow: item.activeNow,
+    amount: item.amount,
+    currency: item.currency,
+    expiresAt: item.expiresAt,
+    grantedAt: item.grantedAt,
+    id: item.id,
+    itemId: item.itemId,
+    itemType: item.itemType,
+    paymentId: item.paymentId,
+    recordType: 'access',
+    source: item.source,
+    status: item.status
+  };
+}
+
 export function StudentPaymentsPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const page = asPositiveInteger(searchParams.get('page'), 1);
-  const status = parseStatus(searchParams.get('status'));
-  const itemType = parseItemType(searchParams.get('itemType'));
-  const search = searchParams.get('search')?.trim() ?? '';
-  const [searchInput, setSearchInput] = useState(search);
-  const paymentsQuery = useStudentPaymentOrders({ itemType, page, search, status });
-  const data = paymentsQuery.data;
-  const totalPages = data?.totalPages ?? 1;
+  const [activeFilter, setActiveFilter] = useState<FinanceFilter>('all');
+  const [itemType, setItemType] = useState<FinanceItemType | 'all'>('all');
+  const paymentsQuery = useStudentPaymentOrders({ limit: 100, page: 1, status: 'all' });
+  const accessQuery = useStudentPaidAccess({ limit: 100, page: 1, status: 'all' });
+  const isLoading = paymentsQuery.isLoading || accessQuery.isLoading;
+  const isError = paymentsQuery.isError || accessQuery.isError;
 
-  function handleSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const next = new URLSearchParams(searchParams);
-    next.set('page', '1');
-    if (searchInput.trim()) {
-      next.set('search', searchInput.trim());
-    } else {
-      next.delete('search');
-    }
-    setSearchParams(next);
-  }
+  const allItems = useMemo(() => {
+    const paymentItems = paymentsQuery.data?.items.map(toPaymentItem) ?? [];
+    const accessItems = accessQuery.data?.items.map(toAccessItem) ?? [];
+    return [...paymentItems, ...accessItems].sort((left, right) => {
+      const leftTime = new Date(itemTimestamp(left) ?? 0).getTime();
+      const rightTime = new Date(itemTimestamp(right) ?? 0).getTime();
+      return rightTime - leftTime;
+    });
+  }, [accessQuery.data?.items, paymentsQuery.data?.items]);
 
-  function setFilter(key: 'itemType' | 'status', value: string) {
-    const next = new URLSearchParams(searchParams);
-    next.set('page', '1');
-    if (value === 'all') {
-      next.delete(key);
-    } else {
-      next.set(key, value);
-    }
-    setSearchParams(next);
-  }
+  const filteredItems = useMemo(
+    () => allItems.filter((item) => matchesFilter(item, activeFilter) && (itemType === 'all' || item.itemType === itemType)),
+    [activeFilter, allItems, itemType]
+  );
 
-  if (paymentsQuery.isLoading) {
+  const summary = useMemo(() => {
+    const paymentItems = allItems.filter((item) => item.recordType === 'payment');
+    return {
+      failed: paymentItems.filter((item) => item.recordType === 'payment' && (item.status === 'failed' || item.status === 'cancelled')).length,
+      paid: paymentItems.filter((item) => item.recordType === 'payment' && item.status === 'paid').length,
+      pending: paymentItems.filter((item) => item.recordType === 'payment' && item.status === 'created').length,
+      unlocked: allItems.filter((item) => item.recordType === 'access' && item.activeNow).length
+    };
+  }, [allItems]);
+
+  if (isLoading) {
     return (
       <div className="page-stack">
-        <PageHeader description="Loading your payment history." eyebrow="Student payments" title="Payments" />
+        <PageHeader description="Loading your payments and access records." eyebrow="Student account" title="Payments & Access" />
         <LoadingState />
       </div>
     );
   }
 
-  if (paymentsQuery.isError) {
+  if (isError) {
     return (
       <div className="page-stack">
-        <PageHeader description="We could not load your payment history right now." eyebrow="Student payments" title="Payments unavailable" />
+        <PageHeader description="We could not load your payments and access records right now." eyebrow="Student account" title="Payments & Access unavailable" />
         <ErrorState />
       </div>
     );
@@ -126,77 +222,94 @@ export function StudentPaymentsPage() {
   return (
     <div className="page-stack">
       <PageHeader
-        description="Review your payment orders, status, amount, and reference details."
-        eyebrow="Student payments"
-        title="Payments"
+        description="Track paid items, payment status, and unlocked access in one simple view."
+        eyebrow="Student account"
+        title="Payments & Access"
       />
 
-      <section className="filter-bar finance-filter-bar" aria-label="Payment filters">
-        <label className="announcement-filter-select">
-          Status
-          <select value={status} onChange={(event) => setFilter('status', event.target.value)}>
-            {statusOptions.map((option) => (
-              <option key={option} value={option}>
-                {formatOption(option)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="announcement-filter-select">
-          Type
-          <select value={itemType} onChange={(event) => setFilter('itemType', event.target.value)}>
-            {itemTypeOptions.map((option) => (
-              <option key={option} value={option}>
-                {formatOption(option)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <form className="finance-search-form" onSubmit={handleSearch}>
-          <div className="filter-search finance-search-input">
-            <Search size={16} />
-            <label className="sr-only" htmlFor="payment-search">
-              Search payments
-            </label>
-            <input id="payment-search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search payments" type="search" />
-          </div>
-          <button className="segmented-button" type="submit">
-            Apply
-          </button>
-        </form>
+      <section className="finance-summary-grid" aria-label="Payments and access summary">
+        <article>
+          <span>Unlocked</span>
+          <strong>{summary.unlocked}</strong>
+        </article>
+        <article>
+          <span>Pending</span>
+          <strong>{summary.pending}</strong>
+        </article>
+        <article>
+          <span>Paid</span>
+          <strong>{summary.paid}</strong>
+        </article>
+        <article>
+          <span>Failed</span>
+          <strong>{summary.failed}</strong>
+        </article>
       </section>
 
-      {data && data.items.length > 0 ? (
-        <section className="finance-list-panel" aria-label="Payment orders">
+      <section className="filter-bar finance-filter-bar finance-filter-bar--merged" aria-label="Payments and access filters">
+        <label className="announcement-filter-select">
+          Payment status
+          <select value={activeFilter} onChange={(event) => setActiveFilter(event.target.value as FinanceFilter)}>
+            {filterOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="announcement-filter-select">
+          Item type
+          <select value={itemType} onChange={(event) => setItemType(event.target.value as FinanceItemType | 'all')}>
+            {itemTypeOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </section>
+
+      {filteredItems.length > 0 ? (
+        <section className="finance-list-panel" aria-label="Payments and access list">
           <header className="finance-list-panel__header">
             <div>
-              <span className="eyebrow">Payment history</span>
-              <h2>Payment orders</h2>
+              <span className="eyebrow">Account activity</span>
+              <h2>Payments & access list</h2>
             </div>
-            <span>{data.total} total</span>
+            <span>{filteredItems.length} shown</span>
           </header>
 
           <div className="finance-list">
-            {data.items.map((item) => (
-              <article className="finance-row" key={item.id}>
-                <div className="finance-row__icon">
-                  {item.status === 'paid' ? <IndianRupee size={20} /> : item.status === 'created' ? <CreditCard size={20} /> : <ReceiptText size={20} />}
-                </div>
+            {filteredItems.map((item) => (
+              <article className={item.recordType === 'access' ? 'finance-row finance-row--access' : 'finance-row'} key={`${item.recordType}-${item.id}`}>
+                <div className="finance-row__icon">{getItemIcon(item)}</div>
                 <div className="finance-row__main">
                   <div className="finance-row__title-line">
-                    <h2>{item.itemTitle ?? item.orderId ?? item.id}</h2>
-                    <strong>{formatMoney(item.amount, item.currency)}</strong>
+                    <h2>{getItemTitle(item)}</h2>
+                    <strong>{getItemAmount(item)}</strong>
                   </div>
                   <div className="finance-row__chips">
-                    <StatusBadge tone={getStatusTone(item.status)}>{formatOption(item.status)}</StatusBadge>
+                    <StatusBadge tone={getItemTone(item)}>{getItemStatusLabel(item)}</StatusBadge>
+                    <span>{item.recordType === 'payment' ? 'Payment' : 'Access'}</span>
                     <span>{formatOption(item.itemType)}</span>
-                    <time>{formatDate(item.updatedAt ?? item.createdAt)}</time>
+                    <time>{formatDate(itemTimestamp(item))}</time>
                   </div>
                   <div className="finance-row__meta">
-                    {renderReference('Order', item.orderId ?? item.razorpayOrderId)}
-                    {renderReference('Payment', item.razorpayPaymentId)}
-                    {renderReference('Receipt', item.receipt)}
-                    {renderReference('Item', item.itemId)}
+                    {item.recordType === 'payment' ? (
+                      <>
+                        {renderReference('Order', item.orderId)}
+                        {renderReference('Payment', item.paymentId)}
+                        {renderReference('Receipt', item.receipt)}
+                        {renderReference('Item', item.itemId)}
+                      </>
+                    ) : (
+                      <>
+                        {renderReference('Access', item.accessId)}
+                        {renderReference('Granted', formatDate(item.grantedAt))}
+                        {renderReference('Expires', formatDate(item.expiresAt))}
+                        {renderReference('Payment', item.paymentId)}
+                      </>
+                    )}
                   </div>
                 </div>
               </article>
@@ -207,25 +320,10 @@ export function StudentPaymentsPage() {
         <EmptyState />
       )}
 
-      <nav className="pagination-bar" aria-label="Payment pagination">
-        {data?.hasPreviousPage ? (
-          <Link className="pagination-link" to={buildPageLink(page - 1, search, status, itemType)}>
-            Previous page
-          </Link>
-        ) : (
-          <span className="pagination-link pagination-link--disabled">Previous page</span>
-        )}
-        <span>
-          Page {page} of {totalPages}
-        </span>
-        {data?.hasNextPage ? (
-          <Link className="pagination-link" to={buildPageLink(page + 1, search, status, itemType)}>
-            Next page
-          </Link>
-        ) : (
-          <span className="pagination-link pagination-link--disabled">Next page</span>
-        )}
-      </nav>
+      <section className="finance-note">
+        <ShieldCheck size={16} />
+        <span>Access updates are handled by payment confirmation and the support/admin team.</span>
+      </section>
     </div>
   );
 }

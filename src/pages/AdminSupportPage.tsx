@@ -4,43 +4,27 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { StatusBadge } from '../components/StatusBadge';
 import {
+  AdminSupportCategory,
+  AdminSupportFaq,
   AdminSupportTicket,
   AdminSupportTicketPriority,
   AdminSupportTicketStatus,
+  useCloseAdminSupportTicket,
+  useCreateAdminSupportCategory,
+  useCreateAdminSupportFaq,
+  useCreateAdminSupportTicketReply,
+  useAdminSupportCategories,
+  useAdminSupportFaqs,
   useAdminSupportTicketDetail,
-  useAdminSupportTickets
+  useAdminSupportTickets,
+  useReopenAdminSupportTicket,
+  useUpdateAdminSupportCategory,
+  useUpdateAdminSupportFaq,
+  useUpdateAdminSupportTicket
 } from '../features/admin/useAdminSupportTickets';
 
 const statusOptions: Array<AdminSupportTicketStatus | 'all'> = ['all', 'open', 'in_review', 'waiting_for_student', 'resolved', 'closed'];
 const priorityOptions: Array<AdminSupportTicketPriority | 'all'> = ['all', 'low', 'normal', 'high', 'urgent'];
-const fallbackCategories = ['Login / Access', 'Resources', 'Recordings', 'Projects', 'Certificates'];
-const faqCategories = [
-  { category: 'Portal Access', sort: 10, status: 'Active' },
-  { category: 'Recordings', sort: 20, status: 'Active' },
-  { category: 'Resources', sort: 30, status: 'Active' }
-];
-const faqs = [
-  {
-    answer: 'TestTestTestTestTestTestTestTestTestTestTestTestTestTestTestTestTest',
-    category: 'Portal Access',
-    cohorts: '',
-    featured: false,
-    programKeys: '',
-    question: 'Test',
-    sort: 10,
-    status: 'Published'
-  },
-  {
-    answer: 'Test 2Test 2Test 2Test 2Test 2Test 2',
-    category: 'Recordings',
-    cohorts: '',
-    featured: true,
-    programKeys: '',
-    question: 'Test 2',
-    sort: 20,
-    status: 'Published'
-  }
-];
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
@@ -101,6 +85,8 @@ export function AdminSupportPage() {
   const category = searchParams.get('category')?.trim() ?? '';
   const [searchInput, setSearchInput] = useState(search);
   const [selectedTicketId, setSelectedTicketId] = useState('');
+  const categoriesQuery = useAdminSupportCategories();
+  const faqsQuery = useAdminSupportFaqs();
   const ticketsQuery = useAdminSupportTickets({ category, page, priority, search, status });
   const data = ticketsQuery.data;
   const selectedTicket = useMemo(() => data?.items.find((ticket) => ticket.id === selectedTicketId) ?? data?.items[0], [data?.items, selectedTicketId]);
@@ -156,7 +142,7 @@ export function AdminSupportPage() {
           </div>
           <p>Refresh only support data from the database.</p>
         </div>
-        <button className="announcement-refresh-button" disabled type="button">
+        <button className="announcement-refresh-button" disabled={ticketsQuery.isFetching} onClick={() => void ticketsQuery.refetch()} type="button">
           Refresh Support
         </button>
       </header>
@@ -169,9 +155,9 @@ export function AdminSupportPage() {
                 <span className="section-eyebrow">Support Queue</span>
                 <h2>Student Tickets</h2>
               </div>
-              <button className="announcement-secondary-button" disabled type="button">
+              <button className="announcement-secondary-button" disabled={ticketsQuery.isFetching} onClick={() => void ticketsQuery.refetch()} type="button">
                 <RefreshCw size={14} />
-                Refresh
+                {ticketsQuery.isFetching ? 'Refreshing...' : 'Refresh'}
               </button>
             </header>
             <div className="admin-support-panel__body">
@@ -184,6 +170,21 @@ export function AdminSupportPage() {
                   {statusOptions.map((option) => (
                     <option key={option} value={option}>
                       {option === 'all' ? 'All Statuses' : formatOption(option)}
+                    </option>
+                  ))}
+                </select>
+                <select value={priority} onChange={(event) => setFilter('priority', event.target.value)}>
+                  {priorityOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option === 'all' ? 'All Priorities' : formatOption(option)}
+                    </option>
+                  ))}
+                </select>
+                <select value={category || 'all'} onChange={(event) => setFilter('category', event.target.value)}>
+                  <option value="all">All Categories</option>
+                  {(categoriesQuery.data?.items ?? []).map((option) => (
+                    <option key={option.id} value={option.categoryName}>
+                      {option.categoryName}
                     </option>
                   ))}
                 </select>
@@ -214,14 +215,13 @@ export function AdminSupportPage() {
             </div>
           </section>
 
-          <SupportCategoryManager />
+          <SupportCategoryManager categories={categoriesQuery.data?.items ?? []} isLoading={categoriesQuery.isLoading} />
         </div>
 
         <div className="admin-support-stack">
           <TicketConversation ticket={selectedTicket} ticketDetailQuery={ticketDetailQuery} />
           <SupportEmailSettings />
-          <FaqCategoryManager />
-          <FaqManager />
+          <FaqManager categories={categoriesQuery.data?.items ?? []} faqs={faqsQuery.data?.items ?? []} isLoading={faqsQuery.isLoading} />
         </div>
       </div>
 
@@ -257,6 +257,77 @@ function TicketConversation({
 }) {
   const detail = ticketDetailQuery.data;
   const activeTicket = detail?.ticket ?? ticket;
+  const updateTicketMutation = useUpdateAdminSupportTicket();
+  const replyMutation = useCreateAdminSupportTicketReply();
+  const closeTicketMutation = useCloseAdminSupportTicket();
+  const reopenTicketMutation = useReopenAdminSupportTicket();
+  const [assignedAdminEmail, setAssignedAdminEmail] = useState('');
+  const [formMessage, setFormMessage] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
+  const [priority, setPriority] = useState<AdminSupportTicketPriority>('normal');
+  const [publicReply, setPublicReply] = useState('');
+  const [sendStudentEmail, setSendStudentEmail] = useState(true);
+  const [status, setStatus] = useState<AdminSupportTicketStatus>('open');
+  const [internalNote, setInternalNote] = useState('');
+  const isSaving =
+    updateTicketMutation.isPending ||
+    replyMutation.isPending ||
+    closeTicketMutation.isPending ||
+    reopenTicketMutation.isPending;
+
+  useEffect(() => {
+    if (!activeTicket) return;
+    setAssignedAdminEmail(activeTicket.assignedAdminEmail ?? '');
+    setPriority(activeTicket.priority);
+    setStatus(activeTicket.status);
+    setFormMessage(null);
+    setInternalNote('');
+    setPublicReply('');
+  }, [activeTicket?.id, activeTicket?.assignedAdminEmail, activeTicket?.priority, activeTicket?.status]);
+
+  async function handleSaveTicket() {
+    if (!activeTicket) return;
+    setFormMessage(null);
+
+    try {
+      await updateTicketMutation.mutateAsync({
+        assignedAdminEmail,
+        priority,
+        status,
+        ticketId: activeTicket.id
+      });
+      setFormMessage({ tone: 'success', text: 'Ticket updated successfully.' });
+    } catch (error) {
+      setFormMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Ticket could not be updated.' });
+    }
+  }
+
+  async function handleReply(visibility: 'public' | 'internal') {
+    if (!activeTicket) return;
+    const body = visibility === 'public' ? publicReply : internalNote;
+    setFormMessage(null);
+
+    try {
+      await replyMutation.mutateAsync({ body, sendEmail: visibility === 'public' ? sendStudentEmail : false, ticketId: activeTicket.id, visibility });
+      if (visibility === 'public') setPublicReply('');
+      else setInternalNote('');
+      setFormMessage({ tone: 'success', text: visibility === 'public' ? 'Public reply sent.' : 'Internal note saved.' });
+    } catch (error) {
+      setFormMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Message could not be saved.' });
+    }
+  }
+
+  async function handleCloseReopen(nextAction: 'close' | 'reopen') {
+    if (!activeTicket) return;
+    setFormMessage(null);
+
+    try {
+      if (nextAction === 'close') await closeTicketMutation.mutateAsync(activeTicket.id);
+      else await reopenTicketMutation.mutateAsync(activeTicket.id);
+      setFormMessage({ tone: 'success', text: nextAction === 'close' ? 'Ticket closed.' : 'Ticket reopened.' });
+    } catch (error) {
+      setFormMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Ticket action could not be completed.' });
+    }
+  }
 
   return (
     <section className="admin-support-panel">
@@ -289,7 +360,7 @@ function TicketConversation({
             <div className="admin-support-form-grid">
               <label>
                 <span>Status</span>
-                <select disabled value={activeTicket.status}>
+                <select disabled={isSaving} value={status} onChange={(event) => setStatus(event.target.value as AdminSupportTicketStatus)}>
                   {statusOptions.filter((option) => option !== 'all').map((option) => (
                     <option key={option} value={option}>
                       {formatOption(option)}
@@ -299,7 +370,7 @@ function TicketConversation({
               </label>
               <label>
                 <span>Priority</span>
-                <select disabled value={activeTicket.priority}>
+                <select disabled={isSaving} value={priority} onChange={(event) => setPriority(event.target.value as AdminSupportTicketPriority)}>
                   {priorityOptions.filter((option) => option !== 'all').map((option) => (
                     <option key={option} value={option}>
                       {formatOption(option)}
@@ -309,13 +380,61 @@ function TicketConversation({
               </label>
               <label className="admin-support-form-grid__wide">
                 <span>Assigned Admin</span>
-                <input disabled placeholder="Optional admin email" value={activeTicket.assignedAdminEmail ?? ''} />
+                <input disabled={isSaving} onChange={(event) => setAssignedAdminEmail(event.target.value)} placeholder="Optional admin email" value={assignedAdminEmail} />
               </label>
             </div>
 
-            <button className="announcement-primary-button" disabled type="button">
-              Save Ticket
-            </button>
+            {formMessage ? <div className={formMessage.tone === 'success' ? 'auth-alert auth-alert--success' : 'auth-alert auth-alert--error'}>{formMessage.text}</div> : null}
+
+            <div className="admin-support-action-row">
+              <button className="announcement-primary-button" disabled={isSaving} onClick={() => void handleSaveTicket()} type="button">
+                {updateTicketMutation.isPending ? 'Saving...' : 'Save Ticket'}
+              </button>
+              {activeTicket.status === 'closed' || activeTicket.status === 'resolved' ? (
+                <button className="announcement-secondary-button" disabled={isSaving} onClick={() => void handleCloseReopen('reopen')} type="button">
+                  {reopenTicketMutation.isPending ? 'Reopening...' : 'Reopen'}
+                </button>
+              ) : (
+                <button className="announcement-row-button announcement-row-button--danger" disabled={isSaving} onClick={() => void handleCloseReopen('close')} type="button">
+                  {closeTicketMutation.isPending ? 'Closing...' : 'Close Ticket'}
+                </button>
+              )}
+            </div>
+
+            <div className="admin-support-form-grid">
+              <label className="admin-support-form-grid__wide">
+                <span>Public Reply</span>
+                <textarea
+                  disabled={isSaving || activeTicket.status === 'closed'}
+                  maxLength={2000}
+                  onChange={(event) => setPublicReply(event.target.value)}
+                  placeholder="Reply visible to the student."
+                  rows={4}
+                  value={publicReply}
+                />
+              </label>
+              <label className="admin-support-checkbox admin-support-form-grid__wide">
+                <input checked={sendStudentEmail} disabled={isSaving || activeTicket.status === 'closed'} onChange={(event) => setSendStudentEmail(event.target.checked)} type="checkbox" />
+                <span>Email this reply to the student</span>
+              </label>
+              <button className="announcement-primary-button" disabled={isSaving || activeTicket.status === 'closed'} onClick={() => void handleReply('public')} type="button">
+                {replyMutation.isPending ? 'Sending...' : sendStudentEmail ? 'Send Reply + Email' : 'Send Public Reply'}
+              </button>
+              <label className="admin-support-form-grid__wide">
+                <span>Internal Note</span>
+                <textarea
+                  disabled={isSaving}
+                  maxLength={2000}
+                  onChange={(event) => setInternalNote(event.target.value)}
+                  placeholder="Private admin-only note."
+                  rows={3}
+                  value={internalNote}
+                />
+              </label>
+              <button className="announcement-secondary-button" disabled={isSaving} onClick={() => void handleReply('internal')} type="button">
+                {replyMutation.isPending ? 'Saving...' : 'Save Internal Note'}
+              </button>
+            </div>
 
             {ticketDetailQuery.isLoading ? <LoadingState /> : null}
             <div className="admin-support-message-list">
@@ -339,7 +458,39 @@ function TicketConversation({
   );
 }
 
-function SupportCategoryManager() {
+function SupportCategoryManager({ categories, isLoading }: { categories: AdminSupportCategory[]; isLoading: boolean }) {
+  const createMutation = useCreateAdminSupportCategory();
+  const updateMutation = useUpdateAdminSupportCategory();
+  const [draft, setDraft] = useState({
+    categoryName: '',
+    conversationMode: 'two_way' as const,
+    defaultPriority: 'normal' as AdminSupportTicketPriority,
+    sortOrder: 100,
+    status: 'active' as const
+  });
+  const [message, setMessage] = useState('');
+
+  async function handleAddCategory() {
+    setMessage('');
+    try {
+      await createMutation.mutateAsync(draft);
+      setDraft({ categoryName: '', conversationMode: 'two_way', defaultPriority: 'normal', sortOrder: 100, status: 'active' });
+      setMessage('Category created.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Category could not be created.');
+    }
+  }
+
+  async function handleUpdateCategory(category: AdminSupportCategory, patch: Partial<AdminSupportCategory>) {
+    setMessage('');
+    try {
+      await updateMutation.mutateAsync({ ...category, ...patch, id: category.id });
+      setMessage('Category updated.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Category could not be updated.');
+    }
+  }
+
   return (
     <section className="admin-support-panel">
       <header className="admin-panel-header">
@@ -347,38 +498,70 @@ function SupportCategoryManager() {
         <h2>Support Category Manager</h2>
       </header>
       <div className="admin-support-panel__body">
-        {fallbackCategories.slice(0, 2).map((category) => (
-          <article className="admin-support-config-card" key={category}>
+        {message ? <div className={message.includes('could not') ? 'auth-alert auth-alert--error' : 'auth-alert auth-alert--success'}>{message}</div> : null}
+        {isLoading ? <LoadingState /> : null}
+        {categories.map((category) => (
+          <article className="admin-support-config-card" key={category.id}>
             <label>
               <span>Category</span>
-              <input disabled value={category} />
+              <input defaultValue={category.categoryName} onBlur={(event) => event.target.value !== category.categoryName && void handleUpdateCategory(category, { categoryName: event.target.value })} />
             </label>
             <label>
               <span>Status</span>
-              <input disabled value="Active" />
+              <select defaultValue={category.status} onChange={(event) => void handleUpdateCategory(category, { status: event.target.value as 'active' | 'inactive' })}>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
             </label>
             <label>
               <span>Priority</span>
-              <input disabled value="normal" />
+              <select defaultValue={category.defaultPriority} onChange={(event) => void handleUpdateCategory(category, { defaultPriority: event.target.value as AdminSupportTicketPriority })}>
+                {priorityOptions.filter((option) => option !== 'all').map((option) => (
+                  <option key={option} value={option}>
+                    {formatOption(option)}
+                  </option>
+                ))}
+              </select>
             </label>
             <label>
               <span>Mode</span>
-              <input disabled value="Two-way" />
+              <select defaultValue={category.conversationMode} onChange={(event) => void handleUpdateCategory(category, { conversationMode: event.target.value as AdminSupportCategory['conversationMode'] })}>
+                <option value="two_way">Two-way</option>
+                <option value="admin_only">Admin only</option>
+              </select>
             </label>
             <div className="admin-support-config-actions">
               <label className="admin-support-checkbox">
-                <input checked disabled type="checkbox" />
+                <input
+                  defaultChecked={category.allowAttachments}
+                  onChange={(event) => void handleUpdateCategory(category, { allowAttachments: event.target.checked })}
+                  type="checkbox"
+                />
                 <span>Files</span>
               </label>
-              <button className="announcement-secondary-button" disabled type="button">
-                Save
-              </button>
+              <span className="muted-text">Sort {category.sortOrder}</span>
             </div>
           </article>
         ))}
-        <button className="announcement-primary-button" disabled type="button">
-          + Add Category
-        </button>
+        <article className="admin-support-config-card">
+          <label>
+            <span>New Category</span>
+            <input onChange={(event) => setDraft((current) => ({ ...current, categoryName: event.target.value }))} placeholder="e.g. Placement Help" value={draft.categoryName} />
+          </label>
+          <label>
+            <span>Default Priority</span>
+            <select onChange={(event) => setDraft((current) => ({ ...current, defaultPriority: event.target.value as AdminSupportTicketPriority }))} value={draft.defaultPriority}>
+              {priorityOptions.filter((option) => option !== 'all').map((option) => (
+                <option key={option} value={option}>
+                  {formatOption(option)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="announcement-primary-button" disabled={createMutation.isPending || !draft.categoryName.trim()} onClick={() => void handleAddCategory()} type="button">
+            {createMutation.isPending ? 'Adding...' : '+ Add Category'}
+          </button>
+        </article>
       </div>
     </section>
   );
@@ -405,106 +588,159 @@ function SupportEmailSettings() {
   );
 }
 
-function FaqCategoryManager() {
-  return (
-    <section className="admin-support-panel">
-      <header className="admin-panel-header admin-panel-header--with-action">
-        <div>
-          <span className="section-eyebrow">FAQs</span>
-          <h2>FAQ Categories</h2>
-        </div>
-        <button className="announcement-secondary-button" disabled type="button">
-          + Category
-        </button>
-      </header>
-      <div className="admin-support-panel__body">
-        {faqCategories.map((category) => (
-          <article className="admin-support-faq-category" key={category.category}>
-            <label>
-              <span>Category</span>
-              <input disabled value={category.category} />
-            </label>
-            <label>
-              <span>Status</span>
-              <input disabled value={category.status} />
-            </label>
-            <label>
-              <span>Sort</span>
-              <input disabled value={category.sort} />
-            </label>
-            <button className="announcement-secondary-button" disabled type="button">
-              Save
-            </button>
-            <button className="announcement-row-button announcement-row-button--danger" disabled type="button">
-              Remove
-            </button>
-          </article>
-        ))}
-      </div>
-    </section>
-  );
-}
+function FaqManager({ categories, faqs, isLoading }: { categories: AdminSupportCategory[]; faqs: AdminSupportFaq[]; isLoading: boolean }) {
+  const createMutation = useCreateAdminSupportFaq();
+  const updateMutation = useUpdateAdminSupportFaq();
+  const [draft, setDraft] = useState({
+    answer: '',
+    categoryName: categories[0]?.categoryName ?? '',
+    cohortNames: '',
+    featured: false,
+    programKeys: '',
+    question: '',
+    sortOrder: 100,
+    status: 'published' as const
+  });
+  const [message, setMessage] = useState('');
 
-function FaqManager() {
+  useEffect(() => {
+    if (!draft.categoryName && categories[0]?.categoryName) setDraft((current) => ({ ...current, categoryName: categories[0].categoryName }));
+  }, [categories, draft.categoryName]);
+
+  function parseCsv(value: string) {
+    return value.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+
+  async function handleAddFaq() {
+    setMessage('');
+    try {
+      await createMutation.mutateAsync({
+        answer: draft.answer,
+        categoryName: draft.categoryName,
+        cohortNames: parseCsv(draft.cohortNames),
+        featured: draft.featured,
+        programKeys: parseCsv(draft.programKeys),
+        question: draft.question,
+        sortOrder: draft.sortOrder,
+        status: draft.status
+      });
+      setDraft((current) => ({ ...current, answer: '', cohortNames: '', featured: false, programKeys: '', question: '' }));
+      setMessage('FAQ created.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'FAQ could not be created.');
+    }
+  }
+
+  async function handleUpdateFaq(faq: AdminSupportFaq, patch: Partial<AdminSupportFaq>) {
+    setMessage('');
+    try {
+      await updateMutation.mutateAsync({ ...faq, ...patch, id: faq.id });
+      setMessage('FAQ updated.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'FAQ could not be updated.');
+    }
+  }
+
   return (
     <section className="admin-support-panel">
-      <header className="admin-panel-header admin-panel-header--with-action">
+      <header className="admin-panel-header">
         <div>
           <span className="section-eyebrow">FAQs</span>
           <h2>FAQ Manager</h2>
         </div>
-        <button className="announcement-primary-button" disabled type="button">
-          + Add FAQ
-        </button>
       </header>
       <div className="admin-support-panel__body">
-        <div className="admin-support-filters admin-support-faq-filters">
-          <label className="admin-support-search">
-            <Info size={15} />
-            <input disabled placeholder="Search FAQs..." />
+        {message ? <div className={message.includes('could not') ? 'auth-alert auth-alert--error' : 'auth-alert auth-alert--success'}>{message}</div> : null}
+        {isLoading ? <LoadingState /> : null}
+        <article className="admin-support-faq-card">
+          <label className="admin-support-form-grid__wide">
+            <span>New Question</span>
+            <input onChange={(event) => setDraft((current) => ({ ...current, question: event.target.value }))} placeholder="Question students will see" value={draft.question} />
           </label>
-          <select disabled value="all">
-            <option value="all">All Statuses</option>
-          </select>
-        </div>
+          <label className="admin-support-form-grid__wide">
+            <span>Answer</span>
+            <textarea onChange={(event) => setDraft((current) => ({ ...current, answer: event.target.value }))} placeholder="Clear answer for students" rows={4} value={draft.answer} />
+          </label>
+          <label>
+            <span>Category</span>
+            <select onChange={(event) => setDraft((current) => ({ ...current, categoryName: event.target.value }))} value={draft.categoryName}>
+              {categories.map((category) => (
+                <option key={category.id} value={category.categoryName}>
+                  {category.categoryName}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Program Keys</span>
+            <input onChange={(event) => setDraft((current) => ({ ...current, programKeys: event.target.value }))} placeholder="Blank = all, or MCLP,SMLP" value={draft.programKeys} />
+          </label>
+          <label>
+            <span>Cohorts</span>
+            <input onChange={(event) => setDraft((current) => ({ ...current, cohortNames: event.target.value }))} placeholder="Blank = all, comma separated" value={draft.cohortNames} />
+          </label>
+          <label className="admin-support-checkbox">
+            <input checked={draft.featured} onChange={(event) => setDraft((current) => ({ ...current, featured: event.target.checked }))} type="checkbox" />
+            <span>Featured</span>
+          </label>
+          <button className="announcement-primary-button" disabled={createMutation.isPending || !draft.question.trim() || !draft.answer.trim()} onClick={() => void handleAddFaq()} type="button">
+            {createMutation.isPending ? 'Adding...' : '+ Add FAQ'}
+          </button>
+        </article>
+
         {faqs.map((faq) => (
-          <article className="admin-support-faq-card" key={faq.question}>
+          <article className="admin-support-faq-card" key={faq.id}>
             <label className="admin-support-form-grid__wide">
               <span>Question</span>
-              <input disabled value={faq.question} />
+              <input defaultValue={faq.question} onBlur={(event) => event.target.value !== faq.question && void handleUpdateFaq(faq, { question: event.target.value })} />
             </label>
             <label className="admin-support-form-grid__wide">
               <span>Answer</span>
-              <textarea disabled value={faq.answer} />
+              <textarea defaultValue={faq.answer} onBlur={(event) => event.target.value !== faq.answer && void handleUpdateFaq(faq, { answer: event.target.value })} rows={3} />
             </label>
             <label>
               <span>Category</span>
-              <input disabled value={faq.category} />
+              <select defaultValue={faq.categoryName ?? ''} onChange={(event) => void handleUpdateFaq(faq, { categoryName: event.target.value })}>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.categoryName}>
+                    {category.categoryName}
+                  </option>
+                ))}
+              </select>
             </label>
             <label>
               <span>Status</span>
-              <input disabled value={faq.status} />
+              <select defaultValue={faq.status} onChange={(event) => void handleUpdateFaq(faq, { status: event.target.value as AdminSupportFaq['status'] })}>
+                <option value="draft">Draft</option>
+                <option value="published">Published</option>
+                <option value="archived">Archived</option>
+              </select>
             </label>
             <label>
               <span>Program Keys</span>
-              <input disabled placeholder="Blank = all programs" value={faq.programKeys} />
+              <input
+                defaultValue={(faq.programKeys ?? []).join(', ')}
+                onBlur={(event) => void handleUpdateFaq(faq, { programKeys: parseCsv(event.target.value) })}
+                placeholder="Blank = all programs"
+              />
             </label>
             <label>
               <span>Cohorts</span>
-              <input disabled placeholder="Blank = all cohorts" value={faq.cohorts} />
+              <input
+                defaultValue={(faq.cohortNames ?? []).join(', ')}
+                onBlur={(event) => void handleUpdateFaq(faq, { cohortNames: parseCsv(event.target.value) })}
+                placeholder="Blank = all cohorts"
+              />
             </label>
             <label>
               <span>Sort</span>
-              <input disabled value={faq.sort} />
+              <input defaultValue={faq.sortOrder} onBlur={(event) => void handleUpdateFaq(faq, { sortOrder: Number(event.target.value) })} type="number" />
             </label>
             <label className="admin-support-checkbox">
-              <input checked={faq.featured} disabled type="checkbox" />
+              <input checked={faq.featured} onChange={(event) => void handleUpdateFaq(faq, { featured: event.target.checked })} type="checkbox" />
               <span>Featured</span>
             </label>
-            <button className="announcement-secondary-button" disabled type="button">
-              Save
-            </button>
-            <button className="announcement-row-button announcement-row-button--danger" disabled type="button">
+            <button className="announcement-row-button announcement-row-button--danger" onClick={() => void handleUpdateFaq(faq, { status: 'archived' })} type="button">
               Archive
             </button>
           </article>

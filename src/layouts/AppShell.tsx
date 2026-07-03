@@ -1,9 +1,10 @@
 import { Bell, LogOut, Menu, ShieldCheck, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { NavItem, Portal } from '../app/routeConfig';
 import { useAuth } from '../auth/AuthProvider';
 import { StatusBadge } from '../components/StatusBadge';
+import { useStudentFeatureControls } from '../features/useFeatureControls';
 import { StudentAnnouncement, useStudentAnnouncements } from '../features/student/useStudentAnnouncements';
 
 type AppShellProps = {
@@ -21,12 +22,12 @@ const studentSections: NavSection[] = [
   { title: 'My Progress', moduleIds: ['projects', 'project-submissions', 'certificates'] },
   { title: 'Community', moduleIds: ['community'] },
   { title: 'Help', moduleIds: ['announcements', 'support'] },
-  { title: 'Account', moduleIds: ['payments', 'access'] }
+  { title: 'Account', moduleIds: ['payments'] }
 ];
 
 const adminSections: NavSection[] = [
   { title: 'Main', moduleIds: ['dashboard', 'recording-candidates', 'workshops', 'resources'] },
-  { title: 'Administration', moduleIds: ['students', 'cohorts', 'programs', 'projects', 'project-submissions', 'certificates', 'enrollments'] },
+  { title: 'Administration', moduleIds: ['students', 'cohorts', 'programs', 'projects', 'project-submissions', 'certificates', 'enrollments', 'feature-control'] },
   { title: 'Community', moduleIds: ['community'] },
   { title: 'Help', moduleIds: ['announcements', 'support'] },
   { title: 'Payments', moduleIds: ['payment-orders', 'paid-access'] }
@@ -42,6 +43,12 @@ function groupNavItems(navItems: NavItem[], portal: Portal) {
       items: section.moduleIds.map((moduleId) => itemMap.get(moduleId)).filter((item): item is NavItem => Boolean(item))
     }))
     .filter((section) => section.items.length > 0);
+}
+
+function filterStudentNavItems(navItems: NavItem[], featureControls: ReturnType<typeof useStudentFeatureControls>['data'] | undefined) {
+  if (!featureControls?.items) return navItems;
+  const statusMap = new Map(featureControls.items.map((item) => [item.moduleId, item.status]));
+  return navItems.filter((item) => item.moduleId === 'dashboard' || statusMap.get(item.moduleId) !== 'hide');
 }
 
 function sortAnnouncements(items: StudentAnnouncement[]) {
@@ -69,23 +76,47 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   const [isNavOpen, setIsNavOpen] = useState(false);
   const [isAnnouncementOpen, setIsAnnouncementOpen] = useState(false);
   const [dismissedBannerId, setDismissedBannerId] = useState<string | null>(null);
+  const announcementMenuRef = useRef<HTMLDivElement | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const { signOut } = useAuth();
-  const announcementsQuery = useStudentAnnouncements({ enabled: portal === 'student', limit: 5, page: 1, priority: 'all' });
-  const navSections = groupNavItems(navItems, portal);
-  const activeNavItem = [...navItems]
+  const featureControlsQuery = useStudentFeatureControls({ enabled: portal === 'student' });
+  const visibleNavItems = portal === 'student' ? filterStudentNavItems(navItems, featureControlsQuery.data) : navItems;
+  const featureStatusMap = new Map((featureControlsQuery.data?.items ?? []).map((item) => [item.moduleId, item.status]));
+  const announcementsEnabled = portal === 'student' && featureStatusMap.get('announcements') !== 'hide';
+  const announcementsQuery = useStudentAnnouncements({ enabled: announcementsEnabled, limit: 5, page: 1, priority: 'all' });
+  const navSections = groupNavItems(visibleNavItems, portal);
+  const activeNavItem = [...visibleNavItems]
     .sort((left, right) => right.path.length - left.path.length)
     .find((item) => location.pathname === item.path || (item.path !== `/${portal}` && location.pathname.startsWith(`${item.path}/`)));
   const topbarTitle = activeNavItem?.label ?? workspaceLabel;
   const announcementItems = useMemo(() => sortAnnouncements(announcementsQuery.data?.items ?? []), [announcementsQuery.data?.items]);
-  const activeAnnouncementCount = portal === 'student' ? announcementsQuery.data?.total ?? 0 : 0;
+  const activeAnnouncementCount = announcementsEnabled ? announcementsQuery.data?.total ?? 0 : 0;
   const countLabel = activeAnnouncementCount > 99 ? '99+' : String(activeAnnouncementCount);
   const bannerAnnouncement = announcementItems.find((item) => item.pinned || item.priority === 'urgent');
 
   useEffect(() => {
     setIsAnnouncementOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    if (!isAnnouncementOpen) return;
+
+    function closeOnOutsideClick(event: MouseEvent | TouchEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (announcementMenuRef.current?.contains(target)) return;
+      setIsAnnouncementOpen(false);
+    }
+
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    document.addEventListener('touchstart', closeOnOutsideClick);
+
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick);
+      document.removeEventListener('touchstart', closeOnOutsideClick);
+    };
+  }, [isAnnouncementOpen]);
 
   async function handleSignOut() {
     setIsNavOpen(false);
@@ -127,6 +158,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
                     >
                       <Icon size={18} />
                       <span>{item.label}</span>
+                      {portal === 'student' && featureStatusMap.get(item.moduleId) === 'upcoming' ? <small className="nav-item__badge">Soon</small> : null}
                     </NavLink>
                   );
                 })}
@@ -155,8 +187,8 @@ export function AppShell({ navItems, portal }: AppShellProps) {
             </div>
           </div>
           <div className="topbar-actions">
-            {portal === 'student' ? (
-              <div className="topbar-announcements">
+            {announcementsEnabled ? (
+              <div className="topbar-announcements" ref={announcementMenuRef}>
                 <button
                   aria-expanded={isAnnouncementOpen}
                   aria-label={`Open announcements${activeAnnouncementCount > 0 ? `, ${activeAnnouncementCount} active` : ''}`}
@@ -170,8 +202,13 @@ export function AppShell({ navItems, portal }: AppShellProps) {
                 {isAnnouncementOpen ? (
                   <section className="topbar-announcement-menu" aria-label="Latest announcements">
                     <div className="topbar-announcement-menu__header">
-                      <strong>Announcements</strong>
-                      <small>{activeAnnouncementCount} active</small>
+                      <div>
+                        <strong>Announcements</strong>
+                        <small>{activeAnnouncementCount} active</small>
+                      </div>
+                      <button aria-label="Close announcements" className="topbar-announcement-close" onClick={() => setIsAnnouncementOpen(false)} type="button">
+                        <X size={16} />
+                      </button>
                     </div>
                     {announcementItems.length > 0 ? (
                       <div className="topbar-announcement-menu__list">
@@ -198,7 +235,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
           </div>
         </header>
 
-        {portal === 'student' && bannerAnnouncement && dismissedBannerId !== bannerAnnouncement.id ? (
+        {announcementsEnabled && bannerAnnouncement && dismissedBannerId !== bannerAnnouncement.id ? (
           <section className="student-announcement-banner" aria-label="Pinned announcement">
             <div>
               <span>{announcementMeta(bannerAnnouncement)}</span>

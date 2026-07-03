@@ -11,6 +11,7 @@ import {
   Megaphone,
   MessageCircle,
   ShieldCheck,
+  SlidersHorizontal,
   Ticket,
   Users,
   Video,
@@ -38,9 +39,8 @@ export const studentNavItems: NavItem[] = [
   { label: 'Certificates', path: '/student/certificates', moduleId: 'certificates', icon: FileCheck2, mode: 'read-only' },
   { label: 'Community', path: '/student/community', moduleId: 'community', icon: MessageCircle, mode: 'read-only' },
   { label: 'Announcements', path: '/student/announcements', moduleId: 'announcements', icon: Megaphone, mode: 'read-only' },
-  { label: 'Support', path: '/student/support', moduleId: 'support', icon: HelpCircle, mode: 'read-only' },
-  { label: 'Payments', path: '/student/payments', moduleId: 'payments', icon: BadgeIndianRupee, mode: 'read-only' },
-  { label: 'Access', path: '/student/access', moduleId: 'access', icon: ShieldCheck, mode: 'read-only' }
+  { label: 'Support', path: '/student/support', moduleId: 'support', icon: HelpCircle, mode: 'write' },
+  { label: 'Payments & Access', path: '/student/payments', moduleId: 'payments', icon: BadgeIndianRupee, mode: 'read-only' }
 ];
 
 export const adminNavItems: NavItem[] = [
@@ -57,7 +57,8 @@ export const adminNavItems: NavItem[] = [
   { label: 'Enrollments', path: '/admin/enrollments', moduleId: 'enrollments', icon: Ticket, mode: 'read-only' },
   { label: 'Community', path: '/admin/community', moduleId: 'community', icon: MessageCircle, mode: 'read-only' },
   { label: 'Announcements', path: '/admin/announcements', moduleId: 'announcements', icon: Megaphone, mode: 'read-only' },
-  { label: 'Support', path: '/admin/support', moduleId: 'support', icon: HelpCircle, mode: 'read-only' },
+  { label: 'Support', path: '/admin/support', moduleId: 'support', icon: HelpCircle, mode: 'write' },
+  { label: 'Feature Control', path: '/admin/feature-control', moduleId: 'feature-control', icon: SlidersHorizontal, mode: 'write' },
   { label: 'Payments', path: '/admin/payment-orders', moduleId: 'payment-orders', icon: BadgeIndianRupee, mode: 'read-only' },
   { label: 'Paid Access', path: '/admin/paid-access', moduleId: 'paid-access', icon: ShieldCheck, mode: 'read-only' }
 ];
