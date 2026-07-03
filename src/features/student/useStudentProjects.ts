@@ -29,6 +29,7 @@ export type StudentProject = {
   documents: StudentProjectDocument[];
   id: string;
   objectives?: string;
+  projectId?: string;
   programKey?: string;
   programKeys: string[];
   programName?: string;
