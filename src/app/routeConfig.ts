@@ -8,6 +8,7 @@ import {
   HelpCircle,
   LayoutDashboard,
   Library,
+  Mail,
   Megaphone,
   MessageCircle,
   ShieldCheck,
@@ -58,6 +59,7 @@ export const adminNavItems: NavItem[] = [
   { label: 'Community', path: '/admin/community', moduleId: 'community', icon: MessageCircle, mode: 'read-only' },
   { label: 'Announcements', path: '/admin/announcements', moduleId: 'announcements', icon: Megaphone, mode: 'read-only' },
   { label: 'Support', path: '/admin/support', moduleId: 'support', icon: HelpCircle, mode: 'write' },
+  { label: 'Email Centre', path: '/admin/email-center', moduleId: 'email-center', icon: Mail, mode: 'write' },
   { label: 'Feature Control', path: '/admin/feature-control', moduleId: 'feature-control', icon: SlidersHorizontal, mode: 'write' },
   { label: 'Payments', path: '/admin/payment-orders', moduleId: 'payment-orders', icon: BadgeIndianRupee, mode: 'read-only' },
   { label: 'Paid Access', path: '/admin/paid-access', moduleId: 'paid-access', icon: ShieldCheck, mode: 'read-only' }

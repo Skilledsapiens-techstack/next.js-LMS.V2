@@ -207,6 +207,50 @@ const FEATURE_CONTROL_WRITE_COLUMNS = new Set([
   'updated_by'
 ]);
 
+const EMAIL_TEMPLATE_WRITE_COLUMNS = new Set([
+  'allowed_variables',
+  'body',
+  'brevo_template_id',
+  'category',
+  'default_tags',
+  'description',
+  'is_system',
+  'phase',
+  'sample_params',
+  'sort_order',
+  'status',
+  'subject',
+  'template_key',
+  'template_name'
+]);
+
+const EMAIL_TEMPLATE_PHASE_KEYS = new Set([
+  'custom',
+  'auth',
+  'onboarding',
+  'workshop_link',
+  'reminder',
+  'recording_update',
+  'resource_share',
+  'certificate',
+  'support',
+  'project_submission',
+  'payment',
+  'enrollment',
+  'placement',
+  'general'
+]);
+
+const EMAIL_TEMPLATE_PHASE_ALIASES: Record<string, string> = {
+  auth_portal_access: 'auth',
+  custom_mail: 'custom',
+  recording: 'recording_update',
+  recording_available: 'recording_update',
+  resource: 'resource_share',
+  resource_sharing: 'resource_share',
+  workshop: 'workshop_link'
+};
+
 const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/announcements': { table: 'announcements', searchColumns: ['title', 'message', 'audience'] },
   '/admins/audit-logs': {
@@ -238,6 +282,18 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/enrollment-exceptions': { table: 'enrollment_exceptions', searchColumns: ['student_email', 'exception_type', 'notes'] },
   '/admins/enrollment-requests': { table: 'enrollment_requests', searchColumns: ['student_email', 'student_name', 'request_id'] },
   '/admins/enrollment-webhook-events': { table: 'enrollment_webhook_events', searchColumns: ['event_id', 'payment_id', 'order_id'] },
+  '/admins/email-queue': {
+    table: 'email_queue',
+    filterColumns: { category: 'category', status: 'status' },
+    searchColumns: ['recipient_email', 'recipient_name', 'subject', 'template_key', 'category', 'status'],
+    sortColumns: { newest: { column: 'created_at', ascending: false } }
+  },
+  '/admins/email-templates': {
+    table: 'email_templates',
+    filterColumns: { category: 'category', phase: 'phase', status: 'status' },
+    searchColumns: ['template_name', 'template_key', 'phase', 'category', 'subject', 'description'],
+    sortColumns: { order: { column: 'sort_order', ascending: true }, updated: { column: 'updated_at', ascending: false } }
+  },
   '/admins/feature-controls': {
     table: 'feature_controls',
     searchColumns: ['module_id', 'student_label', 'student_path'],
@@ -338,6 +394,12 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     normalizeBody: normalizeFeatureControlWriteBody,
     table: 'feature_controls',
     validateBody: validateFeatureControlWriteBody
+  },
+  email_templates: {
+    columns: EMAIL_TEMPLATE_WRITE_COLUMNS,
+    normalizeBody: normalizeEmailTemplateWriteBody,
+    table: 'email_templates',
+    validateBody: validateEmailTemplateWriteBody
   }
 };
 
@@ -480,6 +542,20 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
     ) as Promise<TResponse>;
   }
 
+  const emailTemplateArchive = cleanPath.match(/^\/admins\/email-templates\/([^/]+)\/archive$/);
+  if (emailTemplateArchive) {
+    const templateId = decodeURIComponent(emailTemplateArchive[1]);
+    const { data: template, error } = await context.supabase.from('email_templates').select('id,is_system').eq('id', templateId).maybeSingle();
+    if (error) throw new ApiClientError(error.message, 503);
+    if (template?.is_system) throw new ApiClientError('System email templates cannot be archived or deleted.', 400);
+    return updateById(context, 'email_templates', templateId, { status: 'inactive' }, 'archived') as Promise<TResponse>;
+  }
+
+  const emailTemplateUpdate = cleanPath.match(/^\/admins\/email-templates\/([^/]+)$/);
+  if (emailTemplateUpdate) {
+    return updateById(context, 'email_templates', decodeURIComponent(emailTemplateUpdate[1]), options.body, 'updated') as Promise<TResponse>;
+  }
+
   const programStatus = cleanPath.match(/^\/admins\/programs\/([^/]+)\/status$/);
   if (programStatus) return updateById(context, 'programs', decodeURIComponent(programStatus[1]), options.body, 'status_changed') as Promise<TResponse>;
 
@@ -544,6 +620,7 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
       'created'
     ) as Promise<TResponse>;
   }
+  if (cleanPath === '/admins/email-templates') return insertRow(context, 'email_templates', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/programs') return insertRow(context, 'programs', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/project-roles') return insertRow(context, 'role_master', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/projects') return insertRow(context, 'projects', options.body, 'created') as Promise<TResponse>;
@@ -2172,18 +2249,109 @@ async function queueStudentInvite(context: Awaited<ReturnType<typeof createConte
   await writeAuditLog(context, 'students', 'invite_queued', student, { email_queue_id: data.id, template_key: 'portal_invite' });
 }
 
+async function studentOnboardingContext(context: Awaited<ReturnType<typeof createContext>>, student: Record<string, unknown>) {
+  const studentId = String(student.id ?? '');
+  if (!studentId) {
+    return {
+      cohort_group_details: '',
+      cohorts: String(student.cohort_name ?? ''),
+      google_groups: '',
+      programs: String(student.program_name ?? ''),
+      whatsapp_groups: ''
+    };
+  }
+
+  const { data: links, error: linkError } = await context.supabase
+    .from('student_cohorts')
+    .select('cohort_name')
+    .eq('student_id', studentId)
+    .limit(100);
+  if (linkError) throw new ApiClientError(`Student was saved, but onboarding context failed: ${linkError.message}`, 503);
+
+  const { data: studentPrograms, error: studentProgramError } = await context.supabase
+    .from('student_programs')
+    .select('program_key')
+    .eq('student_id', studentId)
+    .limit(100);
+  if (studentProgramError) throw new ApiClientError(`Student was saved, but onboarding program context failed: ${studentProgramError.message}`, 503);
+
+  const cohortNames = uniqueStrings([...(links ?? []).map((row) => String(row.cohort_name ?? '')), String(student.cohort_name ?? '')]);
+
+  const { data: cohorts, error: cohortError } = cohortNames.length
+    ? await context.supabase
+      .from('cohorts')
+      .select('name,program_key,google_group,wa_group_name,wa_link')
+      .in('name', cohortNames)
+      .limit(100)
+    : { data: [], error: null };
+  if (cohortError) throw new ApiClientError(`Student was saved, but cohort group details failed: ${cohortError.message}`, 503);
+
+  const programKeys = uniqueStrings([
+    ...(studentPrograms ?? []).map((row) => String(row.program_key ?? '')),
+    ...(cohorts ?? []).map((cohort) => String(cohort.program_key ?? ''))
+  ].map((key) => key.toLowerCase()));
+  const { data: programs, error: programError } = programKeys.length
+    ? await context.supabase
+      .from('programs')
+      .select('program_key,name,short_name')
+      .in('program_key', programKeys)
+      .limit(100)
+    : { data: [], error: null };
+  if (programError) throw new ApiClientError(`Student was saved, but program details failed: ${programError.message}`, 503);
+
+  const programNameByKey = new Map((programs ?? []).map((program) => [
+    String(program.program_key ?? '').toLowerCase(),
+    String(program.name ?? program.short_name ?? program.program_key ?? '')
+  ]));
+  const programNames = cleanProgramNames([
+    ...programKeys.map((key) => programNameByKey.get(key) || key),
+    ...String(student.program_name ?? '').split(',').map((item) => item.trim()),
+    ...programKeys
+  ], programNameByKey);
+
+  const cohortDetails = (cohorts ?? []).map((cohort) => [
+    cohort.name ? `Cohort: ${cohort.name}` : '',
+    cohort.program_key ? `Program: ${programNameByKey.get(String(cohort.program_key).toLowerCase()) || cohort.program_key}` : '',
+    cohort.wa_group_name ? `WhatsApp group: ${cohort.wa_group_name}` : '',
+    cohort.wa_link ? `WhatsApp link: ${cohort.wa_link}` : '',
+    cohort.google_group ? `Google group: ${cohort.google_group}` : ''
+  ].filter(Boolean).join('\n'));
+
+  return {
+    cohort_group_details: cohortDetails.join('\n\n'),
+    cohorts: cohortNames.join(', '),
+    google_groups: (cohorts ?? []).map((cohort) => String(cohort.google_group ?? '')).filter(Boolean).join('\n'),
+    programs: programNames.join(', '),
+    whatsapp_groups: (cohorts ?? []).map((cohort) => [cohort.wa_group_name, cohort.wa_link].filter(Boolean).join(' - ')).filter(Boolean).join('\n')
+  };
+}
+
+function cleanProgramNames(values: string[], programNameByKey: Map<string, string>) {
+  return uniqueStrings(values).filter((value) => {
+    const key = value.toLowerCase();
+    const resolvedName = programNameByKey.get(key);
+    return !resolvedName || resolvedName.toLowerCase() === key;
+  });
+}
+
 async function queueStudentOnboardingMail(context: Awaited<ReturnType<typeof createContext>>, student: Record<string, unknown>) {
   const email = normalizeEmail(student.email);
   if (!email) throw new ApiClientError('Student was saved, but onboarding mail queueing failed because the email is missing.', 400);
+  const onboardingContext = await studentOnboardingContext(context, student);
 
   const queueRow = {
     category: 'auth',
     created_by: context.email,
     params: {
       cohort: student.cohort_name ?? null,
+      cohort_group_details: onboardingContext.cohort_group_details,
+      cohorts: onboardingContext.cohorts,
+      google_groups: onboardingContext.google_groups,
       program: student.program_name ?? null,
+      programs: onboardingContext.programs,
       student_id: student.student_id ?? student.id,
-      student_name: student.full_name ?? email
+      student_name: student.full_name ?? email,
+      whatsapp_groups: onboardingContext.whatsapp_groups
     },
     recipient_email: email,
     recipient_name: student.full_name ?? null,
@@ -2791,6 +2959,54 @@ function normalizeFeatureControlWriteBody(payload: Record<string, unknown>) {
   };
 }
 
+function normalizeEmailTemplatePhase(value: unknown) {
+  const key = slugifyKey(String(value ?? ''));
+  const aliased = EMAIL_TEMPLATE_PHASE_ALIASES[key] ?? key;
+  if (EMAIL_TEMPLATE_PHASE_KEYS.has(aliased)) return aliased;
+  return aliased || 'general';
+}
+
+function normalizeEmailTemplateCategory(value: unknown, phase?: string) {
+  const key = slugifyKey(String(value ?? ''));
+  if (['auth', 'transactional', 'general'].includes(key)) return key;
+
+  const phaseKey = normalizeEmailTemplatePhase(phase || key || 'general');
+  if (phaseKey === 'auth' || phaseKey === 'onboarding') return 'auth';
+  if (phaseKey === 'custom' || phaseKey === 'general' || phaseKey === 'placement') return 'general';
+  return 'transactional';
+}
+
+function normalizeEmailTemplateWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  const templateName = has('template_name') && typeof payload.template_name === 'string' ? payload.template_name.trim() : payload.template_name;
+  const phase = has('phase') && typeof payload.phase === 'string' ? normalizeEmailTemplatePhase(payload.phase) : payload.phase;
+  const category = has('category') && typeof payload.category === 'string' ? normalizeEmailTemplateCategory(payload.category, typeof phase === 'string' ? phase : undefined) : payload.category;
+  const templateKey =
+    has('template_key') && typeof payload.template_key === 'string'
+      ? slugifyKey(payload.template_key)
+      : typeof templateName === 'string' && templateName.trim()
+        ? `${String(phase || category || 'custom').replace(/[^a-z0-9]+/g, '_')}_${slugifyKey(templateName)}`
+        : payload.template_key;
+
+  return {
+    ...payload,
+    allowed_variables: has('allowed_variables') ? uniqueStrings(asStringArray(payload.allowed_variables).map((item) => item.replace(/[{}]/g, '').trim()).filter(Boolean)) : payload.allowed_variables,
+    body: has('body') && typeof payload.body === 'string' ? payload.body.trim() : payload.body,
+    brevo_template_id: payload.brevo_template_id === '' || payload.brevo_template_id === null ? null : payload.brevo_template_id,
+    category: category || normalizeEmailTemplateCategory(undefined, typeof phase === 'string' ? phase : undefined),
+    default_tags: has('default_tags') ? uniqueStrings(asStringArray(payload.default_tags).map((item) => item.toLowerCase())) : payload.default_tags,
+    description: has('description') ? String(payload.description ?? '').trim() || null : payload.description,
+    is_system: has('is_system') ? payload.is_system === true : payload.is_system,
+    phase: phase || normalizeEmailTemplatePhase(typeof category === 'string' ? category : 'general'),
+    sample_params: isRecord(payload.sample_params) ? payload.sample_params : {},
+    sort_order: payload.sort_order === '' || payload.sort_order === undefined ? 100 : Number(payload.sort_order),
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    subject: has('subject') && typeof payload.subject === 'string' ? payload.subject.trim() : payload.subject,
+    template_key: templateKey,
+    template_name: templateName
+  };
+}
+
 function validateCohortWriteBody(payload: Record<string, unknown>, inserting: boolean) {
   const name = typeof payload.name === 'string' ? payload.name.trim() : '';
   const status = typeof payload.status === 'string' ? payload.status : undefined;
@@ -2906,6 +3122,32 @@ function validateFeatureControlWriteBody(payload: Record<string, unknown>, inser
   if (message.length > 500) throw new ApiClientError('Upcoming message must be 500 characters or fewer.', 400);
 }
 
+function validateEmailTemplateWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const templateName = typeof payload.template_name === 'string' ? payload.template_name.trim() : '';
+  const templateKey = typeof payload.template_key === 'string' ? payload.template_key.trim() : '';
+  const phase = typeof payload.phase === 'string' ? payload.phase.trim() : '';
+  const status = typeof payload.status === 'string' ? payload.status.trim() : undefined;
+  const subject = typeof payload.subject === 'string' ? payload.subject.trim() : '';
+  const body = typeof payload.body === 'string' ? payload.body.trim() : '';
+  const allowedVariables = payload.allowed_variables;
+  const defaultTags = payload.default_tags;
+  const sortOrder = payload.sort_order;
+
+  if (inserting && !templateName) throw new ApiClientError('Template name is required.', 400);
+  if (inserting && !templateKey) throw new ApiClientError('Template key is required.', 400);
+  if (inserting && !phase) throw new ApiClientError('Template phase is required.', 400);
+  if ('template_name' in payload && !templateName) throw new ApiClientError('Template name is required.', 400);
+  if ('template_key' in payload && (!templateKey || !/^[a-z0-9_]+$/.test(templateKey))) throw new ApiClientError('Template key can use lowercase letters, numbers, and underscores only.', 400);
+  if (status && !['active', 'inactive'].includes(status)) throw new ApiClientError('Template status is invalid.', 400);
+  if ('subject' in payload && !subject) throw new ApiClientError('Template subject is required.', 400);
+  if ('body' in payload && !body) throw new ApiClientError('Template body is required.', 400);
+  if (subject.length > 240) throw new ApiClientError('Template subject must be 240 characters or fewer.', 400);
+  if (body.length > 8000) throw new ApiClientError('Template body must be 8000 characters or fewer.', 400);
+  if (allowedVariables !== undefined && !Array.isArray(allowedVariables)) throw new ApiClientError('Template variables must be a list.', 400);
+  if (defaultTags !== undefined && !Array.isArray(defaultTags)) throw new ApiClientError('Template tags must be a list.', 400);
+  if (sortOrder !== undefined && !Number.isFinite(Number(sortOrder))) throw new ApiClientError('Template sort order is invalid.', 400);
+}
+
 function validateWorkshopWriteBody(payload: Record<string, unknown>, inserting: boolean) {
   const title = typeof payload.title === 'string' ? payload.title.trim() : '';
   const date = typeof payload.date === 'string' ? payload.date.trim() : '';
@@ -3004,7 +3246,8 @@ async function writeAuditLog(
     table !== 'projects' &&
     table !== 'role_master' &&
     table !== 'certificates' &&
-    table !== 'feature_controls'
+    table !== 'feature_controls' &&
+    table !== 'email_templates'
   ) return;
   const entityType =
     table === 'cohorts'
@@ -3023,7 +3266,9 @@ async function writeAuditLog(
                   ? 'certificate'
                   : table === 'feature_controls'
                     ? 'feature_control'
-                    : 'student';
+                    : table === 'email_templates'
+                      ? 'email_template'
+                      : 'student';
 
   const auditRow = {
     action: `admin_${entityType}_${action}`,
@@ -3038,7 +3283,7 @@ async function writeAuditLog(
   const { error } = await context.supabase.from('audit_logs').insert(auditRow);
   if (error) {
     throw new ApiClientError(
-      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : entityType === 'feature_control' ? 'Feature control' : 'Student'} was saved, but audit logging failed: ${error.message}`,
+      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : entityType === 'feature_control' ? 'Feature control' : entityType === 'email_template' ? 'Email template' : 'Student'} was saved, but audit logging failed: ${error.message}`,
       503
     );
   }
@@ -3103,6 +3348,17 @@ function buildAuditDetails(table: string, row: Record<string, unknown>, payload:
       roleId: row.role_id,
       roleName: row.role_name,
       status: row.status
+    };
+  }
+
+  if (table === 'email_templates') {
+    return {
+      ...base,
+      category: row.category,
+      phase: row.phase,
+      status: row.status,
+      templateKey: row.template_key,
+      templateName: row.template_name
     };
   }
 

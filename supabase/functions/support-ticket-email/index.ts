@@ -42,6 +42,53 @@ function escHtml(value: unknown) {
     .replace(/'/g, '&#39;');
 }
 
+function fillVars(source: string, vars: JsonRecord) {
+  return source.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key) => text(vars[key]));
+}
+
+function richPlainTextToHtml(value: string) {
+  return value
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean)
+    .map((paragraph) => `<p>${escHtml(paragraph).replace(/\n/g, '<br>')}</p>`)
+    .join('\n');
+}
+
+function templateKeyForEvent(event: string) {
+  if (event === 'ticket_created') return 'support_ticket_created';
+  if (event === 'admin_reply') return 'support_ticket_reply';
+  if (event === 'status_changed') return 'support_ticket_resolved';
+  return 'support_ticket_reply';
+}
+
+async function getTemplate(templateKey: string) {
+  const { data } = await admin
+    .from('email_templates')
+    .select('template_key, subject, body')
+    .eq('template_key', templateKey)
+    .eq('status', 'active')
+    .maybeSingle();
+  return data || null;
+}
+
+function supportVars(event: string, ticket: JsonRecord, message: JsonRecord | null) {
+  const body = text(message?.body) || text(ticket.description);
+  return {
+    student_name: text(ticket.student_name, 'there'),
+    student_email: text(ticket.student_email),
+    ticket_id: text(ticket.ticket_id),
+    ticket_subject: text(ticket.subject),
+    ticket_category: text(ticket.category_name),
+    ticket_priority: text(ticket.priority),
+    ticket_status: text(ticket.status),
+    reply_body: body,
+    latest_message: body,
+    portal_url: 'https://dev.skilledsapiens.com/login',
+    event
+  };
+}
+
 function titleForEvent(event: string, ticket: JsonRecord) {
   const id = text(ticket.ticket_id) || 'Support ticket';
   if (event === 'ticket_created') return `${id}: support ticket received`;
@@ -156,14 +203,20 @@ Deno.serve(async (req) => {
       : event === 'student_reply'
         ? adminRecipients
         : [studentEmail];
-    const subject = titleForEvent(event, ticket);
-    const htmlContent = htmlForEvent(event, ticket, message);
+    const templateKey = templateKeyForEvent(event);
+    const template = await getTemplate(templateKey);
+    const vars = supportVars(event, ticket, message);
+    const subject = fillVars(text(template?.subject) || titleForEvent(event, ticket), vars);
+    const htmlContent = template?.body
+      ? richPlainTextToHtml(fillVars(text(template.body), vars))
+      : htmlForEvent(event, ticket, message);
     const delivery = await sendBrevo(recipients, subject, htmlContent, ['lms', 'support', event]);
 
     try {
       await admin.from('email_queue').insert({
         email_key: crypto.randomUUID(),
         category: 'transactional',
+        template_key: templateKey,
         provider: 'brevo',
         status: delivery.messageId ? 'sent' : 'dry_run',
         recipient_email: recipients[0] || '',

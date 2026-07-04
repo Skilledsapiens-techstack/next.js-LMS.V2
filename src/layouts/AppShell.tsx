@@ -21,7 +21,7 @@ const studentSections: NavSection[] = [
   { title: 'Main', moduleIds: ['dashboard', 'cohorts', 'recordings', 'schedule', 'resources'] },
   { title: 'My Progress', moduleIds: ['projects', 'project-submissions', 'certificates'] },
   { title: 'Community', moduleIds: ['community'] },
-  { title: 'Help', moduleIds: ['announcements', 'support'] },
+  { title: 'Help', moduleIds: ['announcements', 'support', 'email-center'] },
   { title: 'Account', moduleIds: ['payments'] }
 ];
 
@@ -29,7 +29,7 @@ const adminSections: NavSection[] = [
   { title: 'Main', moduleIds: ['dashboard', 'recording-candidates', 'workshops', 'resources'] },
   { title: 'Administration', moduleIds: ['students', 'cohorts', 'programs', 'projects', 'project-submissions', 'certificates', 'enrollments', 'feature-control'] },
   { title: 'Community', moduleIds: ['community'] },
-  { title: 'Help', moduleIds: ['announcements', 'support'] },
+  { title: 'Help', moduleIds: ['announcements', 'support', 'email-center'] },
   { title: 'Payments', moduleIds: ['payment-orders', 'paid-access'] }
 ];
 

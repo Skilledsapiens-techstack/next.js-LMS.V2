@@ -13,6 +13,9 @@ const portalUrlFallback =
   Deno.env.get('PUBLIC_SITE_URL') ||
   Deno.env.get('SITE_URL') ||
   'https://staging.skilledsapiens.com/';
+const DAILY_EMAIL_LIMIT = 300;
+const DEFAULT_BATCH_SIZE = 50;
+const MAX_BATCH_SIZE = 100;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -22,6 +25,14 @@ const corsHeaders = {
 };
 
 const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+
+type EmailRecipient = {
+  email: string;
+  name: string;
+  relatedId: string;
+  relatedType: string;
+  vars: JsonRecord;
+};
 
 function json(status: number, body: JsonRecord) {
   return new Response(JSON.stringify(body), { status, headers: corsHeaders });
@@ -34,6 +45,34 @@ function asRecord(value: unknown): JsonRecord {
 function text(value: unknown, fallback = '') {
   if (value === null || value === undefined) return fallback;
   return String(value).trim();
+}
+
+function uniqueText(values: unknown[]) {
+  const seen = new Set<string>();
+  const items: string[] = [];
+  values.forEach((value) => {
+    const item = text(value);
+    const key = item.toLowerCase();
+    if (!item || seen.has(key)) return;
+    seen.add(key);
+    items.push(item);
+  });
+  return items;
+}
+
+function splitTextList(value: unknown) {
+  return text(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function cleanProgramNames(values: string[], programNameByKey: Map<string, string>) {
+  return uniqueText(values).filter((value) => {
+    const key = value.toLowerCase();
+    const resolvedName = programNameByKey.get(key);
+    return !resolvedName || resolvedName.toLowerCase() === key;
+  });
 }
 
 function normalizeEmail(value: unknown) {
@@ -51,6 +90,18 @@ function escHtml(value: unknown) {
 
 function plainTextToHtml(value: unknown) {
   return '<p>' + escHtml(value).replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
+}
+
+function looksLikeHtml(value: unknown) {
+  return /<\/?[a-z][\s\S]*>/i.test(String(value || ''));
+}
+
+function sanitizeAdminHtml(value: unknown) {
+  return String(value || '')
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/\son\w+=(["']).*?\1/gi, '')
+    .replace(/\son\w+=\S+/gi, '')
+    .replace(/\s(href|src)=(["'])\s*javascript:[\s\S]*?\2/gi, ' $1="#"');
 }
 
 function richPlainTextToHtml(value: unknown, options: { linkLabels?: Record<string, string>; buttonUrls?: string[] } = {}) {
@@ -78,6 +129,11 @@ function richPlainTextToHtml(value: unknown, options: { linkLabels?: Record<stri
   return '<p>' + parts.join('').replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
 }
 
+function adminEmailBodyToHtml(value: unknown) {
+  if (looksLikeHtml(value)) return sanitizeAdminHtml(value);
+  return richPlainTextToHtml(value);
+}
+
 function htmlToPlainText(value: unknown) {
   return String(value || '')
     .replace(/<br\s*\/?>/gi, '\n')
@@ -92,10 +148,17 @@ function htmlToPlainText(value: unknown) {
     .trim();
 }
 
-function fillVars(template: unknown, vars: JsonRecord) {
+function formatTemplateValue(value: unknown, htmlMode: boolean) {
+  const raw = value === undefined || value === null ? '' : String(value);
+  if (!htmlMode) return raw;
+  return escHtml(raw).replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
+}
+
+function fillVars(template: unknown, vars: JsonRecord, options: { html?: boolean } = {}) {
+  const htmlMode = options.html === true;
   return String(template || '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key) => {
     const value = vars[key];
-    return value === undefined || value === null ? '' : String(value);
+    return formatTemplateValue(value, htmlMode);
   });
 }
 
@@ -128,6 +191,29 @@ async function assertPublicCaller(req: Request) {
   if (!anonKey || (apikey !== anonKey && bearer !== anonKey)) {
     throw new Error('Invalid transactional email caller.');
   }
+}
+
+async function assertAdminCaller(req: Request) {
+  const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  if (!bearer || bearer === anonKey) throw new Error('Admin session is required.');
+
+  const authClient = createClient(supabaseUrl, anonKey, {
+    auth: { persistSession: false },
+    global: { headers: { Authorization: `Bearer ${bearer}` } },
+  });
+  const { data: userData, error: userError } = await authClient.auth.getUser(bearer);
+  const email = normalizeEmail(userData.user?.email);
+  if (userError || !userData.user?.id || !email) throw new Error('Admin session is invalid.');
+
+  const { data, error } = await admin
+    .from('admin_users')
+    .select('id,email,status,auth_user_id,full_name')
+    .or(`auth_user_id.eq.${userData.user.id},email.eq.${email}`)
+    .limit(2);
+  if (error) throw new Error(error.message);
+  const row = (data || []).find((item) => item.auth_user_id === userData.user?.id) || (data || []).find((item) => normalizeEmail(item.email) === email);
+  if (!row || row.status !== 'active') throw new Error('Active admin access is required.');
+  return asRecord(row);
 }
 
 async function enforceCooldown(email: string) {
@@ -207,6 +293,435 @@ async function emailTemplateByKey(templateKey: string) {
     .maybeSingle();
   if (error) throw new Error(error.message);
   return data ? asRecord(data) : null;
+}
+
+async function studentsByEmails(emails: string[]) {
+  if (emails.length === 0) return new Map<string, JsonRecord>();
+  const { data, error } = await admin
+    .from('students')
+    .select('id,student_id,email,full_name,active,cohort_name,program_name,track_role_ids')
+    .in('email', emails)
+    .limit(Math.min(emails.length, 1000));
+  if (error) throw new Error(error.message);
+  const enriched = await enrichStudentsWithCohortDetails((data || []).map(asRecord));
+  return new Map(enriched.map((row) => [normalizeEmail(row.email), row]));
+}
+
+async function studentsForCohorts(cohortNames: string[]) {
+  if (cohortNames.length === 0) return [];
+  const { data: links, error: linkError } = await admin
+    .from('student_cohorts')
+    .select('student_id,cohort_name')
+    .in('cohort_name', cohortNames)
+    .limit(10000);
+  if (linkError) throw new Error(linkError.message);
+  const studentIds = Array.from(new Set((links || []).map((row) => text(row.student_id)).filter(Boolean))).slice(0, 1000);
+  if (studentIds.length === 0) return [];
+
+  const { data: students, error: studentError } = await admin
+    .from('students')
+    .select('id,student_id,email,full_name,active,cohort_name,program_name,track_role_ids')
+    .eq('active', true)
+    .in('id', studentIds)
+    .limit(1000);
+  if (studentError) throw new Error(studentError.message);
+  return enrichStudentsWithCohortDetails((students || []).map(asRecord));
+}
+
+async function cohortsByNames(cohortNames: string[]) {
+  if (cohortNames.length === 0) return [];
+  const { data, error } = await admin
+    .from('cohorts')
+    .select('id,name,cohort_id,program_key,google_group,wa_group_name,wa_link,status')
+    .in('name', cohortNames)
+    .limit(500);
+  if (error) throw new Error(error.message);
+  return (data || []).map(asRecord);
+}
+
+async function programsByKeys(programKeys: string[]) {
+  const keys = uniqueText(programKeys.map((key) => key.toLowerCase()));
+  if (keys.length === 0) return new Map<string, string>();
+  const { data, error } = await admin
+    .from('programs')
+    .select('program_key,name,short_name')
+    .in('program_key', keys)
+    .limit(500);
+  if (error) throw new Error(error.message);
+  return new Map((data || []).map((program) => [
+    text(program.program_key).toLowerCase(),
+    text(program.name) || text(program.short_name) || text(program.program_key),
+  ]));
+}
+
+async function enrichStudentsWithCohortDetails(students: JsonRecord[]) {
+  const studentIds = students.map((student) => text(student.id)).filter(Boolean);
+  if (studentIds.length === 0) return students;
+
+  const { data: links, error: linkError } = await admin
+    .from('student_cohorts')
+    .select('student_id,cohort_name')
+    .in('student_id', studentIds)
+    .limit(20000);
+  if (linkError) throw new Error(linkError.message);
+
+  const cohortNames = Array.from(new Set((links || []).map((row) => text(row.cohort_name)).filter(Boolean)));
+  const cohorts = await cohortsByNames(cohortNames);
+  const cohortByName = new Map(cohorts.map((cohort) => [text(cohort.name), cohort]));
+  const programNameByKey = await programsByKeys(cohorts.map((cohort) => text(cohort.program_key)).filter(Boolean));
+  const linksByStudent = new Map<string, JsonRecord[]>();
+  (links || []).forEach((link) => {
+    const studentId = text(link.student_id);
+    if (!studentId) return;
+    linksByStudent.set(studentId, [...(linksByStudent.get(studentId) || []), asRecord(link)]);
+  });
+
+  return students.map((student) => {
+    const studentLinks = linksByStudent.get(text(student.id)) || [];
+    const cohortNamesForStudent = Array.from(new Set([
+      ...studentLinks.map((link) => text(link.cohort_name)).filter(Boolean),
+      text(student.cohort_name),
+    ].filter(Boolean)));
+    const programNames = cleanProgramNames([
+      ...cohortNamesForStudent.map((name) => {
+        const programKey = text(cohortByName.get(name)?.program_key).toLowerCase();
+        return programNameByKey.get(programKey) || programKey;
+      }),
+      ...splitTextList(student.program_name),
+      ...cohortNamesForStudent.map((name) => text(cohortByName.get(name)?.program_key)),
+    ], programNameByKey);
+    const cohortDetails = cohortNamesForStudent.map((name) => {
+      const cohort = cohortByName.get(name) || {};
+      const programKey = text(cohort.program_key).toLowerCase();
+      const programName = programNameByKey.get(programKey) || programKey;
+      const bits = [
+        `Cohort: ${name}`,
+        programName ? `Program: ${programName}` : '',
+        text(cohort.wa_group_name) ? `WhatsApp group: ${text(cohort.wa_group_name)}` : '',
+        text(cohort.wa_link) ? `WhatsApp link: ${text(cohort.wa_link)}` : '',
+        text(cohort.google_group) ? `Google group: ${text(cohort.google_group)}` : '',
+      ].filter(Boolean);
+      return bits.join('\n');
+    });
+
+    return {
+      ...student,
+      cohort_group_details: cohortDetails.join('\n\n'),
+      cohort_names: cohortNamesForStudent,
+      google_groups: cohortNamesForStudent.map((name) => text(cohortByName.get(name)?.google_group)).filter(Boolean).join('\n'),
+      program_names: programNames,
+      whatsapp_groups: cohortNamesForStudent.map((name) => {
+        const cohort = cohortByName.get(name) || {};
+        return [text(cohort.wa_group_name), text(cohort.wa_link)].filter(Boolean).join(' - ');
+      }).filter(Boolean).join('\n'),
+    };
+  });
+}
+
+function splitEmails(value: unknown) {
+  return Array.from(new Set(String(value || '')
+    .split(/[\s,;]+/)
+    .map((entry) => normalizeEmail(entry))
+    .filter((entry) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(entry))));
+}
+
+function stringList(value: unknown) {
+  if (Array.isArray(value)) return Array.from(new Set(value.map((entry) => text(entry)).filter(Boolean)));
+  return String(value || '').split(',').map((entry) => entry.trim()).filter(Boolean);
+}
+
+function studentVars(student: JsonRecord, fallbackEmail = '', extra: JsonRecord = {}) {
+  const email = normalizeEmail(student.email || fallbackEmail);
+  const cohortNames = Array.isArray(student.cohort_names) ? student.cohort_names.map(text).filter(Boolean) : [text(student.cohort_name)].filter(Boolean);
+  const programNames = Array.isArray(student.program_names) ? student.program_names.map(text).filter(Boolean) : [text(student.program_name)].filter(Boolean);
+  return {
+    student_name: text(student.full_name, email || 'Student'),
+    student_email: email,
+    student_id: text(student.student_id),
+    program: programNames[0] || text(student.program_name),
+    programs: programNames.join(', ') || text(student.program_name),
+    cohort: cohortNames[0] || text(student.cohort_name),
+    cohorts: cohortNames.join(', ') || text(student.cohort_name),
+    cohort_group_details: text(student.cohort_group_details, 'Group details will be shared by your program coordinator.'),
+    google_groups: text(student.google_groups),
+    portal_url: portalUrlFallback,
+    whatsapp_groups: text(student.whatsapp_groups),
+    ...extra,
+  };
+}
+
+function cohortVars(cohort: JsonRecord, extra: JsonRecord = {}) {
+  return {
+    cohort: text(cohort.name),
+    cohorts: text(cohort.name),
+    cohort_id: text(cohort.cohort_id),
+    cohort_group_details: [
+      text(cohort.name),
+      text(cohort.wa_group_name) ? `WhatsApp: ${text(cohort.wa_group_name)}` : '',
+      text(cohort.wa_link) ? `WhatsApp link: ${text(cohort.wa_link)}` : '',
+      text(cohort.google_group) ? `Google Group: ${text(cohort.google_group)}` : '',
+    ].filter(Boolean).join('\n'),
+    google_groups: text(cohort.google_group),
+    program: text(cohort.program_key),
+    programs: text(cohort.program_key),
+    portal_url: portalUrlFallback,
+    whatsapp_groups: [text(cohort.wa_group_name), text(cohort.wa_link)].filter(Boolean).join(' - '),
+    ...extra,
+  };
+}
+
+function clampBatchSize(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return DEFAULT_BATCH_SIZE;
+  return Math.max(1, Math.min(MAX_BATCH_SIZE, Math.floor(numeric)));
+}
+
+function istDayBounds() {
+  const istOffsetMs = 330 * 60 * 1000;
+  const nowIst = new Date(Date.now() + istOffsetMs);
+  const startUtcMs = Date.UTC(nowIst.getUTCFullYear(), nowIst.getUTCMonth(), nowIst.getUTCDate()) - istOffsetMs;
+  return {
+    end: new Date(startUtcMs + 24 * 60 * 60 * 1000).toISOString(),
+    start: new Date(startUtcMs).toISOString(),
+  };
+}
+
+async function sentCountToday() {
+  const bounds = istDayBounds();
+  const { count, error } = await admin
+    .from('email_queue')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'sent')
+    .gte('sent_at', bounds.start)
+    .lt('sent_at', bounds.end);
+  if (error) throw new Error(error.message);
+  return count || 0;
+}
+
+async function sentEmailsToday(templateKey: string, category: string) {
+  const bounds = istDayBounds();
+  const { data, error } = await admin
+    .from('email_queue')
+    .select('recipient_email')
+    .eq('status', 'sent')
+    .eq('template_key', templateKey)
+    .eq('category', category)
+    .gte('sent_at', bounds.start)
+    .lt('sent_at', bounds.end)
+    .limit(5000);
+  if (error) throw new Error(error.message);
+  return new Set((data || []).map((row) => normalizeEmail(row.recipient_email)).filter(Boolean));
+}
+
+async function resolveAdminStudentCommunication(payload: JsonRecord) {
+  const templateKey = text(payload.templateKey || payload.template_key);
+  const template = templateKey === 'custom_blank' ? null : await emailTemplateByKey(templateKey);
+  const subjectSource = text(payload.subject || template?.subject);
+  const bodySource = text(payload.body || template?.body);
+  const sendMode = text(payload.sendMode || payload.send_mode, 'direct');
+  const cohortNames = stringList(payload.cohortNames || payload.cohort_names);
+  const directEmails = splitEmails(payload.directEmails || payload.direct_emails);
+  const params = asRecord(payload.params);
+  const templateUsedKey = text(template?.template_key, templateKey || 'custom_blank');
+  const category = text(template?.category || template?.phase || payload.category, 'general');
+  const testMode = payload.testMode === true || payload.test_mode === true;
+  const tags = Array.from(new Set(['lms', 'email-center', category, ...(testMode ? ['test'] : []), ...stringList(template?.default_tags)]));
+
+  if (!subjectSource) throw new Error('Email subject is required.');
+  if (!bodySource) throw new Error('Email body is required.');
+
+  let recipients: EmailRecipient[] = [];
+
+  if (sendMode === 'cohort_students') {
+    if (cohortNames.length === 0) throw new Error('Select at least one cohort.');
+    const students = await studentsForCohorts(cohortNames);
+    recipients = students
+      .map((student) => {
+        const email = normalizeEmail(student.email);
+        return { email, name: text(student.full_name, email), relatedId: text(student.id, email), relatedType: 'student', vars: studentVars(student, email, params) };
+      })
+      .filter((item) => item.email);
+  } else if (sendMode === 'cohort_google_group') {
+    if (cohortNames.length === 0) throw new Error('Select one cohort with a Google Group email.');
+    const cohorts = await cohortsByNames(cohortNames);
+    recipients = cohorts
+      .map((cohort) => {
+        const email = normalizeEmail(payload.googleGroupEmail || payload.google_group_email || cohort.google_group);
+        return { email, name: text(cohort.name, email), relatedId: text(cohort.id, email), relatedType: 'cohort', vars: cohortVars(cohort, params) };
+      })
+      .filter((item) => item.email);
+  } else {
+    if (directEmails.length === 0) throw new Error('Add at least one email recipient.');
+    const studentsByEmail = await studentsByEmails(directEmails);
+    recipients = directEmails.map((email) => {
+      const student = studentsByEmail.get(email) || { email };
+      return { email, name: text(student.full_name, email), relatedId: text(student.id, email), relatedType: student.id ? 'student' : 'email', vars: studentVars(student, email, params) };
+    });
+  }
+
+  recipients = Array.from(new Map(recipients.map((recipient) => [recipient.email, recipient])).values()).slice(0, 1000);
+  if (recipients.length === 0) throw new Error('No deliverable recipients found.');
+
+  const alreadySentEmails = testMode ? new Set<string>() : await sentEmailsToday(templateUsedKey, category);
+  const deliverableRecipients = recipients.filter((recipient) => !alreadySentEmails.has(recipient.email));
+  const usedToday = await sentCountToday();
+  const remainingToday = Math.max(0, DAILY_EMAIL_LIMIT - usedToday);
+  const batchSize = clampBatchSize(payload.batchSize || payload.batch_size);
+  const willSend = Math.min(deliverableRecipients.length, batchSize, remainingToday);
+  const remainingAfterBatch = Math.max(0, deliverableRecipients.length - willSend);
+
+  return {
+    batchSize,
+    category,
+    cohortNames,
+    dailyLimit: DAILY_EMAIL_LIMIT,
+    deliverableRecipients,
+    message: deliverableRecipients.length
+      ? `${willSend} recipient${willSend === 1 ? '' : 's'} ready for this batch.`
+      : 'All matching recipients already received this template today, or no deliverable recipients remain.',
+    recipients,
+    remainingAfterBatch,
+    remainingToday,
+    sendMode,
+    subjectSource,
+    bodySource,
+    tags,
+    testMode,
+    templateKey: templateUsedKey,
+    usedToday,
+    alreadySentToday: alreadySentEmails.size,
+    willSend,
+  };
+}
+
+async function handleAdminStudentCommunicationPreview(payload: JsonRecord) {
+  const resolved = await resolveAdminStudentCommunication(payload);
+  return {
+    ok: true,
+    alreadySentToday: resolved.alreadySentToday,
+    batchSize: resolved.batchSize,
+    dailyLimit: resolved.dailyLimit,
+    deliverableRecipients: resolved.deliverableRecipients.length,
+    message: resolved.message,
+    previewRecipients: resolved.deliverableRecipients.slice(0, 10).map((recipient) => ({
+      email: recipient.email,
+      name: recipient.name,
+      relatedType: recipient.relatedType,
+    })),
+    recipients: resolved.recipients.length,
+    remainingAfterBatch: resolved.remainingAfterBatch,
+    remainingToday: resolved.remainingToday,
+    templateKey: resolved.templateKey,
+    usedToday: resolved.usedToday,
+    willSend: resolved.willSend,
+  };
+}
+
+async function handleAdminStudentCommunication(payload: JsonRecord, actor: JsonRecord) {
+  const confirmed = payload.confirmed === true;
+  if (!confirmed) throw new Error('Review the recipient summary and confirm before sending.');
+  const resolved = await resolveAdminStudentCommunication(payload);
+  const recipients = resolved.deliverableRecipients.slice(0, resolved.willSend);
+  if (resolved.remainingToday <= 0) throw new Error('Daily email limit reached. Try again tomorrow.');
+  if (recipients.length === 0) throw new Error('No recipients are available for this batch.');
+
+  const results: JsonRecord[] = [];
+  let sent = 0;
+  let failed = 0;
+
+  for (const recipient of recipients) {
+    const subject = fillVars(resolved.subjectSource, recipient.vars);
+    const renderedBody = fillVars(resolved.bodySource, recipient.vars, { html: looksLikeHtml(resolved.bodySource) });
+    const htmlContent = adminEmailBodyToHtml(renderedBody);
+    const textContent = htmlToPlainText(htmlContent) || renderedBody;
+    try {
+      const delivery = await sendBrevo(recipient.email, recipient.name, subject, htmlContent, textContent, resolved.tags);
+      sent += 1;
+      results.push({ email: recipient.email, status: 'sent', messageId: delivery.messageId || '' });
+      await logEmailQueue({
+        email_key: crypto.randomUUID(),
+        template_key: resolved.templateKey,
+        category: resolved.category,
+        status: 'sent',
+        provider: 'brevo',
+        provider_message_id: delivery.messageId || null,
+        recipient_email: recipient.email,
+        recipient_name: recipient.name,
+        subject,
+        params: recipient.vars,
+        tags: resolved.tags,
+        related_entity_type: recipient.relatedType,
+        related_entity_id: recipient.relatedId,
+        scheduled_at: new Date().toISOString(),
+        sent_at: new Date().toISOString(),
+        failure_message: null,
+        created_by: text(actor.email),
+      });
+    } catch (error) {
+      failed += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      results.push({ email: recipient.email, status: 'failed', error: message.slice(0, 500) });
+      await logEmailQueue({
+        email_key: crypto.randomUUID(),
+        template_key: resolved.templateKey,
+        category: resolved.category,
+        status: 'failed',
+        provider: 'brevo',
+        recipient_email: recipient.email,
+        recipient_name: recipient.name,
+        subject,
+        params: recipient.vars,
+        tags: resolved.tags,
+        related_entity_type: recipient.relatedType,
+        related_entity_id: recipient.relatedId,
+        scheduled_at: new Date().toISOString(),
+        failure_message: message.slice(0, 500),
+        created_by: text(actor.email),
+      });
+    }
+  }
+
+  await admin.from('audit_logs').insert({
+    action: 'admin_email_center_sent',
+    actor_email: text(actor.email),
+    actor_role: 'admin',
+    details: {
+      alreadySentToday: resolved.alreadySentToday,
+      batchSize: resolved.batchSize,
+      category: resolved.category,
+      dailyLimit: resolved.dailyLimit,
+      failed,
+      remainingAfterBatch: resolved.remainingAfterBatch,
+      remainingToday: resolved.remainingToday,
+      recipients: resolved.recipients.length,
+      sendMode: resolved.sendMode,
+      sent,
+      templateKey: resolved.templateKey,
+      usedToday: resolved.usedToday,
+    },
+    entity_id: resolved.templateKey,
+    entity_type: 'email_center',
+    status: failed > 0 ? 'partial' : 'success',
+  });
+
+  return {
+    ok: failed === 0,
+    alreadySentToday: resolved.alreadySentToday,
+    batchSize: resolved.batchSize,
+    dailyLimit: resolved.dailyLimit,
+    deliverableRecipients: resolved.deliverableRecipients.length,
+    failed,
+    message: `Email sent to ${sent} recipient${sent === 1 ? '' : 's'}${failed ? `, ${failed} failed` : ''}.${resolved.remainingAfterBatch ? ` ${resolved.remainingAfterBatch} recipients remain for later batches.` : ''}`,
+    recipients: resolved.recipients.length,
+    remainingAfterBatch: Math.max(0, resolved.deliverableRecipients.length - sent - failed),
+    remainingToday: Math.max(0, resolved.remainingToday - sent),
+    results,
+    sent,
+    status: failed ? 'partial' : 'sent',
+    templateKey: resolved.templateKey,
+    usedToday: resolved.usedToday,
+    willSend: resolved.willSend,
+  };
 }
 
 async function sendBrevo(toEmail: string, toName: string, subject: string, htmlContent: string, textContent: string, tags: string[]): Promise<JsonRecord> {
@@ -289,8 +804,9 @@ async function handlePasswordSetup(payload: JsonRecord) {
   };
   const template = await emailTemplateByKey(templateKey);
   const templateUsedKey = text(template?.template_key, templateKey);
+  const bodyTemplate = template?.body || fallbackBody;
   const subject = fillVars(template?.subject || fallbackSubject, vars);
-  const renderedBody = fillVars(template?.body || fallbackBody, vars);
+  const renderedBody = fillVars(bodyTemplate, vars, { html: looksLikeHtml(bodyTemplate) });
   const portalUrl = portalUrlFromRedirect(redirectUrl);
   const htmlContent = template
     ? richPlainTextToHtml(renderedBody, {
@@ -362,11 +878,19 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     if (req.method !== 'POST') throw new Error('POST is required.');
-    await assertPublicCaller(req);
     const payload = asRecord(await req.json());
     const action = text(payload.action);
     if (action === 'sendSupabaseStudentPasswordSetup') {
+      await assertPublicCaller(req);
       return json(200, await handlePasswordSetup(payload));
+    }
+    if (action === 'sendAdminStudentCommunication') {
+      const actor = await assertAdminCaller(req);
+      return json(200, await handleAdminStudentCommunication(payload, actor));
+    }
+    if (action === 'resolveAdminStudentCommunication') {
+      await assertAdminCaller(req);
+      return json(200, await handleAdminStudentCommunicationPreview(payload));
     }
     throw new Error('Unknown transactional email action: ' + action);
   } catch (error) {
