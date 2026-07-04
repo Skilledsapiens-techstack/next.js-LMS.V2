@@ -201,6 +201,7 @@ const ANNOUNCEMENT_WRITE_COLUMNS = new Set([
 
 const FEATURE_CONTROL_WRITE_COLUMNS = new Set([
   'module_id',
+  'settings',
   'student_label',
   'student_path',
   'status',
