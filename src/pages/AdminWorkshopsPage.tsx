@@ -299,9 +299,13 @@ export function AdminWorkshopsPage() {
     if (!pendingCancelWorkshop) return;
     setActionMessage(null);
     try {
-      await cancelWorkshopMutation.mutateAsync(pendingCancelWorkshop.id);
+      const result = await cancelWorkshopMutation.mutateAsync(pendingCancelWorkshop.id);
+      const warning =
+        result.workshop && 'zoom_cancellation_warning' in result.workshop
+          ? String(result.workshop.zoom_cancellation_warning ?? '').trim()
+          : '';
       setPendingCancelWorkshop(null);
-      setActionMessage('Meeting cancelled in Zoom and archived in LMS.');
+      setActionMessage(warning ? `Meeting cancelled in LMS. Zoom warning: ${warning}` : 'Meeting cancelled in Zoom and archived in LMS.');
     } catch (error) {
       setActionMessage(readableError(error, 'Meeting could not be cancelled.'));
     }
@@ -818,6 +822,7 @@ export function AdminWorkshopsPage() {
                 {cancelWorkshopMutation.isPending ? 'Cancelling...' : 'Cancel Meeting'}
               </button>
             </footer>
+            {actionMessage && !actionMessage.includes('cancelled') ? <div className="workshop-error-note workshop-error-note--modal">{actionMessage}</div> : null}
           </section>
         </div>
       ) : null}

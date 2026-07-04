@@ -9,19 +9,12 @@ import { StudentAnnouncement, StudentAnnouncementPriority, useStudentAnnouncemen
 import { useStudentCohorts } from '../features/student/useStudentCohorts';
 
 type DateFilter = 'all' | 'active' | 'expired';
-type PinnedFilter = 'all' | 'pinned';
 
-const priorityFilters: Array<StudentAnnouncementPriority | 'all'> = ['all', 'urgent', 'important', 'normal'];
 const dateFilters: Array<{ label: string; value: DateFilter }> = [
   { label: 'Any date status', value: 'all' },
   { label: 'Active', value: 'active' },
   { label: 'Expired', value: 'expired' }
 ];
-const pinnedFilters: Array<{ label: string; value: PinnedFilter }> = [
-  { label: 'All notices', value: 'all' },
-  { label: 'Pinned only', value: 'pinned' }
-];
-const defaultTypeOptions = ['general', 'custom', 'resource', 'session', 'project', 'alert'];
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
@@ -31,10 +24,7 @@ function asPositiveInteger(value: string | null, defaultValue: number) {
 function buildPageLink(page: number, filters: FilterState) {
   const params = new URLSearchParams();
   params.set('page', String(page));
-  if (filters.type !== 'all') params.set('type', filters.type);
-  if (filters.priority !== 'all') params.set('priority', filters.priority);
   if (filters.audience !== 'all') params.set('audience', filters.audience);
-  if (filters.pinned !== 'all') params.set('pinned', filters.pinned);
   if (filters.date !== 'all') params.set('date', filters.date);
   return `?${params.toString()}`;
 }
@@ -53,36 +43,21 @@ function formatPriority(priority: StudentAnnouncementPriority) {
 }
 
 function priorityTone(priority: StudentAnnouncementPriority) {
-  return priority === 'urgent' || priority === 'important' ? 'warning' : 'neutral';
+  return priority === 'urgent' ? 'warning' : 'neutral';
 }
 
 type FilterState = {
   audience: string;
   date: DateFilter;
-  pinned: PinnedFilter;
-  priority: StudentAnnouncementPriority | 'all';
-  type: string;
 };
-
-function asPriority(value: string | null): StudentAnnouncementPriority | 'all' {
-  return value === 'urgent' || value === 'important' || value === 'normal' ? value : 'all';
-}
 
 function asDateFilter(value: string | null): DateFilter {
   return value === 'active' || value === 'expired' ? value : 'all';
 }
 
-function asPinnedFilter(value: string | null): PinnedFilter {
-  return value === 'pinned' ? value : 'all';
-}
-
 function cleanFilterValue(value: string | null) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : 'all';
-}
-
-function cleanTypeFilter(value: string | null) {
-  return cleanFilterValue(value).toLowerCase();
 }
 
 function normalizeFilterValue(value: string) {
@@ -101,9 +76,6 @@ function isExpired(announcement: StudentAnnouncement) {
 }
 
 function matchesFilters(announcement: StudentAnnouncement, filters: FilterState) {
-  if (filters.type !== 'all' && normalizeFilterValue(announcement.type ?? 'general') !== normalizeFilterValue(filters.type)) return false;
-  if (filters.priority !== 'all' && announcement.priority !== filters.priority) return false;
-  if (filters.pinned === 'pinned' && !announcement.pinned) return false;
   if (filters.date === 'active' && isExpired(announcement)) return false;
   if (filters.date === 'expired' && !isExpired(announcement)) return false;
 
@@ -113,10 +85,6 @@ function matchesFilters(announcement: StudentAnnouncement, filters: FilterState)
   }
 
   return true;
-}
-
-function filterLabel(value: string) {
-  return value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function AnnouncementCard({ announcement }: { announcement: StudentAnnouncement }) {
@@ -161,23 +129,22 @@ export function StudentAnnouncementsPage() {
   const page = asPositiveInteger(searchParams.get('page'), 1);
   const filters: FilterState = {
     audience: cleanFilterValue(searchParams.get('audience')),
-    date: asDateFilter(searchParams.get('date')),
-    pinned: asPinnedFilter(searchParams.get('pinned')),
-    priority: asPriority(searchParams.get('priority')),
-    type: cleanTypeFilter(searchParams.get('type'))
+    date: asDateFilter(searchParams.get('date'))
   };
   const announcementsQuery = useStudentAnnouncements({ limit: 100, page });
   const cohortsQuery = useStudentCohorts({ limit: 200, page: 1, status: 'all' });
   const data = announcementsQuery.data;
   const totalPages = data?.totalPages ?? 1;
   const hasPagination = useMemo(() => Boolean(data && (data.hasPreviousPage || data.hasNextPage || totalPages > 1)), [data, totalPages]);
-  const typeOptions = useMemo(() => uniqueSorted([...defaultTypeOptions, ...(data?.items.map((item) => item.type ?? 'general') ?? [])]), [data?.items]);
   const cohortOptions = useMemo(() => uniqueSorted(cohortsQuery.data?.items.map((cohort) => cohort.name) ?? []), [cohortsQuery.data?.items]);
-  const filteredItems = useMemo(() => data?.items.filter((announcement) => matchesFilters(announcement, filters)) ?? [], [data?.items, filters.audience, filters.date, filters.pinned, filters.priority, filters.type]);
+  const filteredItems = useMemo(() => data?.items.filter((announcement) => matchesFilters(announcement, filters)) ?? [], [data?.items, filters.audience, filters.date]);
 
   function setFilter(key: keyof FilterState, value: string) {
     const next = new URLSearchParams(searchParams);
     next.set('page', '1');
+    next.delete('type');
+    next.delete('priority');
+    next.delete('pinned');
     if (value === 'all') {
       next.delete(key);
     } else {
@@ -213,40 +180,6 @@ export function StudentAnnouncementsPage() {
       />
 
       <section className="filter-bar announcement-filters" aria-label="Announcement filters">
-        <label className="announcement-filter-select">
-          Notification type
-          <select value={filters.type} onChange={(event) => setFilter('type', event.target.value)}>
-            <option value="all">All notification types</option>
-            {typeOptions.map((type) => (
-              <option key={type} value={type}>
-                {filterLabel(type)}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="announcement-filter-select">
-          Priority
-          <select value={filters.priority} onChange={(event) => setFilter('priority', event.target.value)}>
-            {priorityFilters.map((priority) => (
-              <option key={priority} value={priority}>
-                {priority === 'all' ? 'All priorities' : filterLabel(priority)}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="announcement-filter-select">
-          Notice type
-          <select value={filters.pinned} onChange={(event) => setFilter('pinned', event.target.value)}>
-            {pinnedFilters.map((filter) => (
-              <option key={filter.value} value={filter.value}>
-                {filter.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
         <label className="announcement-filter-select">
           Date status
           <select value={filters.date} onChange={(event) => setFilter('date', event.target.value)}>

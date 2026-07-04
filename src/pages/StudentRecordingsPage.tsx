@@ -1,10 +1,11 @@
-import { CalendarDays, ExternalLink, Lock, ShieldCheck, Video } from 'lucide-react';
-import { useMemo } from 'react';
+import { CalendarDays, Check, Copy, ExternalLink, Lock, ShieldCheck, Video } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState, LockedState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
+import { StudentCohort, useStudentCohorts } from '../features/student/useStudentCohorts';
 import { StudentRecording, StudentRecordingAccessType, useStudentRecordings } from '../features/student/useStudentRecordings';
 
 type AccessFilter = StudentRecordingAccessType | 'all';
@@ -26,6 +27,22 @@ function asAccessType(value: string | null): AccessFilter {
   return value === 'free' || value === 'paid' ? value : 'all';
 }
 
+function normalizeProgramKey(value: string | undefined | null) {
+  return value?.trim().toLowerCase() ?? '';
+}
+
+function programKeyForCohort(cohort: StudentCohort) {
+  return normalizeProgramKey(cohort.programKey || cohort.domainKey);
+}
+
+function programLabelFromKey(value: string) {
+  return value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 function formatDate(value: string | undefined) {
   if (!value) {
     return 'Not set';
@@ -33,6 +50,23 @@ function formatDate(value: string | undefined) {
 
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function getLatestRecordingDate(recordings: StudentRecording[]) {
+  const latest = recordings.reduce<Date | null>((currentLatest, recording) => {
+    if (!recording.recordingUrl || !recording.date) {
+      return currentLatest;
+    }
+
+    const recordingDate = new Date(recording.date);
+    if (Number.isNaN(recordingDate.getTime())) {
+      return currentLatest;
+    }
+
+    return !currentLatest || recordingDate > currentLatest ? recordingDate : currentLatest;
+  }, null);
+
+  return latest ? formatDate(latest.toISOString()) : 'None';
 }
 
 function formatDuration(value: number | undefined | null) {
@@ -59,10 +93,11 @@ function hasRecordingAccess(recording: StudentRecording) {
   return !recording.locked && recording.hasAccess !== false;
 }
 
-function buildPageLink(page: number, accessType: AccessFilter) {
+function buildPageLink(page: number, accessType: AccessFilter, programKey: string) {
   const params = new URLSearchParams();
   params.set('page', String(page));
   if (accessType !== 'all') params.set('accessType', accessType);
+  if (programKey) params.set('programKey', programKey);
   return `?${params.toString()}`;
 }
 
@@ -78,6 +113,15 @@ function totalPagesFor(count: number) {
 function RecordingRow({ recording }: { recording: StudentRecording }) {
   const canOpen = hasRecordingAccess(recording) && Boolean(recording.recordingUrl);
   const programLabel = getProgramLabel(recording);
+  const [copied, setCopied] = useState(false);
+
+  function copyPasscode() {
+    const passcode = recording.recordingPassword?.trim();
+    if (!passcode) return;
+    void navigator.clipboard?.writeText(passcode);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  }
 
   return (
     <article className="student-recording-row">
@@ -103,6 +147,15 @@ function RecordingRow({ recording }: { recording: StudentRecording }) {
             <span>{recording.lockReason ?? 'Recording access is locked for this account.'}</span>
           </div>
         ) : null}
+        {!recording.locked && recording.source === 'zoom' && recording.recordingPassword ? (
+          <div className="student-recording-row__passcode">
+            <span>Passcode: {recording.recordingPassword}</span>
+            <button onClick={copyPasscode} type="button">
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="student-recording-row__actions">
         {canOpen ? (
@@ -124,16 +177,42 @@ function RecordingRow({ recording }: { recording: StudentRecording }) {
 export function StudentRecordingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const accessType = asAccessType(searchParams.get('accessType'));
+  const selectedProgramKey = normalizeProgramKey(searchParams.get('programKey'));
   const page = asPositiveInteger(searchParams.get('page'), 1);
   const recordingsQuery = useStudentRecordings({ accessType, limit: 500, page: 1 });
+  const cohortsQuery = useStudentCohorts({ limit: 100, page: 1, status: 'all' });
   const recordings = recordingsQuery.data?.items ?? [];
-  const total = recordings.length;
+  const enrolledCohorts = cohortsQuery.data?.items ?? [];
+  const enrolledPrograms = useMemo(() => {
+    const labels = new Map<string, string>();
+    enrolledCohorts.forEach((cohort) => {
+      const key = programKeyForCohort(cohort);
+      if (!key || labels.has(key)) return;
+      labels.set(key, programLabelFromKey(key));
+    });
+    recordings.forEach((recording) => {
+      const key = normalizeProgramKey(recording.programKey || recording.domainKey);
+      if (!key || labels.has(key)) return;
+      labels.set(key, programLabelFromKey(key));
+    });
+    return Array.from(labels.entries())
+      .map(([value, label]) => ({ label, value }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }, [enrolledCohorts, recordings]);
+  const filteredRecordings = useMemo(() => {
+    if (!selectedProgramKey) return recordings;
+    return recordings.filter((recording) => {
+      const keys = [recording.programKey, recording.domainKey].map(normalizeProgramKey).filter(Boolean);
+      return keys.includes(selectedProgramKey);
+    });
+  }, [recordings, selectedProgramKey]);
+  const total = filteredRecordings.length;
   const totalPages = totalPagesFor(total);
   const safePage = Math.min(page, totalPages);
-  const visibleRecordings = paginateItems(recordings, safePage);
-  const lockedCount = useMemo(() => recordings.filter((item) => item.locked).length, [recordings]);
-  const availableCount = useMemo(() => recordings.filter(hasRecordingAccess).length, [recordings]);
-  const latestDate = recordings[0]?.date ? formatDate(recordings[0].date) : 'None';
+  const visibleRecordings = paginateItems(filteredRecordings, safePage);
+  const lockedCount = useMemo(() => filteredRecordings.filter((item) => item.locked).length, [filteredRecordings]);
+  const availableCount = useMemo(() => filteredRecordings.filter(hasRecordingAccess).length, [filteredRecordings]);
+  const latestRecordingDate = useMemo(() => getLatestRecordingDate(filteredRecordings), [filteredRecordings]);
 
   function updateAccessType(nextAccessType: AccessFilter) {
     const next = new URLSearchParams();
@@ -141,10 +220,25 @@ export function StudentRecordingsPage() {
     if (nextAccessType !== 'all') {
       next.set('accessType', nextAccessType);
     }
+    if (selectedProgramKey) {
+      next.set('programKey', selectedProgramKey);
+    }
     setSearchParams(next);
   }
 
-  if (recordingsQuery.isLoading) {
+  function updateProgramFilter(nextProgramKey: string) {
+    const next = new URLSearchParams();
+    next.set('page', '1');
+    if (accessType !== 'all') {
+      next.set('accessType', accessType);
+    }
+    if (nextProgramKey) {
+      next.set('programKey', nextProgramKey);
+    }
+    setSearchParams(next);
+  }
+
+  if (recordingsQuery.isLoading || cohortsQuery.isLoading) {
     return (
       <div className="page-stack">
         <PageHeader description="Loading recordings visible to your student profile." eyebrow="Student recordings" title="Recordings" />
@@ -188,8 +282,8 @@ export function StudentRecordingsPage() {
         </article>
         <article>
           <CalendarDays size={20} />
-          <span>Latest</span>
-          <strong>{latestDate}</strong>
+          <span>Latest recording</span>
+          <strong>{latestRecordingDate}</strong>
         </article>
       </div>
 
@@ -199,6 +293,17 @@ export function StudentRecordingsPage() {
             {filter.label}
           </button>
         ))}
+        <label className="student-recording-program-filter">
+          <span>Enrolled program</span>
+          <select value={selectedProgramKey} onChange={(event) => updateProgramFilter(event.target.value)}>
+            <option value="">All enrolled programs</option>
+            {enrolledPrograms.map((program) => (
+              <option key={program.value} value={program.value}>
+                {program.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </section>
 
       {visibleRecordings.length > 0 ? (
@@ -213,7 +318,7 @@ export function StudentRecordingsPage() {
 
       <nav className="pagination-bar" aria-label="Recording pagination">
         {safePage > 1 ? (
-          <Link className="pagination-link" to={buildPageLink(safePage - 1, accessType)}>
+          <Link className="pagination-link" to={buildPageLink(safePage - 1, accessType, selectedProgramKey)}>
             Previous page
           </Link>
         ) : (
@@ -223,7 +328,7 @@ export function StudentRecordingsPage() {
           Page {safePage} of {totalPages} · {total} matching
         </span>
         {safePage < totalPages ? (
-          <Link className="pagination-link" to={buildPageLink(safePage + 1, accessType)}>
+          <Link className="pagination-link" to={buildPageLink(safePage + 1, accessType, selectedProgramKey)}>
             Next page
           </Link>
         ) : (

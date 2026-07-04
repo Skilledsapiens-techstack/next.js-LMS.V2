@@ -27,6 +27,7 @@ export type AdminWorkshop = {
   zoomAccount?: string;
   zoomId?: string;
   zoomLabel?: string;
+  zoomRecordingPassword?: string;
   zoomRecordingUrl?: string;
 };
 
@@ -49,6 +50,7 @@ export type AdminWorkshopWritePayload = {
 };
 
 export type AdminWorkshopRecordingPayload = {
+  zoomRecordingPassword?: string | null;
   youtubeVideoUrl?: string | null;
   zoomRecordingUrl?: string | null;
 };

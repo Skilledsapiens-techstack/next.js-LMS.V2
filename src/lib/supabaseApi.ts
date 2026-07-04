@@ -123,6 +123,7 @@ const WORKSHOP_WRITE_COLUMNS = new Set([
   'zoom_account',
   'zoom_id',
   'zoom_label',
+  'zoom_recording_password',
   'zoom_recording_url'
 ]);
 
@@ -651,9 +652,21 @@ export async function apiInvokeFunction<TResponse, TBody = unknown>(functionName
     body: options.body as Record<string, unknown> | undefined
   });
 
-  if (error) throw new ApiClientError(error.message, 503);
+  if (error) {
+    const message = getFunctionErrorMessage(data, error);
+    throw new ApiClientError(message, 503);
+  }
   if (isRecord(data) && typeof data.error === 'string') throw new ApiClientError(data.error, 400);
   return data as TResponse;
+}
+
+function getFunctionErrorMessage(data: unknown, error: unknown) {
+  if (isRecord(data)) {
+    if (typeof data.error === 'string' && data.error.trim()) return data.error.trim();
+    if (typeof data.message === 'string' && data.message.trim()) return data.message.trim();
+  }
+  if (isRecord(error) && typeof error.message === 'string' && error.message.trim()) return error.message.trim();
+  return 'Request could not be completed. Please try again.';
 }
 
 async function createContext(accessToken?: string) {
@@ -2062,12 +2075,35 @@ async function insertRow(context: Awaited<ReturnType<typeof createContext>>, tab
   const endpoint = getWriteEndpoint(table);
   const metadata = getWriteMetadata(endpoint.table, body);
   const payload = prepareWritePayload(endpoint, body, true);
+  if (endpoint.table === 'students') {
+    const email = normalizeEmail(payload.email);
+    const existing = email ? await context.supabase.from('students').select('*').ilike('email', email).limit(1).maybeSingle() : { data: null, error: null };
+    if (existing.error) throw mutationError(existing.error, endpoint.table);
+    if (existing.data) {
+      const existingCohortNames = await getStudentLinkedCohortNames(context, String(existing.data.id ?? ''));
+      const scopedOnboardingCohortNames = resolveFreshOnboardingCohortNames(metadata.cohortNames, existingCohortNames);
+      const assignmentMetadata = metadata.assignmentMode === 'add' ? await mergeExistingStudentAssignmentMetadata(context, existing.data, metadata) : metadata;
+      const updatePayload: Record<string, unknown> = { ...payload, email, updated_at: new Date().toISOString() };
+      if (metadata.assignmentMode === 'add') {
+        updatePayload.cohort_id = assignmentMetadata.cohortIds[0] || updatePayload.cohort_id;
+        updatePayload.cohort_name = assignmentMetadata.cohortNames[0] || updatePayload.cohort_name;
+        updatePayload.track_role_ids = assignmentMetadata.programKeys.length > 0 ? assignmentMetadata.programKeys : updatePayload.track_role_ids;
+        updatePayload.program_name = assignmentMetadata.programNames.length > 0 ? assignmentMetadata.programNames.join(', ') : updatePayload.program_name;
+      }
+      const { data, error } = await context.supabase.from('students').update(updatePayload).eq('id', existing.data.id).select('*').single();
+      if (error) throw mutationError(error, endpoint.table);
+      await syncStudentAssignments(context, data, assignmentMetadata);
+      if (auditAction) await writeAuditLog(context, endpoint.table, 'updated', data, updatePayload);
+      if (metadata.sendOnboardingMail && scopedOnboardingCohortNames.length > 0) await queueStudentOnboardingMail(context, data, scopedOnboardingCohortNames);
+      return (await enrichAdminStudents(context, [data]))[0];
+    }
+  }
   const { data, error } = await context.supabase.from(endpoint.table).insert(payload).select('*').single();
   if (error) throw mutationError(error, endpoint.table);
   if (endpoint.table === 'students') await syncStudentAssignments(context, data, metadata);
   if (auditAction) await writeAuditLog(context, endpoint.table, auditAction, data, payload);
   if (metadata.sendInvite && endpoint.table === 'students') await queueStudentInvite(context, data);
-  if (metadata.sendOnboardingMail && endpoint.table === 'students') await queueStudentOnboardingMail(context, data);
+  if (metadata.sendOnboardingMail && endpoint.table === 'students') await queueStudentOnboardingMail(context, data, metadata.cohortNames);
   return endpoint.table === 'students' ? (await enrichAdminStudents(context, [data]))[0] : camelize(enrichRow(data));
 }
 
@@ -2100,6 +2136,8 @@ async function importStudents(context: Awaited<ReturnType<typeof createContext>>
       if (existing.error) throw existing.error;
 
       if (existing.data) {
+        const existingCohortNames = await getStudentLinkedCohortNames(context, String(existing.data.id ?? ''));
+        const scopedOnboardingCohortNames = resolveFreshOnboardingCohortNames(metadata.cohortNames, existingCohortNames);
         const assignmentMetadata = metadata.assignmentMode === 'add' ? await mergeExistingStudentAssignmentMetadata(context, existing.data, metadata) : metadata;
         const updatePayload: Record<string, unknown> = { ...payload, email, updated_at: new Date().toISOString() };
         if (metadata.assignmentMode === 'add') {
@@ -2112,8 +2150,7 @@ async function importStudents(context: Awaited<ReturnType<typeof createContext>>
         if (error) throw error;
         await syncStudentAssignments(context, data, assignmentMetadata);
         await writeAuditLog(context, 'students', 'updated', data, updatePayload);
-        if (metadata.sendInvite) await queueStudentInvite(context, data);
-        if (metadata.sendOnboardingMail) await queueStudentOnboardingMail(context, data);
+        if (metadata.sendOnboardingMail && scopedOnboardingCohortNames.length > 0) await queueStudentOnboardingMail(context, data, scopedOnboardingCohortNames);
         result.updated += 1;
         result.rows.push({ action: 'updated', email, rowNumber, status: 'success' });
       } else {
@@ -2123,7 +2160,7 @@ async function importStudents(context: Awaited<ReturnType<typeof createContext>>
         await syncStudentAssignments(context, data, metadata);
         await writeAuditLog(context, 'students', 'created', data, insertPayload);
         if (metadata.sendInvite) await queueStudentInvite(context, data);
-        if (metadata.sendOnboardingMail) await queueStudentOnboardingMail(context, data);
+        if (metadata.sendOnboardingMail) await queueStudentOnboardingMail(context, data, metadata.cohortNames);
         result.created += 1;
         result.rows.push({ action: 'created', email, rowNumber, status: 'success' });
       }
@@ -2221,6 +2258,22 @@ async function getStudentById(context: Awaited<ReturnType<typeof createContext>>
   return data;
 }
 
+async function getStudentLinkedCohortNames(context: Awaited<ReturnType<typeof createContext>>, studentId: string) {
+  if (!studentId) return [];
+  const { data, error } = await context.supabase
+    .from('student_cohorts')
+    .select('cohort_name')
+    .eq('student_id', studentId)
+    .limit(500);
+  if (error) throw new ApiClientError(`Student cohorts lookup failed: ${error.message}`, 503);
+  return uniqueStrings((data ?? []).map((row) => String(row.cohort_name ?? '').trim()).filter(Boolean));
+}
+
+function resolveFreshOnboardingCohortNames(selectedCohortNames: string[], existingCohortNames: string[]) {
+  const existing = new Set(existingCohortNames.map((name) => name.trim().toLowerCase()).filter(Boolean));
+  return uniqueStrings(selectedCohortNames).filter((name) => name.trim() && !existing.has(name.trim().toLowerCase()));
+}
+
 async function queueStudentInvite(context: Awaited<ReturnType<typeof createContext>>, student: Record<string, unknown>) {
   const email = normalizeEmail(student.email);
   if (!email) throw new ApiClientError('Student was saved, but invite queueing failed because the email is missing.', 400);
@@ -2249,24 +2302,30 @@ async function queueStudentInvite(context: Awaited<ReturnType<typeof createConte
   await writeAuditLog(context, 'students', 'invite_queued', student, { email_queue_id: data.id, template_key: 'portal_invite' });
 }
 
-async function studentOnboardingContext(context: Awaited<ReturnType<typeof createContext>>, student: Record<string, unknown>) {
+async function studentOnboardingContext(context: Awaited<ReturnType<typeof createContext>>, student: Record<string, unknown>, scopedCohortNames?: string[]) {
   const studentId = String(student.id ?? '');
+  const requestedCohortNames = uniqueStrings((scopedCohortNames ?? []).map((name) => String(name ?? '').trim()).filter(Boolean));
   if (!studentId) {
     return {
       cohort_group_details: '',
-      cohorts: String(student.cohort_name ?? ''),
+      cohorts: requestedCohortNames.join(', ') || String(student.cohort_name ?? ''),
       google_groups: '',
       programs: String(student.program_name ?? ''),
       whatsapp_groups: ''
     };
   }
 
-  const { data: links, error: linkError } = await context.supabase
-    .from('student_cohorts')
-    .select('cohort_name')
-    .eq('student_id', studentId)
-    .limit(100);
-  if (linkError) throw new ApiClientError(`Student was saved, but onboarding context failed: ${linkError.message}`, 503);
+  const links = requestedCohortNames.length > 0
+    ? requestedCohortNames.map((cohortName) => ({ cohort_name: cohortName }))
+    : await (async () => {
+      const { data, error } = await context.supabase
+        .from('student_cohorts')
+        .select('cohort_name')
+        .eq('student_id', studentId)
+        .limit(100);
+      if (error) throw new ApiClientError(`Student was saved, but onboarding context failed: ${error.message}`, 503);
+      return data ?? [];
+    })();
 
   const { data: studentPrograms, error: studentProgramError } = await context.supabase
     .from('student_programs')
@@ -2275,7 +2334,10 @@ async function studentOnboardingContext(context: Awaited<ReturnType<typeof creat
     .limit(100);
   if (studentProgramError) throw new ApiClientError(`Student was saved, but onboarding program context failed: ${studentProgramError.message}`, 503);
 
-  const cohortNames = uniqueStrings([...(links ?? []).map((row) => String(row.cohort_name ?? '')), String(student.cohort_name ?? '')]);
+  const cohortNames = uniqueStrings([
+    ...(links ?? []).map((row) => String(row.cohort_name ?? '')),
+    ...(requestedCohortNames.length > 0 ? [] : [String(student.cohort_name ?? '')])
+  ]);
 
   const { data: cohorts, error: cohortError } = cohortNames.length
     ? await context.supabase
@@ -2287,7 +2349,7 @@ async function studentOnboardingContext(context: Awaited<ReturnType<typeof creat
   if (cohortError) throw new ApiClientError(`Student was saved, but cohort group details failed: ${cohortError.message}`, 503);
 
   const programKeys = uniqueStrings([
-    ...(studentPrograms ?? []).map((row) => String(row.program_key ?? '')),
+    ...(requestedCohortNames.length > 0 ? [] : (studentPrograms ?? []).map((row) => String(row.program_key ?? ''))),
     ...(cohorts ?? []).map((cohort) => String(cohort.program_key ?? ''))
   ].map((key) => key.toLowerCase()));
   const { data: programs, error: programError } = programKeys.length
@@ -2305,7 +2367,7 @@ async function studentOnboardingContext(context: Awaited<ReturnType<typeof creat
   ]));
   const programNames = cleanProgramNames([
     ...programKeys.map((key) => programNameByKey.get(key) || key),
-    ...String(student.program_name ?? '').split(',').map((item) => item.trim()),
+    ...(requestedCohortNames.length > 0 ? [] : String(student.program_name ?? '').split(',').map((item) => item.trim())),
     ...programKeys
   ], programNameByKey);
 
@@ -2334,10 +2396,10 @@ function cleanProgramNames(values: string[], programNameByKey: Map<string, strin
   });
 }
 
-async function queueStudentOnboardingMail(context: Awaited<ReturnType<typeof createContext>>, student: Record<string, unknown>) {
+async function queueStudentOnboardingMail(context: Awaited<ReturnType<typeof createContext>>, student: Record<string, unknown>, scopedCohortNames?: string[]) {
   const email = normalizeEmail(student.email);
   if (!email) throw new ApiClientError('Student was saved, but onboarding mail queueing failed because the email is missing.', 400);
-  const onboardingContext = await studentOnboardingContext(context, student);
+  const onboardingContext = await studentOnboardingContext(context, student, scopedCohortNames);
 
   const queueRow = {
     category: 'auth',
@@ -2509,6 +2571,7 @@ function enrichRow(row: unknown) {
     join_url: row.locked === true ? null : row.join_url ?? row.joinUrl,
     category: row.category ?? row.role_category,
     name: row.name ?? row.role_name,
+    recording_password: row.locked === true ? null : row.recording_password ?? row.recordingPassword ?? row.zoom_recording_password ?? row.zoomRecordingPassword,
     recording_url: row.locked === true ? null : row.recording_url ?? row.recordingUrl ?? row.youtube_video_url ?? row.youtubeVideoUrl ?? row.zoom_recording_url ?? row.zoomRecordingUrl,
     self_paced_resources: row.self_paced_resources ?? row.sp_resources,
     self_paced_sessions: row.self_paced_sessions ?? row.sp_sessions,
@@ -2805,6 +2868,7 @@ function normalizeWorkshopWriteBody(payload: Record<string, unknown>) {
   const accessType = typeof payload.access_type === 'string' ? payload.access_type.toLowerCase() : payload.access_type;
   const cohortNames = payload.cohort_names === undefined ? undefined : asStringArray(payload.cohort_names);
   const youtubeVideoUrl = payload.youtube_video_url === '' ? null : payload.youtube_video_url;
+  const zoomRecordingPassword = payload.zoom_recording_password === '' ? null : payload.zoom_recording_password;
   const zoomRecordingUrl = payload.zoom_recording_url === '' ? null : payload.zoom_recording_url;
 
   return {
@@ -2816,6 +2880,7 @@ function normalizeWorkshopWriteBody(payload: Record<string, unknown>) {
     workshop_status: status,
     status: undefined,
     youtube_video_url: youtubeVideoUrl,
+    zoom_recording_password: zoomRecordingPassword,
     zoom_recording_url: zoomRecordingUrl
   };
 }
@@ -2955,6 +3020,7 @@ function normalizeFeatureControlWriteBody(payload: Record<string, unknown>) {
     student_label: has('student_label') && typeof payload.student_label === 'string' ? payload.student_label.trim() : payload.student_label,
     student_path: has('student_path') && typeof payload.student_path === 'string' ? payload.student_path.trim() : payload.student_path,
     upcoming_message: normalizeOptionalText('upcoming_message'),
+    settings: has('settings') && payload.settings && typeof payload.settings === 'object' && !Array.isArray(payload.settings) ? payload.settings : payload.settings,
     updated_by: normalizeOptionalText('updated_by')
   };
 }
@@ -3093,7 +3159,7 @@ function validateAnnouncementWriteBody(payload: Record<string, unknown>, inserti
   if (title.length > 160) throw new ApiClientError('Announcement title must be 160 characters or fewer.', 400);
   if (message.length > 2500) throw new ApiClientError('Announcement message must be 2500 characters or fewer.', 400);
   if (audience && !['all', 'cohort', 'program'].includes(audience)) throw new ApiClientError('Announcement audience is invalid.', 400);
-  if (priority && !['normal', 'important', 'urgent'].includes(priority)) throw new ApiClientError('Announcement priority is invalid.', 400);
+  if (priority && !['normal', 'urgent'].includes(priority)) throw new ApiClientError('Announcement priority is invalid.', 400);
   if (status && !['active', 'inactive'].includes(status)) throw new ApiClientError('Announcement status is invalid.', 400);
   if (type && !['general', 'alert', 'session', 'resource', 'project', 'custom'].includes(type)) throw new ApiClientError('Announcement type is invalid.', 400);
   if (cohortNames !== undefined && !Array.isArray(cohortNames)) throw new ApiClientError('Announcement cohorts must be a list.', 400);
@@ -3112,6 +3178,7 @@ function validateFeatureControlWriteBody(payload: Record<string, unknown>, inser
   const path = typeof payload.student_path === 'string' ? payload.student_path.trim() : '';
   const status = typeof payload.status === 'string' ? payload.status : undefined;
   const message = typeof payload.upcoming_message === 'string' ? payload.upcoming_message.trim() : '';
+  const settings = payload.settings;
 
   if (inserting && !moduleId) throw new ApiClientError('Feature module ID is required.', 400);
   if (inserting && !label) throw new ApiClientError('Feature student label is required.', 400);
@@ -3120,6 +3187,9 @@ function validateFeatureControlWriteBody(payload: Record<string, unknown>, inser
   if (status && !['show', 'upcoming', 'hide'].includes(status)) throw new ApiClientError('Feature status is invalid.', 400);
   if (moduleId === 'dashboard' && status && status !== 'show') throw new ApiClientError('Dashboard must remain visible.', 400);
   if (message.length > 500) throw new ApiClientError('Upcoming message must be 500 characters or fewer.', 400);
+  if (settings !== undefined && settings !== null && (typeof settings !== 'object' || Array.isArray(settings))) {
+    throw new ApiClientError('Feature settings must be a valid object.', 400);
+  }
 }
 
 function validateEmailTemplateWriteBody(payload: Record<string, unknown>, inserting: boolean) {

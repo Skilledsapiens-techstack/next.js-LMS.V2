@@ -22,18 +22,18 @@ function formatOption(value: string) {
 
 function renderTicketMeta(ticket: StudentSupportTicket) {
   return (
-    <div className="metric-grid">
-      <article className="metric-tile">
+    <div className="support-detail-meta">
+      <article className="support-detail-meta__item">
         <MessageSquareText size={22} />
         <span>Status</span>
         <strong>{formatOption(ticket.status)}</strong>
       </article>
-      <article className="metric-tile">
+      <article className="support-detail-meta__item">
         <ShieldCheck size={22} />
         <span>Priority</span>
         <strong>{formatOption(ticket.priority)}</strong>
       </article>
-      <article className="metric-tile">
+      <article className="support-detail-meta__item">
         <Clock3 size={22} />
         <span>Last message</span>
         <strong>{formatDate(ticket.lastMessageAt ?? ticket.updatedAt)}</strong>
@@ -82,11 +82,11 @@ export function StudentSupportDetailPage() {
         <PageHeader
           actions={
             <Link className="pagination-link" to="/student/support">
-              <ArrowLeft size={14} />
-              Back to support
-            </Link>
-          }
-          description="This ticket could not be loaded from the Supabase."
+          <ArrowLeft size={14} />
+          Back to support
+        </Link>
+      }
+          description="This ticket could not be loaded right now."
           eyebrow="Student support"
           title="Support ticket unavailable"
         />
@@ -111,26 +111,28 @@ export function StudentSupportDetailPage() {
 
       {renderTicketMeta(data.ticket)}
 
-      <section className="data-panel">
-        <div className="data-panel__header">
+      <section className="support-detail-panel">
+        <div className="support-detail-panel__header">
           <div>
             <h2>Public thread</h2>
-            <p>Only public student/admin/system messages returned by Supabase are shown.</p>
+            <p>Only public messages from you, the support team, and system updates are shown here.</p>
           </div>
           <div className="chip-row">
             <StatusBadge>{formatOption(data.ticket.conversationMode)}</StatusBadge>
             <StatusBadge>{data.ticket.canReply ? 'replyable later' : 'read-only'}</StatusBadge>
           </div>
         </div>
-        <div className="timeline-list">
+        <div className="support-thread-list">
           {data.messages.map((message) => (
-            <article className="timeline-item" key={message.id}>
-              <div className="timeline-item__header">
-                <strong>{message.authorName ?? formatOption(message.authorRole)}</strong>
-                <span>{formatDate(message.createdAt)}</span>
+            <article className={`support-thread-message support-thread-message--${message.authorRole}`} key={message.id}>
+              <div className="support-thread-message__header">
+                <div>
+                  <strong>{message.authorName ?? formatOption(message.authorRole)}</strong>
+                  <StatusBadge>{formatOption(message.authorRole)}</StatusBadge>
+                </div>
+                <time dateTime={message.createdAt}>{formatDate(message.createdAt)}</time>
               </div>
               <p>{message.body}</p>
-              <StatusBadge>{formatOption(message.authorRole)}</StatusBadge>
             </article>
           ))}
           {data.messages.length === 0 ? <p className="muted-text">No public messages are available for this ticket.</p> : null}
@@ -139,8 +141,8 @@ export function StudentSupportDetailPage() {
 
       {data.hasMoreMessages ? <StateBlock title="Thread capped">Only the latest allowed message window is shown in this read-only view.</StateBlock> : null}
 
-      <section className="data-panel">
-        <div className="data-panel__header">
+      <section className="support-detail-panel support-detail-panel--reply">
+        <div className="support-detail-panel__header">
           <div>
             <h2>Reply to support</h2>
             <p>{canReply ? 'Add extra context when the support team asks for details.' : 'This ticket is closed or read-only.'}</p>

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthProvider';
 import { apiGet } from '../../lib/supabaseApi';
 
-export type StudentAnnouncementPriority = 'normal' | 'important' | 'urgent';
+export type StudentAnnouncementPriority = 'normal' | 'urgent';
 
 export type StudentAnnouncement = {
   announcementId?: string;

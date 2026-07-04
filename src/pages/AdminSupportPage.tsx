@@ -84,6 +84,7 @@ export function AdminSupportPage() {
   const search = searchParams.get('search')?.trim() ?? '';
   const category = searchParams.get('category')?.trim() ?? '';
   const [searchInput, setSearchInput] = useState(search);
+  const [activeTab, setActiveTab] = useState<'queue' | 'faqs'>('queue');
   const [selectedTicketId, setSelectedTicketId] = useState('');
   const categoriesQuery = useAdminSupportCategories();
   const faqsQuery = useAdminSupportFaqs();
@@ -147,85 +148,98 @@ export function AdminSupportPage() {
         </button>
       </header>
 
-      <div className="admin-support-grid">
-        <div className="admin-support-stack">
-          <section className="admin-support-panel">
-            <header className="admin-panel-header admin-panel-header--with-action">
-              <div>
-                <span className="section-eyebrow">Support Queue</span>
-                <h2>Student Tickets</h2>
-              </div>
-              <button className="announcement-secondary-button" disabled={ticketsQuery.isFetching} onClick={() => void ticketsQuery.refetch()} type="button">
-                <RefreshCw size={14} />
-                {ticketsQuery.isFetching ? 'Refreshing...' : 'Refresh'}
-              </button>
-            </header>
-            <div className="admin-support-panel__body">
-              <form className="admin-support-filters" onSubmit={handleSearch}>
-                <label className="admin-support-search">
-                  <Info size={15} />
-                  <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search ticket, student, subject..." type="search" />
-                </label>
-                <select value={status} onChange={(event) => setFilter('status', event.target.value)}>
-                  {statusOptions.map((option) => (
-                    <option key={option} value={option}>
-                      {option === 'all' ? 'All Statuses' : formatOption(option)}
-                    </option>
-                  ))}
-                </select>
-                <select value={priority} onChange={(event) => setFilter('priority', event.target.value)}>
-                  {priorityOptions.map((option) => (
-                    <option key={option} value={option}>
-                      {option === 'all' ? 'All Priorities' : formatOption(option)}
-                    </option>
-                  ))}
-                </select>
-                <select value={category || 'all'} onChange={(event) => setFilter('category', event.target.value)}>
-                  <option value="all">All Categories</option>
-                  {(categoriesQuery.data?.items ?? []).map((option) => (
-                    <option key={option.id} value={option.categoryName}>
-                      {option.categoryName}
-                    </option>
-                  ))}
-                </select>
-              </form>
+      <nav className="support-tabs admin-support-tabs" aria-label="Support admin tabs">
+        <button className={activeTab === 'queue' ? 'support-tab support-tab--active' : 'support-tab'} onClick={() => setActiveTab('queue')} type="button">
+          Support Queue / Student Tickets
+        </button>
+        <button className={activeTab === 'faqs' ? 'support-tab support-tab--active' : 'support-tab'} onClick={() => setActiveTab('faqs')} type="button">
+          FAQ Manager
+        </button>
+      </nav>
 
-              {data && data.items.length > 0 ? (
-                <div className="admin-support-ticket-list">
-                  {data.items.map((ticket) => (
-                    <button className={ticket.id === selectedTicket?.id ? 'admin-support-ticket admin-support-ticket--selected' : 'admin-support-ticket'} key={ticket.id} onClick={() => setSelectedTicketId(ticket.id)} type="button">
-                      <span className="admin-support-ticket__top">
-                        <strong>
-                          {ticket.ticketId ?? ticket.id} · {ticket.subject}
-                        </strong>
-                        <span>{formatDate(ticket.updatedAt ?? ticket.createdAt)}</span>
-                      </span>
-                      <span>{[ticket.studentName, ticket.studentEmail].filter(Boolean).join(' · ')}</span>
-                      <span className="chip-row">
-                        <StatusBadge tone={statusTone(ticket.status)}>{formatOption(ticket.status)}</StatusBadge>
-                        <StatusBadge tone={priorityTone(ticket.priority)}>{formatOption(ticket.priority)}</StatusBadge>
-                        <span>{ticket.categoryName}</span>
-                      </span>
-                    </button>
-                  ))}
+      {activeTab === 'queue' ? (
+        <div className="admin-support-grid">
+          <div className="admin-support-stack">
+            <section className="admin-support-panel">
+              <header className="admin-panel-header admin-panel-header--with-action">
+                <div>
+                  <span className="section-eyebrow">Support Queue</span>
+                  <h2>Student Tickets</h2>
                 </div>
-              ) : (
-                <EmptyState />
-              )}
-            </div>
-          </section>
+                <button className="announcement-secondary-button" disabled={ticketsQuery.isFetching} onClick={() => void ticketsQuery.refetch()} type="button">
+                  <RefreshCw size={14} />
+                  {ticketsQuery.isFetching ? 'Refreshing...' : 'Refresh'}
+                </button>
+              </header>
+              <div className="admin-support-panel__body">
+                <form className="admin-support-filters" onSubmit={handleSearch}>
+                  <label className="admin-support-search">
+                    <Info size={15} />
+                    <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search ticket, student, subject..." type="search" />
+                  </label>
+                  <select value={status} onChange={(event) => setFilter('status', event.target.value)}>
+                    {statusOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option === 'all' ? 'All Statuses' : formatOption(option)}
+                      </option>
+                    ))}
+                  </select>
+                  <select value={priority} onChange={(event) => setFilter('priority', event.target.value)}>
+                    {priorityOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option === 'all' ? 'All Priorities' : formatOption(option)}
+                      </option>
+                    ))}
+                  </select>
+                  <select value={category || 'all'} onChange={(event) => setFilter('category', event.target.value)}>
+                    <option value="all">All Categories</option>
+                    {(categoriesQuery.data?.items ?? []).map((option) => (
+                      <option key={option.id} value={option.categoryName}>
+                        {option.categoryName}
+                      </option>
+                    ))}
+                  </select>
+                </form>
 
-          <SupportCategoryManager categories={categoriesQuery.data?.items ?? []} isLoading={categoriesQuery.isLoading} />
+                {data && data.items.length > 0 ? (
+                  <div className="admin-support-ticket-list">
+                    {data.items.map((ticket) => (
+                      <button className={ticket.id === selectedTicket?.id ? 'admin-support-ticket admin-support-ticket--selected' : 'admin-support-ticket'} key={ticket.id} onClick={() => setSelectedTicketId(ticket.id)} type="button">
+                        <span className="admin-support-ticket__top">
+                          <strong>
+                            {ticket.ticketId ?? ticket.id} · {ticket.subject}
+                          </strong>
+                          <span>{formatDate(ticket.updatedAt ?? ticket.createdAt)}</span>
+                        </span>
+                        <span>{[ticket.studentName, ticket.studentEmail].filter(Boolean).join(' · ')}</span>
+                        <span className="chip-row">
+                          <StatusBadge tone={statusTone(ticket.status)}>{formatOption(ticket.status)}</StatusBadge>
+                          <StatusBadge tone={priorityTone(ticket.priority)}>{formatOption(ticket.priority)}</StatusBadge>
+                          <span>{ticket.categoryName}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState />
+                )}
+              </div>
+            </section>
+          </div>
+
+          <div className="admin-support-stack">
+            <TicketConversation ticket={selectedTicket} ticketDetailQuery={ticketDetailQuery} />
+            <SupportEmailSettings />
+          </div>
         </div>
-
-        <div className="admin-support-stack">
-          <TicketConversation ticket={selectedTicket} ticketDetailQuery={ticketDetailQuery} />
-          <SupportEmailSettings />
+      ) : (
+        <div className="admin-support-grid admin-support-grid--faq">
+          <SupportCategoryManager categories={categoriesQuery.data?.items ?? []} isLoading={categoriesQuery.isLoading} />
           <FaqManager categories={categoriesQuery.data?.items ?? []} faqs={faqsQuery.data?.items ?? []} isLoading={faqsQuery.isLoading} />
         </div>
-      </div>
+      )}
 
-      <nav className="pagination-bar" aria-label="Admin support pagination">
+      {activeTab === 'queue' ? <nav className="pagination-bar" aria-label="Admin support pagination">
         {data?.hasPreviousPage ? (
           <Link className="pagination-link" to={buildPageLink(page - 1, search, status, priority, category)}>
             Previous page
@@ -243,7 +257,7 @@ export function AdminSupportPage() {
         ) : (
           <span className="pagination-link pagination-link--disabled">Next page</span>
         )}
-      </nav>
+      </nav> : null}
     </div>
   );
 }

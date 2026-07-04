@@ -50,7 +50,7 @@ export function ProtectedPortalRoute({ portal }: ProtectedPortalRouteProps) {
   if (status === 'loading' || profileQuery.isLoading) {
     return (
       <main className="page-frame">
-        <StateBlock title="Checking secure session">Validating your portal session with Supabase.</StateBlock>
+        <StateBlock title="Checking secure session">Validating your portal access.</StateBlock>
       </main>
     );
   }
@@ -85,7 +85,7 @@ export function ProtectedPortalRoute({ portal }: ProtectedPortalRouteProps) {
     return (
       <main className="page-frame">
         <StateBlock title="Portal profile check failed" tone="warning">
-          The session exists, but the Supabase profile check could not complete. Please retry after confirming the project configuration.
+          The session exists, but the profile check could not complete. Please refresh and try again.
         </StateBlock>
       </main>
     );

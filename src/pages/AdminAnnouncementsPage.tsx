@@ -21,6 +21,7 @@ import { useAdminPrograms } from '../features/admin/useAdminPrograms';
 type NotificationType = 'general' | 'alert' | 'session' | 'resource' | 'project' | 'custom';
 type AudienceMode = 'all' | 'cohort' | 'program';
 type HistoryFilter = 'all' | AdminAnnouncementStatus | NotificationType;
+type AnnouncementAdminTab = 'create' | 'history';
 
 type AnnouncementFormState = {
   audienceMode: AudienceMode;
@@ -187,6 +188,7 @@ function isHttpUrl(value: string) {
 
 export function AdminAnnouncementsPage() {
   const [page] = useState(1);
+  const [activeTab, setActiveTab] = useState<AnnouncementAdminTab>('create');
   const [formState, setFormState] = useState<AnnouncementFormState>(initialFormState);
   const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(null);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
@@ -323,6 +325,7 @@ export function AdminAnnouncementsPage() {
     const cohortNameSet = new Set(item.cohortNames.map((name) => name.toLowerCase()));
     const programKeySet = new Set(item.programKeys);
     setEditingAnnouncementId(item.id);
+    setActiveTab('create');
     setFormMessage(null);
     setPreviewNotice('Editing existing announcement.');
     setFormState({
@@ -347,6 +350,7 @@ export function AdminAnnouncementsPage() {
   function handleDuplicate(item: AdminAnnouncement) {
     handleEdit(item);
     setEditingAnnouncementId(null);
+    setActiveTab('create');
     setFormState((current) => ({ ...current, status: 'inactive', title: `${item.title} copy` }));
     setPreviewNotice('Duplicated as a new inactive draft. Review and send when ready.');
   }
@@ -530,14 +534,30 @@ export function AdminAnnouncementsPage() {
         </button>
       </section>
 
-      <div className="announcement-centre-grid">
-        <section className="announcement-panel announcement-compose-panel">
-          <header className="announcement-panel__header">
-            <span className="eyebrow">Notification Centre</span>
-            <h2>Send Notification</h2>
-          </header>
+      <nav className="support-tabs announcement-admin-tabs" aria-label="Announcement workspace tabs">
+        <button className={activeTab === 'create' ? 'support-tab support-tab--active' : 'support-tab'} onClick={() => setActiveTab('create')} type="button">
+          Create Announcement
+        </button>
+        <button className={activeTab === 'history' ? 'support-tab support-tab--active' : 'support-tab'} onClick={() => setActiveTab('history')} type="button">
+          History
+        </button>
+      </nav>
 
-          <form className="announcement-form" onSubmit={handleSubmit}>
+      {formMessage ? (
+        <div className={formMessage.tone === 'success' ? 'announcement-form-message announcement-form-message--success' : 'announcement-form-message announcement-form-message--error'}>
+          {formMessage.text}
+        </div>
+      ) : null}
+
+      {activeTab === 'create' ? (
+        <div className="announcement-centre-grid">
+          <section className="announcement-panel announcement-compose-panel">
+            <header className="announcement-panel__header">
+              <span className="eyebrow">Notification Centre</span>
+              <h2>{editingAnnouncementId ? 'Update Notification' : 'Send Notification'}</h2>
+            </header>
+
+            <form className="announcement-form" onSubmit={handleSubmit}>
             <div className="announcement-field announcement-field--wide">
               <span>Notification Type</span>
               <div className="notification-type-grid">
@@ -655,7 +675,6 @@ export function AdminAnnouncementsPage() {
               <span>Priority</span>
               <select value={formState.priority} onChange={(event) => updateForm('priority', event.target.value as AdminAnnouncementPriority)}>
                 <option value="normal">Normal</option>
-                <option value="important">Important</option>
                 <option value="urgent">Urgent</option>
               </select>
             </label>
@@ -728,16 +747,10 @@ export function AdminAnnouncementsPage() {
                 {isSaving ? 'Saving...' : editingAnnouncementId ? 'Update Notification' : 'Send Notification'}
               </button>
             </div>
-            {formMessage ? (
-              <div className={formMessage.tone === 'success' ? 'announcement-form-message announcement-form-message--success announcement-field--wide' : 'announcement-form-message announcement-form-message--error announcement-field--wide'}>
-                {formMessage.text}
-              </div>
-            ) : null}
             {previewNotice ? <div className="announcement-form-message announcement-field--wide">{previewNotice}</div> : null}
-          </form>
-        </section>
+            </form>
+          </section>
 
-        <div className="announcement-side-stack">
           <section className="announcement-panel">
             <header className="announcement-panel__header">
               <span className="eyebrow">Preview</span>
@@ -768,107 +781,107 @@ export function AdminAnnouncementsPage() {
               </article>
             </div>
           </section>
-
-          <section className="announcement-panel announcement-history-panel">
-            <header className="announcement-panel__header announcement-panel__header--row">
-              <div>
-                <span className="eyebrow">History</span>
-                <h2>Sent Announcements</h2>
-              </div>
-              <div className="announcement-history-tools">
-                <button className="announcement-row-button" disabled={filteredItems.length === 0} onClick={toggleAllFilteredAnnouncements} type="button">
-                  {filteredItems.length > 0 && filteredItems.every((item) => selectedAnnouncementIds.includes(item.id)) ? 'Clear' : 'Select'}
-                </button>
-                <button className="announcement-row-button announcement-row-button--danger" disabled={selectedAnnouncementIds.length === 0 || bulkArchiveAnnouncements.isPending} onClick={handleBulkArchive} type="button">
-                  {bulkArchiveAnnouncements.isPending ? 'Archiving...' : `Archive ${selectedAnnouncementIds.length || ''}`}
-                </button>
-                <label className="sr-only" htmlFor="announcement-history-filter">
-                  Filter announcements
-                </label>
-                <select id="announcement-history-filter" value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value as HistoryFilter)}>
-                  <option value="all">All</option>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                  {notificationTypes.map((item) => (
-                    <option key={item.type} value={item.type}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </header>
-
-            <div className="announcement-history-list">
-              {filteredItems.length > 0 ? (
-                filteredItems.map((item) => {
-                  const itemType = getAnnouncementType(item);
-                  const HistoryIcon = getTypeIcon(itemType);
-                  const rowBusy = statusActionId === item.id;
-                  return (
-                    <article className="announcement-history-row" key={item.id}>
-                      <div className="announcement-history-row__select">
-                        <input checked={selectedAnnouncementIds.includes(item.id)} onChange={() => toggleSelectedAnnouncement(item.id)} type="checkbox" aria-label={`Select ${item.title}`} />
-                        <div className={getTypeIconBackground(itemType)}>
-                          {itemType === 'custom' && item.customEmoji ? <span>{item.customEmoji}</span> : <HistoryIcon size={24} />}
-                        </div>
-                      </div>
-                      <div className="announcement-history-row__content">
-                        <h3>
-                          {item.pinned ? <span aria-hidden="true">📌</span> : null}
-                          {item.title}
-                        </h3>
-                        <div className="announcement-token-row">
-                          <span className={getTypeTone(itemType)}>{formatLabel(itemType)}</span>
-                          <span className={item.status === 'active' ? 'announcement-state-token announcement-state-token--active' : 'announcement-state-token'}>
-                            {getStatusToken(item)}
-                          </span>
-                        </div>
-                        <div className="announcement-history-row__meta">
-                          <span>→ {getAnnouncementAudienceLabel(item)}</span>
-                          <time>{formatDate(item.startDate ?? item.updatedAt)}</time>
-                        </div>
-                        {item.linkUrl ? (
-                          <a className="announcement-card__link" href={item.linkUrl} rel="noreferrer" target="_blank">
-                            {item.linkLabel || 'Open link'}
-                          </a>
-                        ) : null}
-                        <p>Edited by {item.updatedBy || item.createdBy || 'admin'}</p>
-                      </div>
-                      <div className="announcement-history-row__actions">
-                        <button className="announcement-row-button" onClick={() => handleEdit(item)} type="button">
-                          Edit
-                        </button>
-                        <button className="announcement-row-button" onClick={() => handleDuplicate(item)} type="button">
-                          Duplicate
-                        </button>
-                        <select
-                          disabled={rowBusy}
-                          value={item.status}
-                          onChange={(event) => handleStatusChange(item, event.target.value as AdminAnnouncementStatus)}
-                          aria-label={`Status for ${item.title}`}
-                        >
-                          <option value="active">Active</option>
-                          <option value="inactive">Inactive</option>
-                        </select>
-                        <button
-                          className={item.status === 'inactive' ? 'announcement-row-button' : 'announcement-row-button announcement-row-button--danger'}
-                          disabled={rowBusy}
-                          onClick={() => (item.status === 'inactive' ? handleStatusChange(item, 'active') : handleArchive(item))}
-                          type="button"
-                        >
-                          {rowBusy ? 'Saving...' : item.status === 'inactive' ? 'Reactivate' : 'Archive'}
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })
-              ) : (
-                <EmptyState />
-              )}
-            </div>
-          </section>
         </div>
-      </div>
+      ) : (
+        <section className="announcement-panel announcement-history-panel">
+          <header className="announcement-panel__header announcement-panel__header--row">
+            <div>
+              <span className="eyebrow">History</span>
+              <h2>Sent Announcements</h2>
+            </div>
+            <div className="announcement-history-tools">
+              <button className="announcement-row-button" disabled={filteredItems.length === 0} onClick={toggleAllFilteredAnnouncements} type="button">
+                {filteredItems.length > 0 && filteredItems.every((item) => selectedAnnouncementIds.includes(item.id)) ? 'Clear' : 'Select'}
+              </button>
+              <button className="announcement-row-button announcement-row-button--danger" disabled={selectedAnnouncementIds.length === 0 || bulkArchiveAnnouncements.isPending} onClick={handleBulkArchive} type="button">
+                {bulkArchiveAnnouncements.isPending ? 'Archiving...' : `Archive ${selectedAnnouncementIds.length || ''}`}
+              </button>
+              <label className="sr-only" htmlFor="announcement-history-filter">
+                Filter announcements
+              </label>
+              <select id="announcement-history-filter" value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value as HistoryFilter)}>
+                <option value="all">All</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                {notificationTypes.map((item) => (
+                  <option key={item.type} value={item.type}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </header>
+
+          <div className="announcement-history-list">
+            {filteredItems.length > 0 ? (
+              filteredItems.map((item) => {
+                const itemType = getAnnouncementType(item);
+                const HistoryIcon = getTypeIcon(itemType);
+                const rowBusy = statusActionId === item.id;
+                return (
+                  <article className="announcement-history-row" key={item.id}>
+                    <div className="announcement-history-row__select">
+                      <input checked={selectedAnnouncementIds.includes(item.id)} onChange={() => toggleSelectedAnnouncement(item.id)} type="checkbox" aria-label={`Select ${item.title}`} />
+                      <div className={getTypeIconBackground(itemType)}>
+                        {itemType === 'custom' && item.customEmoji ? <span>{item.customEmoji}</span> : <HistoryIcon size={24} />}
+                      </div>
+                    </div>
+                    <div className="announcement-history-row__content">
+                      <h3>
+                        {item.pinned ? <span aria-hidden="true">📌</span> : null}
+                        {item.title}
+                      </h3>
+                      <div className="announcement-token-row">
+                        <span className={getTypeTone(itemType)}>{formatLabel(itemType)}</span>
+                        <span className={item.status === 'active' ? 'announcement-state-token announcement-state-token--active' : 'announcement-state-token'}>
+                          {getStatusToken(item)}
+                        </span>
+                      </div>
+                      <div className="announcement-history-row__meta">
+                        <span>→ {getAnnouncementAudienceLabel(item)}</span>
+                        <time>{formatDate(item.startDate ?? item.updatedAt)}</time>
+                      </div>
+                      {item.linkUrl ? (
+                        <a className="announcement-card__link" href={item.linkUrl} rel="noreferrer" target="_blank">
+                          {item.linkLabel || 'Open link'}
+                        </a>
+                      ) : null}
+                      <p>Edited by {item.updatedBy || item.createdBy || 'admin'}</p>
+                    </div>
+                    <div className="announcement-history-row__actions">
+                      <button className="announcement-row-button" onClick={() => handleEdit(item)} type="button">
+                        Edit
+                      </button>
+                      <button className="announcement-row-button" onClick={() => handleDuplicate(item)} type="button">
+                        Duplicate
+                      </button>
+                      <select
+                        disabled={rowBusy}
+                        value={item.status}
+                        onChange={(event) => handleStatusChange(item, event.target.value as AdminAnnouncementStatus)}
+                        aria-label={`Status for ${item.title}`}
+                      >
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                      </select>
+                      <button
+                        className={item.status === 'inactive' ? 'announcement-row-button' : 'announcement-row-button announcement-row-button--danger'}
+                        disabled={rowBusy}
+                        onClick={() => (item.status === 'inactive' ? handleStatusChange(item, 'active') : handleArchive(item))}
+                        type="button"
+                      >
+                        {rowBusy ? 'Saving...' : item.status === 'inactive' ? 'Reactivate' : 'Archive'}
+                      </button>
+                    </div>
+                  </article>
+                );
+              })
+            ) : (
+              <EmptyState />
+            )}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

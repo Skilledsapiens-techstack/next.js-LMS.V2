@@ -1,4 +1,4 @@
-import { Bell, LogOut, Menu, ShieldCheck, X } from 'lucide-react';
+import { Bell, LogOut, Menu, MessageCircle, ShieldCheck, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { NavItem, Portal } from '../app/routeConfig';
@@ -56,7 +56,7 @@ function sortAnnouncements(items: StudentAnnouncement[]) {
     const leftPinned = left.pinned ? 1 : 0;
     const rightPinned = right.pinned ? 1 : 0;
     if (leftPinned !== rightPinned) return rightPinned - leftPinned;
-    const priorityRank: Record<string, number> = { urgent: 3, important: 2, normal: 1 };
+    const priorityRank: Record<string, number> = { urgent: 2, normal: 1 };
     const priorityDiff = (priorityRank[right.priority] ?? 0) - (priorityRank[left.priority] ?? 0);
     if (priorityDiff !== 0) return priorityDiff;
     return new Date(right.updatedAt ?? 0).getTime() - new Date(left.updatedAt ?? 0).getTime();
@@ -66,8 +66,14 @@ function sortAnnouncements(items: StudentAnnouncement[]) {
 function announcementMeta(announcement: StudentAnnouncement) {
   if (announcement.pinned) return 'Pinned';
   if (announcement.priority === 'urgent') return 'Urgent';
-  if (announcement.priority === 'important') return 'Important';
   return 'Announcement';
+}
+
+function normalizeWhatsAppNumber(value: unknown) {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  return trimmed.replace(/[^\d]/g, '');
 }
 
 export function AppShell({ navItems, portal }: AppShellProps) {
@@ -94,6 +100,13 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   const activeAnnouncementCount = announcementsEnabled ? announcementsQuery.data?.total ?? 0 : 0;
   const countLabel = activeAnnouncementCount > 99 ? '99+' : String(activeAnnouncementCount);
   const bannerAnnouncement = announcementItems.find((item) => item.pinned || item.priority === 'urgent');
+  const whatsappFeature = featureControlsQuery.data?.items.find((item) => item.moduleId === 'whatsapp-widget');
+  const whatsappNumber = normalizeWhatsAppNumber(whatsappFeature?.settings?.whatsapp_number ?? whatsappFeature?.settings?.whatsappNumber);
+  const whatsappLabel = whatsappFeature?.upcomingMessage?.trim() || 'Contact Program Coordinator';
+  const whatsappUrl = whatsappNumber
+    ? `https://wa.me/${whatsappNumber}?text=${encodeURIComponent('Hi, I need help with my Skilled Sapiens LMS account.')}`
+    : '';
+  const showWhatsAppWidget = portal === 'student' && whatsappFeature?.status === 'show' && Boolean(whatsappUrl);
 
   useEffect(() => {
     setIsAnnouncementOpen(false);
@@ -254,6 +267,13 @@ export function AppShell({ navItems, portal }: AppShellProps) {
         <main className="page-frame">
           <Outlet />
         </main>
+
+        {showWhatsAppWidget ? (
+          <a className="whatsapp-contact-widget" href={whatsappUrl} rel="noreferrer" target="_blank">
+            <MessageCircle size={18} />
+            <span>{whatsappLabel}</span>
+          </a>
+        ) : null}
       </div>
     </div>
   );

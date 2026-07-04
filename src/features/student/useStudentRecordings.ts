@@ -21,6 +21,7 @@ export type StudentRecording = {
   price?: number | null;
   programKey?: string;
   recordingUrl?: string;
+  recordingPassword?: string;
   source?: StudentRecordingSource;
   time?: string;
   title: string;

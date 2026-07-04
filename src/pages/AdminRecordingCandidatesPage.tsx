@@ -19,6 +19,7 @@ type ProgramFilter = 'all' | string;
 type CohortFilter = 'all' | string;
 type RecordingEditForm = {
   alternateUrl: string;
+  passcode: string;
   workshopId: string;
   youtubeUrl: string;
 };
@@ -104,6 +105,10 @@ function isHttpUrl(value: string) {
   return /^https?:\/\//i.test(value);
 }
 
+function isPreferredCandidate(candidate: AdminRecordingCandidate) {
+  return String(candidate.fileType ?? '').toUpperCase() === 'MP4' && String(candidate.recordingType ?? '').toLowerCase() === 'shared_screen_with_speaker_view';
+}
+
 function visibilityText(workshop: AdminWorkshop) {
   if (!hasRecordingLink(workshop)) return 'Not visible: no published recording link.';
   if (workshop.status !== 'Completed') return `Not visible: workshop status is ${workshop.status}.`;
@@ -137,7 +142,7 @@ export function AdminRecordingCandidatesPage() {
   const rejectRecordingMutation = useRejectAdminWorkshopRecording();
   const updateRecordingMutation = useUpdateAdminWorkshopRecording();
   const workshops = workshopsQuery.data?.items ?? [];
-  const candidates = candidatesQuery.data?.items ?? [];
+  const candidates = (candidatesQuery.data?.items ?? []).filter(isPreferredCandidate);
   const programs = programsQuery.data?.items ?? [];
   const activeCohorts = activeCohortsQuery.data?.items ?? [];
   const normalizedSearch = search.trim().toLowerCase();
@@ -236,6 +241,7 @@ export function AdminRecordingCandidatesPage() {
   function startEditingRecording(workshop: AdminWorkshop) {
     setRecordingEditForm({
       alternateUrl: workshop.zoomRecordingUrl ?? '',
+      passcode: workshop.zoomRecordingPassword ?? '',
       workshopId: workshop.id,
       youtubeUrl: workshop.youtubeVideoUrl ?? ''
     });
@@ -268,6 +274,7 @@ export function AdminRecordingCandidatesPage() {
       await updateRecordingMutation.mutateAsync({
         body: {
           youtubeVideoUrl: youtubeUrl || null,
+          zoomRecordingPassword: recordingEditForm.passcode.trim() || null,
           zoomRecordingUrl: alternateUrl || null
         },
         workshopId: recordingEditForm.workshopId
@@ -333,6 +340,14 @@ export function AdminRecordingCandidatesPage() {
             value={recordingEditForm.alternateUrl}
             onChange={(event) => setRecordingEditForm((current) => (current ? { ...current, alternateUrl: event.target.value } : current))}
             placeholder="https://..."
+          />
+        </label>
+        <label>
+          <span>Zoom passcode</span>
+          <input
+            value={recordingEditForm.passcode}
+            onChange={(event) => setRecordingEditForm((current) => (current ? { ...current, passcode: event.target.value } : current))}
+            placeholder="Optional passcode"
           />
         </label>
         <div className="admin-recording-edit-form__actions">
@@ -500,6 +515,7 @@ export function AdminRecordingCandidatesPage() {
                         <span>{formatDuration(candidate.durationMinutes)}</span>
                         <span>{formatSize(candidate.fileSize)}</span>
                         <span>{formatDateTime(candidate.recordingStart)}</span>
+                        {candidate.recordingPassword ? <span>Passcode saved</span> : null}
                       </div>
                     </div>
                     <div className="admin-recording-row__actions">
@@ -558,6 +574,7 @@ export function AdminRecordingCandidatesPage() {
                       <span>{workshop.workshopId ?? 'No workshop ID'}</span>
                       <span>{workshop.zoomId ? `Zoom ${workshop.zoomId}` : 'Manual link'}</span>
                       <span>{workshop.updatedAt ? `Updated ${formatDate(workshop.updatedAt)}` : 'Update date unavailable'}</span>
+                      {workshop.zoomRecordingPassword ? <span>Passcode saved</span> : null}
                       <span>{visibilityText(workshop)}</span>
                     </div>
                     {renderRecordingEditForm(workshop)}
