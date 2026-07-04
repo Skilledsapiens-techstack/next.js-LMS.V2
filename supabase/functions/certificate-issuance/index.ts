@@ -27,6 +27,32 @@ function text(value: unknown, fallback = '') {
   return String(value ?? fallback).trim();
 }
 
+function escHtml(value: unknown) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function fillVars(source: string, vars: Record<string, unknown>) {
+  return source.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key) => text(vars[key]));
+}
+
+function richPlainTextToHtml(value: string) {
+  return value
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean)
+    .map((paragraph) => `<p>${escHtml(paragraph).replace(/\n/g, '<br>')}</p>`)
+    .join('\n');
+}
+
+function htmlToPlainText(value: string) {
+  return value.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim();
+}
+
 function certificateTypeToTemplateType(value: unknown) {
   return text(value) === 'live_project' ? 'live_project' : 'leadership_program';
 }
@@ -156,22 +182,47 @@ async function isAdmin(supabase: ReturnType<typeof createClient>, actor: { email
   return Boolean(data);
 }
 
-async function sendCertificateEmail(certificate: CertificateRow, pdfBytes: Uint8Array, signedUrl: string) {
+async function getEmailTemplate(supabase: ReturnType<typeof createClient>, templateKey: string) {
+  const { data } = await supabase
+    .from('email_templates')
+    .select('template_key, subject, body')
+    .eq('template_key', templateKey)
+    .eq('status', 'active')
+    .maybeSingle();
+  return data || null;
+}
+
+async function sendCertificateEmail(supabase: ReturnType<typeof createClient>, certificate: CertificateRow, pdfBytes: Uint8Array, signedUrl: string) {
   const apiKey = Deno.env.get('BREVO_API_KEY');
   if (!apiKey) throw new Error('BREVO_API_KEY is not configured.');
   const senderEmail = Deno.env.get('BREVO_SENDER_EMAIL') ?? 'updates@skilledsapiens.com';
   const senderName = Deno.env.get('BREVO_SENDER_NAME') ?? 'Skilled Sapiens';
-  const subject = `Your Skilled Sapiens certificate: ${text(certificate.certificate_id)}`;
+  const template = await getEmailTemplate(supabase, 'certificate_ready');
+  const subjectFallback = `Your Skilled Sapiens certificate: ${text(certificate.certificate_id)}`;
   const expiresAt = formatDate(certificate.pdf_expires_at);
-  const html = `
-    <p>Hi ${text(certificate.student_name, 'there')},</p>
-    <p>Your Skilled Sapiens certificate is attached to this email.</p>
-    <p>You can also download it from your portal using the temporary link. The link expires within 24 hours.</p>
-    <p><a href="${signedUrl}">Download certificate</a></p>
-    <p>Certificate ID: <strong>${text(certificate.certificate_id)}</strong></p>
-    <p>Verification: <a href="${verificationUrl(certificate)}">${verificationUrl(certificate)}</a></p>
-    ${expiresAt ? `<p>Temporary download expiry: ${expiresAt}</p>` : ''}
-  `;
+  const vars = {
+    student_name: text(certificate.student_name, 'there'),
+    student_email: text(certificate.student_email),
+    certificate_id: text(certificate.certificate_id),
+    certificate_download_url: signedUrl,
+    verification_url: verificationUrl(certificate),
+    program: text(certificate.program_name, text(certificate.program_key)),
+    cohort: text(certificate.cohort_name, text(certificate.cohort_id)),
+    expiry: expiresAt || '24 hours',
+    portal_url: 'https://dev.skilledsapiens.com/login'
+  };
+  const subject = fillVars(text(template?.subject) || subjectFallback, vars);
+  const bodyFallback = `Hi {{student_name}},
+
+Your Skilled Sapiens certificate {{certificate_id}} is attached to this email.
+
+You can also download it within 24 hours: {{certificate_download_url}}
+
+Verify anytime: {{verification_url}}
+
+Regards,
+Skilled Sapiens Team`;
+  const html = richPlainTextToHtml(fillVars(text(template?.body) || bodyFallback, vars));
   const attachment = bytesToBase64(pdfBytes);
   const response = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
@@ -184,6 +235,7 @@ async function sendCertificateEmail(certificate: CertificateRow, pdfBytes: Uint8
       to: [{ email: text(certificate.student_email), name: text(certificate.student_name) }],
       subject,
       htmlContent: html,
+      textContent: htmlToPlainText(html),
       attachment: [{
         content: attachment,
         name: `${text(certificate.certificate_id)}.pdf`
@@ -191,6 +243,22 @@ async function sendCertificateEmail(certificate: CertificateRow, pdfBytes: Uint8
     })
   });
   if (!response.ok) throw new Error(`Brevo email failed: ${await response.text()}`);
+  await supabase.from('email_queue').insert({
+    email_key: crypto.randomUUID(),
+    category: 'transactional',
+    template_key: 'certificate_ready',
+    provider: 'brevo',
+    status: 'sent',
+    recipient_email: text(certificate.student_email),
+    recipient_name: text(certificate.student_name),
+    subject,
+    params: { ...vars, has_attachment: true },
+    tags: ['certificate', 'certificate_ready'],
+    related_entity_type: 'certificate',
+    related_entity_id: certificate.id,
+    scheduled_at: new Date().toISOString(),
+    sent_at: new Date().toISOString()
+  });
 }
 
 async function generateOne(supabase: ReturnType<typeof createClient>, certificateId: string, actor: { email: string; id: string }, options: { force?: boolean; sendEmail?: boolean }) {
@@ -213,7 +281,7 @@ async function generateOne(supabase: ReturnType<typeof createClient>, certificat
       if (existingDownloadError || !existingFile) throw new Error(existingDownloadError?.message ?? 'Existing certificate PDF download failed.');
       try {
         const pdfBytes = new Uint8Array(await existingFile.arrayBuffer());
-        await sendCertificateEmail(certificate, pdfBytes, signed.signedUrl);
+        await sendCertificateEmail(supabase, certificate, pdfBytes, signed.signedUrl);
         await supabase.from('certificates').update({ email_sent_at: new Date().toISOString(), generation_error: null, updated_at: new Date().toISOString() }).eq('id', certificateId);
       } catch (error) {
         await supabase.from('certificates').update({
@@ -274,7 +342,7 @@ async function generateOne(supabase: ReturnType<typeof createClient>, certificat
   if (signedError) throw signedError;
   if (options.sendEmail) {
     try {
-      await sendCertificateEmail({ ...updated, pdf_expires_at: expiresAt }, pdfBytes, signed.signedUrl);
+      await sendCertificateEmail(supabase, { ...updated, pdf_expires_at: expiresAt }, pdfBytes, signed.signedUrl);
       await supabase.from('certificates').update({ email_sent_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', certificateId);
     } catch (error) {
       await supabase.from('certificates').update({

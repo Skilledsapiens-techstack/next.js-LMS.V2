@@ -37,6 +37,7 @@ const AdminPaidAccessPage = lazy(() => import('../pages/AdminPaidAccessPage').th
 const AdminSupportPage = lazy(() => import('../pages/AdminSupportPage').then((module) => ({ default: module.AdminSupportPage })));
 const AdminSupportDetailPage = lazy(() => import('../pages/AdminSupportDetailPage').then((module) => ({ default: module.AdminSupportDetailPage })));
 const AdminFeatureControlPage = lazy(() => import('../pages/AdminFeatureControlPage').then((module) => ({ default: module.AdminFeatureControlPage })));
+const AdminEmailCenterPage = lazy(() => import('../pages/AdminEmailCenterPage').then((module) => ({ default: module.AdminEmailCenterPage })));
 const LoginPage = lazy(() => import('../pages/LoginPage').then((module) => ({ default: module.LoginPage })));
 const ModulePlaceholderPage = lazy(() => import('../pages/ModulePlaceholderPage').then((module) => ({ default: module.ModulePlaceholderPage })));
 const StudentAnnouncementsPage = lazy(() => import('../pages/StudentAnnouncementsPage').then((module) => ({ default: module.StudentAnnouncementsPage })));
@@ -391,6 +392,14 @@ export const router = createBrowserRouter([
             element: (
               <PageLoader>
                 <AdminSupportDetailPage />
+              </PageLoader>
+            )
+          },
+          {
+            path: 'email-center',
+            element: (
+              <PageLoader>
+                <AdminEmailCenterPage />
               </PageLoader>
             )
           },
