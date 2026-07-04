@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthProvider';
-import { apiGet, apiInvokeFunction, apiPatch } from '../../lib/supabaseApi';
+import { apiGet, apiInvokeFunction } from '../../lib/supabaseApi';
 import { PaginatedResponse } from '../student/useStudentAnnouncements';
 
 export type AdminWorkshopAccessType = 'free' | 'paid';
@@ -137,18 +137,19 @@ export function useRescheduleAdminWorkshop() {
   });
 }
 
-export function useUpdateAdminWorkshopRecording() {
+export function useCreateAdminManualRecordingCandidate() {
   const { accessToken } = useAuth();
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: ({ body, workshopId }: { body: AdminWorkshopRecordingPayload; workshopId: string }) =>
-      apiPatch<AdminWorkshop, AdminWorkshopRecordingPayload>(`/admins/workshops/${workshopId}/recording`, {
+      apiInvokeFunction<ZoomMeetingFunctionResponse, { action: string; body: AdminWorkshopRecordingPayload; workshopId: string }>('zoom-meetings', {
         accessToken: accessToken ?? undefined,
-        body
+        body: { action: 'add-manual-recording', body, workshopId }
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-workshops'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-recording-candidates'] });
     }
   });
 }

@@ -90,7 +90,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   const visibleNavItems = portal === 'student' ? filterStudentNavItems(navItems, featureControlsQuery.data) : navItems;
   const featureStatusMap = new Map((featureControlsQuery.data?.items ?? []).map((item) => [item.moduleId, item.status]));
   const announcementsEnabled = portal === 'student' && featureStatusMap.get('announcements') !== 'hide';
-  const announcementsQuery = useStudentAnnouncements({ enabled: announcementsEnabled, limit: 5, page: 1, priority: 'all' });
+  const announcementsQuery = useStudentAnnouncements({ activeOnly: true, enabled: announcementsEnabled, limit: 5, page: 1, priority: 'all' });
   const navSections = groupNavItems(visibleNavItems, portal);
   const activeNavItem = [...visibleNavItems]
     .sort((left, right) => right.path.length - left.path.length)

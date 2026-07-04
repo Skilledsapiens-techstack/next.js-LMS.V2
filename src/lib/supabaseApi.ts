@@ -760,7 +760,10 @@ async function getAdminDashboard(context: Awaited<ReturnType<typeof createContex
 
 async function getStudentBundleList(context: Awaited<ReturnType<typeof createContext>>, sections: string[], query: ApiClientOptions['query']) {
   const bundle = await callRpc(context, 'student_dashboard_bundle', { p_student_email: context.email });
-  return paginate(extractItems(bundle, sections), query);
+  const items = extractItems(bundle, sections);
+  const activeOnly = query?.activeOnly === true || query?.activeOnly === 'true';
+  const filteredItems = activeOnly && sections.includes('announcements') ? items.filter(isVisibleAnnouncementNow) : items;
+  return paginate(filteredItems, query);
 }
 
 async function getStudentRecordingsList(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
@@ -2438,7 +2441,7 @@ async function callRpc(context: Awaited<ReturnType<typeof createContext>>, funct
 }
 
 function applyCommonFilters<TQuery extends SupabaseQuery>(request: TQuery, query: ApiClientOptions['query'], endpoint: TableEndpoint): TQuery {
-  const ignored = new Set(['limit', 'page', 'search', 'sort']);
+  const ignored = new Set(['activeOnly', 'limit', 'page', 'search', 'sort']);
   Object.entries(query ?? {}).forEach(([key, value]) => {
     if (ignored.has(key) || value === undefined || value === '' || value === 'all' || value === 'any') return;
     if (key === 'submittedDate') {
@@ -2498,7 +2501,7 @@ function paginate(rawItems: unknown[], query: ApiClientOptions['query']) {
 function matchesClientFilters(item: unknown, query: ApiClientOptions['query']) {
   if (!isRecord(item)) return true;
 
-  const ignored = new Set(['limit', 'page', 'search', 'sort']);
+  const ignored = new Set(['activeOnly', 'limit', 'page', 'search', 'sort']);
   return Object.entries(query ?? {}).every(([key, value]) => {
     if (ignored.has(key) || value === undefined || value === '' || value === 'all' || value === 'any') return true;
 
@@ -2668,6 +2671,24 @@ function computeActiveNow(row: Record<string, unknown>) {
   if (row.status && row.status !== 'active') return false;
   if (typeof row.expires_at === 'string') return new Date(row.expires_at).getTime() > Date.now();
   return row.status === 'active';
+}
+
+function isVisibleAnnouncementNow(item: unknown) {
+  if (!isRecord(item)) return false;
+
+  const status = String(item.status ?? item.announcement_status ?? item.announcementStatus ?? 'active').toLowerCase();
+  if (status && status !== 'active') return false;
+
+  const now = Date.now();
+  const startDate = item.start_date ?? item.startDate;
+  const endDate = item.end_date ?? item.endDate;
+  const startsAt = typeof startDate === 'string' && startDate.trim() ? new Date(startDate).getTime() : Number.NaN;
+  const endsAt = typeof endDate === 'string' && endDate.trim() ? new Date(endDate).getTime() : Number.NaN;
+
+  if (!Number.isNaN(startsAt) && startsAt > now) return false;
+  if (!Number.isNaN(endsAt) && endsAt < now) return false;
+
+  return true;
 }
 
 function camelize(value: unknown): unknown {

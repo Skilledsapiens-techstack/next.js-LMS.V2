@@ -7,14 +7,14 @@ import { AdminProgram, useAdminPrograms } from '../features/admin/useAdminProgra
 import { AdminRecordingCandidate, useAdminRecordingCandidates } from '../features/admin/useAdminRecordingCandidates';
 import {
   AdminWorkshop,
+  useCreateAdminManualRecordingCandidate,
   useAdminWorkshops,
   useFetchAdminWorkshopRecordings,
   usePublishAdminWorkshopRecording,
-  useRejectAdminWorkshopRecording,
-  useUpdateAdminWorkshopRecording
+  useRejectAdminWorkshopRecording
 } from '../features/admin/useAdminWorkshops';
 
-type RecordingTab = 'pending' | 'published' | 'missing' | 'rejected';
+type RecordingTab = 'add-link' | 'pending' | 'published' | 'rejected';
 type ProgramFilter = 'all' | string;
 type CohortFilter = 'all' | string;
 type RecordingEditForm = {
@@ -71,7 +71,7 @@ function cohortProgramMatches(cohort: AdminCohort, programKey: string) {
 function sourceLabel(item: AdminWorkshop) {
   if (item.youtubeVideoUrl) return 'YouTube';
   if (item.zoomRecordingUrl) return 'Zoom/manual';
-  return 'Missing';
+  return 'Add Link';
 }
 
 function candidateMatches(candidate: AdminRecordingCandidate, workshop: AdminWorkshop | undefined, search: string) {
@@ -105,8 +105,10 @@ function isHttpUrl(value: string) {
   return /^https?:\/\//i.test(value);
 }
 
-function isPreferredCandidate(candidate: AdminRecordingCandidate) {
-  return String(candidate.fileType ?? '').toUpperCase() === 'MP4' && String(candidate.recordingType ?? '').toLowerCase() === 'shared_screen_with_speaker_view';
+function isReviewableCandidate(candidate: AdminRecordingCandidate) {
+  const fileType = String(candidate.fileType ?? '').toUpperCase();
+  if (fileType === 'URL') return Boolean(candidate.playUrl);
+  return fileType === 'MP4' && String(candidate.recordingType ?? '').toLowerCase() === 'shared_screen_with_speaker_view';
 }
 
 function visibilityText(workshop: AdminWorkshop) {
@@ -126,12 +128,12 @@ function totalPagesFor(count: number) {
 }
 
 export function AdminRecordingCandidatesPage() {
-  const [activeTab, setActiveTab] = useState<RecordingTab>('pending');
+  const [activeTab, setActiveTab] = useState<RecordingTab>('add-link');
   const [programFilter, setProgramFilter] = useState<ProgramFilter>('all');
   const [cohortFilter, setCohortFilter] = useState<CohortFilter>('all');
   const [search, setSearch] = useState('');
   const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [pageByTab, setPageByTab] = useState<Record<RecordingTab, number>>({ missing: 1, pending: 1, published: 1, rejected: 1 });
+  const [pageByTab, setPageByTab] = useState<Record<RecordingTab, number>>({ 'add-link': 1, pending: 1, published: 1, rejected: 1 });
   const [recordingEditForm, setRecordingEditForm] = useState<RecordingEditForm | null>(null);
   const workshopsQuery = useAdminWorkshops({ limit: 500, page: 1, status: 'Completed' });
   const candidatesQuery = useAdminRecordingCandidates({ limit: 500, page: 1, status: 'all' });
@@ -140,9 +142,9 @@ export function AdminRecordingCandidatesPage() {
   const fetchRecordingsMutation = useFetchAdminWorkshopRecordings();
   const publishRecordingMutation = usePublishAdminWorkshopRecording();
   const rejectRecordingMutation = useRejectAdminWorkshopRecording();
-  const updateRecordingMutation = useUpdateAdminWorkshopRecording();
+  const createManualCandidateMutation = useCreateAdminManualRecordingCandidate();
   const workshops = workshopsQuery.data?.items ?? [];
-  const candidates = (candidatesQuery.data?.items ?? []).filter(isPreferredCandidate);
+  const candidates = (candidatesQuery.data?.items ?? []).filter(isReviewableCandidate);
   const programs = programsQuery.data?.items ?? [];
   const activeCohorts = activeCohortsQuery.data?.items ?? [];
   const normalizedSearch = search.trim().toLowerCase();
@@ -170,7 +172,7 @@ export function AdminRecordingCandidatesPage() {
   useEffect(() => {
     if (cohortFilter !== 'all' && !cohortOptions.includes(cohortFilter)) {
       setCohortFilter('all');
-      setPageByTab({ missing: 1, pending: 1, published: 1, rejected: 1 });
+      setPageByTab({ 'add-link': 1, pending: 1, published: 1, rejected: 1 });
     }
   }, [cohortFilter, cohortOptions]);
 
@@ -193,7 +195,7 @@ export function AdminRecordingCandidatesPage() {
     [cohortFilter, normalizedSearch, programFilter, workshops]
   );
 
-  const missingWorkshops = useMemo(
+  const addLinkWorkshops = useMemo(
     () => workshops.filter((workshop) => !hasRecordingLink(workshop) && workshopMatches(workshop, normalizedSearch, programFilter, cohortFilter)),
     [cohortFilter, normalizedSearch, programFilter, workshops]
   );
@@ -215,7 +217,7 @@ export function AdminRecordingCandidatesPage() {
   const reviewedCount = candidates.filter((candidate) => candidate.status === 'reviewed').length;
   const rejectedCount = candidates.filter((candidate) => candidate.status === 'rejected').length;
   const visibleByTab = {
-    missing: missingWorkshops,
+    'add-link': addLinkWorkshops,
     pending: pendingCandidates,
     published: publishedWorkshops,
     rejected: rejectedCandidates
@@ -229,7 +231,7 @@ export function AdminRecordingCandidatesPage() {
   }
 
   function resetPages() {
-    setPageByTab({ missing: 1, pending: 1, published: 1, rejected: 1 });
+    setPageByTab({ 'add-link': 1, pending: 1, published: 1, rejected: 1 });
   }
 
   function changeTab(tab: RecordingTab) {
@@ -271,7 +273,7 @@ export function AdminRecordingCandidatesPage() {
     }
 
     try {
-      await updateRecordingMutation.mutateAsync({
+      await createManualCandidateMutation.mutateAsync({
         body: {
           youtubeVideoUrl: youtubeUrl || null,
           zoomRecordingPassword: recordingEditForm.passcode.trim() || null,
@@ -281,9 +283,11 @@ export function AdminRecordingCandidatesPage() {
       });
       await refetchRecordingData();
       setRecordingEditForm(null);
-      setActionMessage('Recording link updated.');
+      setActiveTab('pending');
+      setPageByTab((current) => ({ ...current, pending: 1 }));
+      setActionMessage('Recording link saved for review.');
     } catch (error) {
-      setActionMessage(readableError(error, 'Recording link could not be updated.'));
+      setActionMessage(readableError(error, 'Recording link could not be saved for review.'));
     }
   }
 
@@ -351,11 +355,11 @@ export function AdminRecordingCandidatesPage() {
           />
         </label>
         <div className="admin-recording-edit-form__actions">
-          <button className="admin-recording-action admin-recording-action--primary" disabled={updateRecordingMutation.isPending} onClick={() => void saveRecordingLinks()} type="button">
-            {updateRecordingMutation.isPending ? <Loader2 className="admin-spin" size={14} /> : <Save size={14} />}
-            Save link
+          <button className="admin-recording-action admin-recording-action--primary" disabled={createManualCandidateMutation.isPending} onClick={() => void saveRecordingLinks()} type="button">
+            {createManualCandidateMutation.isPending ? <Loader2 className="admin-spin" size={14} /> : <Save size={14} />}
+            Save for review
           </button>
-          <button className="admin-recording-action" disabled={updateRecordingMutation.isPending} onClick={cancelEditingRecording} type="button">
+          <button className="admin-recording-action" disabled={createManualCandidateMutation.isPending} onClick={cancelEditingRecording} type="button">
             Cancel
           </button>
         </div>
@@ -385,16 +389,21 @@ export function AdminRecordingCandidatesPage() {
         <div>
           <span className="section-eyebrow">RECORDING OPERATIONS</span>
           <h1>Recordings</h1>
-          <p>Review Zoom candidates, publish approved links, and find completed workshops still missing recordings.</p>
+          <p>Add recording links, review completed session videos, and publish only the approved recordings students should see.</p>
         </div>
         <div className="admin-recording-hero__meta">
+          <StatusBadge>{`${addLinkWorkshops.length} need links`}</StatusBadge>
           <StatusBadge>{`${pendingCandidates.length} pending`}</StatusBadge>
           <StatusBadge>{`${publishedWorkshops.length} published`}</StatusBadge>
-          <StatusBadge>{`${missingWorkshops.length} missing`}</StatusBadge>
         </div>
       </header>
 
       <section className="admin-recording-kpis" aria-label="Recording summary">
+        <article>
+          <AlertTriangle size={18} />
+          <span>Add Link</span>
+          <strong>{addLinkWorkshops.length}</strong>
+        </article>
         <article>
           <Clock3 size={18} />
           <span>Pending review</span>
@@ -406,13 +415,8 @@ export function AdminRecordingCandidatesPage() {
           <strong>{publishedWorkshops.length}</strong>
         </article>
         <article>
-          <AlertTriangle size={18} />
-          <span>Missing recordings</span>
-          <strong>{missingWorkshops.length}</strong>
-        </article>
-        <article>
           <XCircle size={18} />
-          <span>Rejected candidates</span>
+          <span>Rejected</span>
           <strong>{rejectedCount}</strong>
         </article>
       </section>
@@ -470,14 +474,14 @@ export function AdminRecordingCandidatesPage() {
       </section>
 
       <nav className="admin-recording-tabs" aria-label="Recording workspace tabs">
+        <button className={activeTab === 'add-link' ? 'admin-recording-tab admin-recording-tab--active' : 'admin-recording-tab'} onClick={() => changeTab('add-link')} type="button">
+          Add Link
+        </button>
         <button className={activeTab === 'pending' ? 'admin-recording-tab admin-recording-tab--active' : 'admin-recording-tab'} onClick={() => changeTab('pending')} type="button">
           Pending Review
         </button>
         <button className={activeTab === 'published' ? 'admin-recording-tab admin-recording-tab--active' : 'admin-recording-tab'} onClick={() => changeTab('published')} type="button">
           Published
-        </button>
-        <button className={activeTab === 'missing' ? 'admin-recording-tab admin-recording-tab--active' : 'admin-recording-tab'} onClick={() => changeTab('missing')} type="button">
-          Missing
         </button>
         <button className={activeTab === 'rejected' ? 'admin-recording-tab admin-recording-tab--active' : 'admin-recording-tab'} onClick={() => changeTab('rejected')} type="button">
           Rejected
@@ -490,8 +494,8 @@ export function AdminRecordingCandidatesPage() {
         <section className="admin-recording-panel">
           <div className="admin-recording-panel__header">
             <div>
-              <h2>Zoom candidates awaiting review</h2>
-              <p>Each candidate is admin-only until you publish it to the workshop recording URL.</p>
+              <h2>Recording links awaiting review</h2>
+              <p>Manual links and fetched Zoom MP4 parts stay admin-only until Publish.</p>
             </div>
           </div>
           {pendingCandidates.length > 0 ? (
@@ -577,17 +581,12 @@ export function AdminRecordingCandidatesPage() {
                       {workshop.zoomRecordingPassword ? <span>Passcode saved</span> : null}
                       <span>{visibilityText(workshop)}</span>
                     </div>
-                    {renderRecordingEditForm(workshop)}
                   </div>
                   <div className="admin-recording-row__actions">
                     <a className="admin-recording-action admin-recording-action--primary" href={recordingUrlFor(workshop)} rel="noreferrer" target="_blank">
                       <ExternalLink size={14} />
                       Open
                     </a>
-                    <button className="admin-recording-action" onClick={() => startEditingRecording(workshop)} type="button">
-                      <Edit3 size={14} />
-                      Edit link
-                    </button>
                   </div>
                 </article>
               ))}
@@ -598,17 +597,17 @@ export function AdminRecordingCandidatesPage() {
         </section>
       ) : null}
 
-      {activeTab === 'missing' ? (
+      {activeTab === 'add-link' ? (
         <section className="admin-recording-panel">
           <div className="admin-recording-panel__header">
             <div>
-              <h2>Completed workshops missing recordings</h2>
-              <p>Fetch Zoom recordings when a Zoom ID exists, then review and publish the candidate above.</p>
+              <h2>Add recording links</h2>
+              <p>Completed workshops land here until a Zoom MP4 or manual link is saved for review.</p>
             </div>
           </div>
-          {missingWorkshops.length > 0 ? (
+          {addLinkWorkshops.length > 0 ? (
             <div className="admin-recording-list">
-              {paginateItems(missingWorkshops, activePage).map((workshop) => {
+              {paginateItems(addLinkWorkshops, activePage).map((workshop) => {
                 const relatedCandidates = candidates.filter((candidate) => candidate.workshopId === workshop.workshopId);
                 const hasDraftCandidate = relatedCandidates.some((candidate) => candidate.status === 'draft');
                 return (
@@ -619,7 +618,7 @@ export function AdminRecordingCandidatesPage() {
                     <div className="admin-recording-row__main">
                       <div className="admin-recording-row__title">
                         <strong>{workshop.title}</strong>
-                        <StatusBadge>{hasDraftCandidate ? 'Candidate pending' : 'No published link'}</StatusBadge>
+                        <StatusBadge>{hasDraftCandidate ? 'Pending review' : 'Needs link'}</StatusBadge>
                       </div>
                       <p>{[programLabelFor(programs, workshop.programKey), formatDate(workshop.date), workshop.time, workshop.cohortNames.slice(0, 2).join(', ')].filter(Boolean).join(' · ')}</p>
                       <div className="admin-recording-row__meta">

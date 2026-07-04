@@ -9,7 +9,6 @@ import {
   AdminWorkshop,
   AdminWorkshopStatus,
   useCancelAdminWorkshop,
-  useFetchAdminWorkshopRecordings,
   useAdminWorkshops,
   useMarkAdminWorkshopCompleted,
   useRescheduleAdminWorkshop,
@@ -17,7 +16,7 @@ import {
   useUpdateAdminWorkshop
 } from '../features/admin/useAdminWorkshops';
 
-type WorkshopTab = 'upcoming' | 'needs-completion' | 'completed' | 'cancelled';
+type WorkshopTab = 'upcoming' | 'needs-completion' | 'cancelled';
 
 type WorkshopForm = {
   agenda: string;
@@ -185,7 +184,6 @@ export function AdminWorkshopsPage() {
   const saveWorkshopMutation = useSaveAdminWorkshop();
   const updateWorkshopMutation = useUpdateAdminWorkshop();
   const rescheduleWorkshopMutation = useRescheduleAdminWorkshop();
-  const fetchRecordingsMutation = useFetchAdminWorkshopRecordings();
   const markCompletedMutation = useMarkAdminWorkshopCompleted();
   const cancelWorkshopMutation = useCancelAdminWorkshop();
   const [form, setForm] = useState<WorkshopForm>(emptyWorkshopForm);
@@ -224,17 +222,14 @@ export function AdminWorkshopsPage() {
   }, [cohortSearch, cohorts, form.cohortNames]);
 
   const now = Date.now();
-  const completedWorkshops = useMemo(() => workshops.filter(isCompleted), [workshops]);
   const cancelledWorkshops = useMemo(() => workshops.filter(isArchived), [workshops]);
   const upcomingWorkshops = useMemo(() => workshops.filter((item) => isFutureScheduled(item, now)), [now, workshops]);
   const pastWorkshops = useMemo(() => workshops.filter((item) => isPastPendingCompletion(item, now)), [now, workshops]);
-  const visibleWorkshops =
-    activeTab === 'completed' ? completedWorkshops : activeTab === 'needs-completion' ? pastWorkshops : activeTab === 'cancelled' ? cancelledWorkshops : upcomingWorkshops;
+  const visibleWorkshops = activeTab === 'needs-completion' ? pastWorkshops : activeTab === 'cancelled' ? cancelledWorkshops : upcomingWorkshops;
   const total = workshopsQuery.data?.total ?? workshops.length;
   const pendingWithLink = useMemo(() => pastWorkshops.filter((item) => Boolean(item.joinUrl)).length, [pastWorkshops]);
   const upcomingCount = upcomingWorkshops.length;
   const pastCount = pastWorkshops.length;
-  const completedCount = completedWorkshops.length;
   const cancelledCount = cancelledWorkshops.length;
   const workshopTopicOptions = useMemo(() => uniqueTitles(savedWorkshopTopics), [savedWorkshopTopics]);
   const selectedTopicValue = customTitleMode || (form.title && !workshopTopicOptions.includes(form.title)) ? customWorkshopTopicValue : form.title;
@@ -377,8 +372,7 @@ export function AdminWorkshopsPage() {
     setActionMessage(null);
     try {
       await markCompletedMutation.mutateAsync(item.id);
-      setActiveTab('completed');
-      setActionMessage('Workshop marked completed.');
+      setActionMessage('Workshop marked completed and moved to Recordings > Add Link.');
     } catch (error) {
       setActionMessage(readableError(error, 'Workshop could not be marked completed.'));
     }
@@ -421,21 +415,6 @@ export function AdminWorkshopsPage() {
     setIsAddingTopic(true);
     setTopicDrafts((drafts) => [createTopicDraft(), ...drafts]);
     window.setTimeout(() => setIsAddingTopic(false), 650);
-  }
-
-  async function fetchZoomRecordings(workshop: AdminWorkshop) {
-    if (!workshop) {
-      setActionMessage('Select a completed workshop before fetching recordings.');
-      return;
-    }
-    setActionMessage(null);
-    try {
-      const result = await fetchRecordingsMutation.mutateAsync(workshop.id);
-      const duplicateText = result.duplicateCount ? ` ${result.duplicateCount} duplicate${result.duplicateCount === 1 ? '' : 's'} skipped.` : '';
-      setActionMessage(`Fetched ${result.count ?? 0} Zoom recording candidate${result.count === 1 ? '' : 's'} for ${workshop.title}.${duplicateText}`);
-    } catch (error) {
-      setActionMessage(readableError(error, 'Zoom recordings could not be fetched.'));
-    }
   }
 
   if (workshopsQuery.isLoading || cohortsPageOneQuery.isLoading || cohortsPageTwoQuery.isLoading || cohortsPageThreeQuery.isLoading) {
@@ -493,11 +472,6 @@ export function AdminWorkshopsPage() {
           <Clock3 size={18} />
           <span>Needs Completion</span>
           <strong>{pastCount}</strong>
-        </article>
-        <article className="metric-tile">
-          <CheckCircle2 size={18} />
-          <span>Completed</span>
-          <strong>{completedCount}</strong>
         </article>
         <article className="metric-tile">
           <X size={18} />
@@ -644,13 +618,9 @@ export function AdminWorkshopsPage() {
                   <Clock3 size={14} />
                   Needs Completion
                 </button>
-                <button className={activeTab === 'completed' ? 'workshop-tab workshop-tab--active' : 'workshop-tab'} onClick={() => setActiveTab('completed')} type="button">
-                  <Clapperboard size={14} />
-                  Completed
-                </button>
                 <button className={activeTab === 'cancelled' ? 'workshop-tab workshop-tab--active' : 'workshop-tab'} onClick={() => setActiveTab('cancelled')} type="button">
                   <X size={14} />
-                  Cancelled
+                  Cancelled / Archived
                 </button>
               </div>
             </div>
@@ -661,9 +631,7 @@ export function AdminWorkshopsPage() {
                   const isAdminCompleted = isCompleted(item);
                   const isPast = activeTab === 'needs-completion';
                   const isCancelled = activeTab === 'cancelled';
-                  const recordingUrl = item.youtubeVideoUrl ?? item.zoomRecordingUrl;
                   const isMarkingThisWorkshop = markCompletedMutation.isPending && markCompletedMutation.variables === item.id;
-                  const isFetchingThisWorkshop = fetchRecordingsMutation.isPending && fetchRecordingsMutation.variables === item.id;
 
                   return (
                     <article className={isAdminCompleted ? 'workshop-meeting-row workshop-meeting-row--completed' : isCancelled ? 'workshop-meeting-row workshop-meeting-row--archived' : 'workshop-meeting-row'} key={item.id}>
@@ -686,14 +654,6 @@ export function AdminWorkshopsPage() {
                             )}
                             <span>Zoom ID: {item.zoomId ?? 'Not set'}</span>
                           </p>
-                          {isAdminCompleted && recordingUrl ? (
-                            <p>
-                              <a className="workshop-watch-link" href={recordingUrl} rel="noreferrer" target="_blank">
-                                <Video size={13} />
-                                {item.youtubeVideoUrl ? 'Watch on YouTube' : 'Watch Recording'}
-                              </a>
-                            </p>
-                          ) : null}
                         </div>
                       </div>
                       <div className="workshop-meeting-actions">
@@ -717,18 +677,6 @@ export function AdminWorkshopsPage() {
                               <X size={14} />
                               Cancel
                             </button>
-                          </>
-                        ) : null}
-                        {isAdminCompleted ? (
-                          <>
-                            <button className="workshop-soft-action workshop-action-button" disabled={fetchRecordingsMutation.isPending} onClick={() => void fetchZoomRecordings(item)} type="button">
-                              {isFetchingThisWorkshop ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
-                              {isFetchingThisWorkshop ? 'Fetching...' : 'Fetch Recordings'}
-                            </button>
-                            <Link className="workshop-neutral-action" to="/admin/recording-candidates">
-                              <Clapperboard size={14} />
-                              Open Recordings
-                            </Link>
                           </>
                         ) : null}
                         {isCancelled ? <span className="workshop-archived-note">No active actions for archived meetings.</span> : null}

@@ -34,6 +34,7 @@ export type PaginatedResponse<TItem> = {
 };
 
 export type StudentAnnouncementsQuery = {
+  activeOnly?: boolean;
   enabled?: boolean;
   limit?: number;
   page?: number;
@@ -47,6 +48,7 @@ export function useStudentAnnouncements(query: StudentAnnouncementsQuery) {
   const limit = query.limit ?? 25;
   const priority = query.priority ?? 'all';
   const search = query.search?.trim();
+  const activeOnly = query.activeOnly === true;
 
   return useQuery({
     enabled: Boolean(accessToken) && query.enabled !== false,
@@ -54,13 +56,14 @@ export function useStudentAnnouncements(query: StudentAnnouncementsQuery) {
       apiGet<PaginatedResponse<StudentAnnouncement>>('/students/me/announcements', {
         accessToken: accessToken ?? undefined,
         query: {
+          activeOnly,
           limit,
           page,
           priority,
           search
         }
       }),
-    queryKey: ['student-announcements', accessToken, page, limit, priority, search],
+    queryKey: ['student-announcements', accessToken, page, limit, priority, search, activeOnly],
     staleTime: 60_000
   });
 }
