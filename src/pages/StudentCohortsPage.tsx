@@ -1,4 +1,4 @@
-import { Award, BookOpen, CalendarDays, ExternalLink, FileCheck2, GraduationCap, Library, PlayCircle } from 'lucide-react';
+import { Award, BookOpen, CalendarDays, GraduationCap, Library, MessageCircle, PlayCircle } from 'lucide-react';
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
@@ -7,7 +7,6 @@ import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
 import { useStudentCertificates } from '../features/student/useStudentCertificates';
 import { StudentCohort, useStudentCohorts } from '../features/student/useStudentCohorts';
-import { useStudentProjects } from '../features/student/useStudentProjects';
 import { useStudentRecordings } from '../features/student/useStudentRecordings';
 import { useStudentResources } from '../features/student/useStudentResources';
 import { StudentScheduleItem, useStudentSchedule } from '../features/student/useStudentSchedule';
@@ -106,9 +105,16 @@ function programLink(path: string, cohort: StudentCohort) {
   return programKey && path === '/student/resources' ? `${path}?programKey=${encodeURIComponent(programKey)}` : path;
 }
 
+function normalizeExternalLink(value: string | undefined) {
+  const link = value?.trim();
+  if (!link) return '';
+  if (/^https?:\/\//i.test(link)) return link;
+  if (/^(chat\.whatsapp\.com|wa\.me)\//i.test(link)) return `https://${link}`;
+  return link;
+}
+
 type ProgramStats = {
   certificates: number;
-  projects: number;
   recordings: number;
   resources: number;
   sessions: number;
@@ -118,6 +124,8 @@ type ProgramStats = {
 function ProgramCard({ cohort, stats }: { cohort: StudentCohort; stats: ProgramStats }) {
   const programTitle = displayProgramName(cohort);
   const programKey = programKeyFor(cohort);
+  const whatsappLink = normalizeExternalLink(cohort.whatsappLink);
+  const whatsappLabel = cohort.whatsappGroupName ? `WhatsApp Group: ${cohort.whatsappGroupName}` : 'WhatsApp Group';
 
   return (
     <article className="program-card">
@@ -155,10 +163,6 @@ function ProgramCard({ cohort, stats }: { cohort: StudentCohort; stats: ProgramS
           <b>{stats.resources}</b>
           Resources
         </span>
-        <span>
-          <b>{stats.projects}</b>
-          Projects
-        </span>
       </div>
 
       <div className="program-card__meta">
@@ -189,18 +193,20 @@ function ProgramCard({ cohort, stats }: { cohort: StudentCohort; stats: ProgramS
           <Library size={16} />
           Resources
         </Link>
-        <Link className="student-action" to="/student/projects">
-          <FileCheck2 size={16} />
-          Projects
-        </Link>
+        {whatsappLink ? (
+          <a className="student-action" href={whatsappLink} rel="noreferrer" target="_blank" title={whatsappLabel}>
+            <MessageCircle size={16} />
+            WhatsApp Group
+          </a>
+        ) : (
+          <span className="student-action student-action--disabled" title="WhatsApp group link is not available yet.">
+            <MessageCircle size={16} />
+            WhatsApp Group
+          </span>
+        )}
       </div>
 
-      {cohort.whatsappLink ? (
-        <a className="action-button program-card__link" href={cohort.whatsappLink} rel="noreferrer" target="_blank">
-          <ExternalLink size={16} />
-          Join WhatsApp group
-        </a>
-      ) : cohort.whatsappGroupName ? (
+      {cohort.whatsappGroupName && !whatsappLink ? (
         <span className="program-card__note">WhatsApp group: {cohort.whatsappGroupName}</span>
       ) : null}
 
@@ -221,7 +227,6 @@ export function StudentCohortsPage() {
   const scheduleQuery = useStudentSchedule({ accessType: 'all', limit: 500, page: 1, status: 'all' });
   const recordingsQuery = useStudentRecordings({ accessType: 'all', limit: 500, page: 1 });
   const resourcesQuery = useStudentResources({ accessType: 'all', locked: 'all', limit: 500, page: 1 });
-  const projectsQuery = useStudentProjects({ limit: 500, page: 1 });
   const certificatesQuery = useStudentCertificates({ limit: 500, page: 1 });
   const data = cohortsQuery.data;
   const totalPages = data?.totalPages ?? 1;
@@ -231,7 +236,6 @@ export function StudentCohortsPage() {
     const schedule = scheduleQuery.data?.items ?? [];
     const recordings = recordingsQuery.data?.items ?? [];
     const resources = resourcesQuery.data?.items ?? [];
-    const projects = projectsQuery.data?.items ?? [];
     const certificates = certificatesQuery.data?.items ?? [];
 
     return new Map(
@@ -239,7 +243,6 @@ export function StudentCohortsPage() {
         const cohortSchedule = schedule.filter((item) => itemMatchesProgram(item, cohort));
         const stats: ProgramStats = {
           certificates: certificates.filter((item) => certificateMatchesProgram(item, cohort)).length,
-          projects: projects.filter((item) => itemMatchesProgram(item, cohort)).length,
           recordings: recordings.filter((item) => itemMatchesProgram(item, cohort)).length,
           resources: resources.filter((item) => itemMatchesProgram(item, cohort)).length,
           sessions: cohortSchedule.length,
@@ -248,7 +251,7 @@ export function StudentCohortsPage() {
         return [cohort.id, stats];
       })
     );
-  }, [certificatesQuery.data?.items, cohorts, projectsQuery.data?.items, recordingsQuery.data?.items, resourcesQuery.data?.items, scheduleQuery.data?.items]);
+  }, [certificatesQuery.data?.items, cohorts, recordingsQuery.data?.items, resourcesQuery.data?.items, scheduleQuery.data?.items]);
 
   const summary = useMemo(
     () => ({
@@ -312,14 +315,14 @@ export function StudentCohortsPage() {
       {data && cohorts.length > 0 ? (
         <section className="program-card-grid" aria-label="Enrolled programs and cohorts">
           {cohorts.map((cohort) => (
-            <ProgramCard cohort={cohort} key={cohort.id} stats={programStats.get(cohort.id) ?? { certificates: 0, projects: 0, recordings: 0, resources: 0, sessions: 0 }} />
+            <ProgramCard cohort={cohort} key={cohort.id} stats={programStats.get(cohort.id) ?? { certificates: 0, recordings: 0, resources: 0, sessions: 0 }} />
           ))}
         </section>
       ) : (
         <EmptyState />
       )}
 
-      {scheduleQuery.isError || recordingsQuery.isError || resourcesQuery.isError || projectsQuery.isError || certificatesQuery.isError ? (
+      {scheduleQuery.isError || recordingsQuery.isError || resourcesQuery.isError || certificatesQuery.isError ? (
         <StateBlock title="Partial program data">
           Your enrolled programs loaded, but one or more linked module counts could not refresh. Open the module directly if a count looks lower than expected.
         </StateBlock>

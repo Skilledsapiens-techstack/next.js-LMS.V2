@@ -10,6 +10,7 @@ export type FeatureControl = {
   id: string;
   isCore: boolean;
   moduleId: string;
+  settings?: Record<string, unknown> | null;
   sortOrder: number;
   status: FeatureControlStatus;
   studentLabel: string;
@@ -20,6 +21,7 @@ export type FeatureControl = {
 };
 
 export type FeatureControlUpdatePayload = {
+  settings?: Record<string, unknown> | null;
   status: FeatureControlStatus;
   upcomingMessage?: string | null;
 };
@@ -35,7 +37,8 @@ export const defaultFeatureMessages: Record<string, string> = {
   recordings: 'Recordings will be available after your sessions are published.',
   resources: 'Resources will be available after onboarding.',
   schedule: 'Schedule will be visible once sessions are planned.',
-  support: 'Support will be available soon.'
+  support: 'Support will be available soon.',
+  'whatsapp-widget': 'Contact Program Coordinator'
 };
 
 export function getFeatureMessage(feature?: Pick<FeatureControl, 'moduleId' | 'studentLabel' | 'upcomingMessage'> | null) {

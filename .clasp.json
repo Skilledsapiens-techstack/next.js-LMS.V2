@@ -1,0 +1,16 @@
+{
+  "scriptId": "1K7hCVoDfKVKRL5NbDXzLv4YhNZHfeoK2fm9dyZVMje7TqC4NRuC2GbMw",
+  "rootDir": "scripts/google-slides-certificate-generator",
+  "scriptExtensions": [
+    ".js",
+    ".gs"
+  ],
+  "htmlExtensions": [
+    ".html"
+  ],
+  "jsonExtensions": [
+    ".json"
+  ],
+  "filePushOrder": [],
+  "skipSubdirectories": false
+}

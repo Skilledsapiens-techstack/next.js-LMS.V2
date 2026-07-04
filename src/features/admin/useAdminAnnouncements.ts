@@ -4,7 +4,7 @@ import { apiGet, apiPatch, apiPost } from '../../lib/supabaseApi';
 import { PaginatedResponse } from '../student/useStudentAnnouncements';
 
 export type AdminAnnouncementStatus = 'active' | 'inactive';
-export type AdminAnnouncementPriority = 'normal' | 'important' | 'urgent';
+export type AdminAnnouncementPriority = 'normal' | 'urgent';
 export type AdminAnnouncementAudience = 'all' | 'program' | 'cohort';
 
 export type AdminAnnouncement = {

@@ -769,8 +769,13 @@ export function AdminCertificatesPage() {
               ) : null}
             </div>
             {issueLeadershipMutation.isError ? <p className="admin-submission-message admin-submission-message--error">{issueLeadershipMutation.error.message}</p> : null}
-            <button className="button-primary certificate-form__submit" disabled={issueLeadershipMutation.isPending || !selectedProgramKey || !selectedCohortName || selectedStudentIds.size === 0 || modulesFromText(modulesCovered).length === 0} type="submit">
-              {issueLeadershipMutation.isPending ? 'Issuing...' : `Issue ${selectedStudentIds.size || ''} Selected Certificate${selectedStudentIds.size === 1 ? '' : 's'} →`}
+            <button
+              className="student-action student-action--primary certificate-form__submit certificate-form__submit--issue"
+              disabled={issueLeadershipMutation.isPending || !selectedProgramKey || !selectedCohortName || selectedStudentIds.size === 0 || modulesFromText(modulesCovered).length === 0}
+              type="submit"
+            >
+              <FileCheck2 size={18} />
+              {issueLeadershipMutation.isPending ? 'Issuing...' : 'Issue selected certficates'}
             </button>
           </div>
           </form>

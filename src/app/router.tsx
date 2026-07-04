@@ -1,5 +1,5 @@
 import { lazy, ReactNode, Suspense } from 'react';
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter, isRouteErrorResponse, Navigate, useRouteError } from 'react-router-dom';
 import { ProtectedPortalRoute } from '../auth/ProtectedPortalRoute';
 import { AppShell } from '../layouts/AppShell';
 import { LoadingState } from '../components/ScreenStates';
@@ -64,10 +64,38 @@ function StudentFeaturePage({ children, moduleId }: { children: ReactNode; modul
   return <StudentFeatureGate moduleId={moduleId}>{children}</StudentFeatureGate>;
 }
 
+function RouteErrorFallback() {
+  const error = useRouteError();
+  const message = isRouteErrorResponse(error)
+    ? error.statusText
+    : error instanceof Error
+      ? error.message
+      : 'This page could not be loaded.';
+  const isChunkLoadError = /dynamically imported module|loading chunk|failed to fetch/i.test(message);
+
+  return (
+    <main className="page-frame route-error-page">
+      <section className="route-error-card">
+        <span className="section-eyebrow">Portal Refresh</span>
+        <h1>{isChunkLoadError ? 'Page update available' : 'Page could not load'}</h1>
+        <p>
+          {isChunkLoadError
+            ? 'A newer portal version is available. Refresh this page to load the latest files.'
+            : 'Something interrupted this page load. Refresh the page and try again.'}
+        </p>
+        <button className="announcement-primary-button" onClick={() => window.location.reload()} type="button">
+          Refresh page
+        </button>
+      </section>
+    </main>
+  );
+}
+
 export const router = createBrowserRouter([
   {
     path: '/',
-    element: <Navigate to="/student" replace />
+    element: <Navigate to="/student" replace />,
+    errorElement: <RouteErrorFallback />
   },
   {
     path: '/login',
@@ -75,7 +103,8 @@ export const router = createBrowserRouter([
       <PageLoader>
         <LoginPage />
       </PageLoader>
-    )
+    ),
+    errorElement: <RouteErrorFallback />
   },
   {
     path: '/unauthorized',
@@ -83,11 +112,13 @@ export const router = createBrowserRouter([
       <PageLoader>
         <UnauthorizedPage />
       </PageLoader>
-    )
+    ),
+    errorElement: <RouteErrorFallback />
   },
   {
     path: '/student',
     element: <ProtectedPortalRoute portal="student" />,
+    errorElement: <RouteErrorFallback />,
     children: [
       {
         element: <AppShell navItems={studentNavItems} portal="student" />,
@@ -231,6 +262,7 @@ export const router = createBrowserRouter([
   {
     path: '/admin',
     element: <ProtectedPortalRoute portal="admin" />,
+    errorElement: <RouteErrorFallback />,
     children: [
       {
         element: <AppShell navItems={adminNavItems} portal="admin" />,

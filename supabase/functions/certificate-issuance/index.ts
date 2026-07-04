@@ -15,6 +15,8 @@ const TEMP_BUCKET = 'temporary-certificates';
 const PDF_TTL_HOURS = 24;
 const REGENERATION_COOLDOWN_MINUTES = 15;
 const VERIFY_BASE_URL = Deno.env.get('CERTIFICATE_VERIFY_BASE_URL') ?? 'https://skilledsapiens.com/verify-your-certificate/';
+const SLIDES_WEBAPP_URL = Deno.env.get('CERTIFICATE_SLIDES_WEBAPP_URL') ?? '';
+const SLIDES_SECRET = Deno.env.get('CERTIFICATE_SLIDES_SECRET') ?? '';
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -84,6 +86,15 @@ function bytesToBase64(bytes: Uint8Array) {
   return btoa(binary);
 }
 
+function base64ToBytes(value: string) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
 function verificationUrl(certificate: CertificateRow) {
   const existing = text(certificate.verification_url);
   if (existing.startsWith('http')) return existing;
@@ -108,10 +119,100 @@ function wrapText(value: string, maxChars: number) {
   return lines.slice(0, 3);
 }
 
+function formatList(value: unknown) {
+  if (Array.isArray(value)) return value.map((item) => text(item)).filter(Boolean).join(', ');
+  return text(value);
+}
+
+function certificateFileName(certificate: CertificateRow) {
+  return `${text(certificate.certificate_id, 'certificate')}.pdf`;
+}
+
+function slidesPlaceholderMap(certificate: CertificateRow) {
+  const verify = verificationUrl(certificate);
+  const program = text(certificate.program_name, text(certificate.program_key));
+  const cohort = text(certificate.cohort_name, text(certificate.cohort_id));
+  const modules = formatList(certificate.modules_covered);
+  const projectStart = formatDate(certificate.project_start_date);
+  const projectEnd = formatDate(certificate.project_end_date);
+  const projectDateRange = [projectStart, projectEnd].filter(Boolean).join(' to ');
+
+  return {
+    certificate_id: text(certificate.certificate_id),
+    certificate_type: certificateTypeToTemplateType(certificate.certificate_type),
+    cohort,
+    cohort_name: cohort,
+    duration: text(certificate.duration_label),
+    duration_label: text(certificate.duration_label),
+    issue_date: formatDate(certificate.issue_date),
+    module_list: modules,
+    modules,
+    modules_covered: modules,
+    portal_url: 'https://dev.skilledsapiens.com/login',
+    program,
+    program_key: text(certificate.program_key),
+    program_name: program,
+    project_date_range: projectDateRange,
+    project_end_date: projectEnd,
+    project_role: text(certificate.project_role, text(certificate.role_name)),
+    project_start_date: projectStart,
+    project_title: text(certificate.project_title),
+    qr_code: verify,
+    role_name: text(certificate.role_name, text(certificate.project_role)),
+    student_email: text(certificate.student_email),
+    student_name: text(certificate.student_name, 'Student'),
+    verification_url: verify
+  };
+}
+
+async function createSlidesPdf(certificate: CertificateRow) {
+  if (!SLIDES_WEBAPP_URL) return null;
+  if (!SLIDES_SECRET) throw new Error('CERTIFICATE_SLIDES_SECRET is not configured.');
+
+  const templateType = certificateTypeToTemplateType(certificate.certificate_type);
+  const response = await fetch(SLIDES_WEBAPP_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      secret: SLIDES_SECRET,
+      templateType,
+      certificateId: text(certificate.certificate_id),
+      fileName: certificateFileName(certificate),
+      placeholders: slidesPlaceholderMap(certificate)
+    })
+  });
+
+  const raw = await response.text();
+  let result: Record<string, unknown>;
+  try {
+    result = JSON.parse(raw);
+  } catch (_error) {
+    throw new Error(`Google Slides certificate generator returned an invalid response: ${raw.slice(0, 240)}`);
+  }
+
+  if (!response.ok || result.ok === false) {
+    throw new Error(text(result.error, `Google Slides certificate generator failed with status ${response.status}.`));
+  }
+
+  const pdfBase64 = text(result.pdfBase64);
+  if (!pdfBase64) throw new Error('Google Slides certificate generator did not return a PDF.');
+
+  return {
+    pdfBytes: base64ToBytes(pdfBase64),
+    templateUrl: text(result.templateUrl, `google-slides:${templateType}`)
+  };
+}
+
 function drawCenteredText(page: any, value: string, y: number, size: number, font: any, color = rgb(0, 0, 0), maxWidth = 520) {
   const textWidth = font.widthOfTextAtSize(value, size);
   const x = Math.max(20, (page.getWidth() - Math.min(textWidth, maxWidth)) / 2);
   page.drawText(value, { x, y, size, font, color, maxWidth });
+}
+
+function drawCenteredInBox(page: any, value: string, x: number, y: number, width: number, size: number, font: any, color = rgb(0, 0, 0)) {
+  const textWidth = font.widthOfTextAtSize(value, size);
+  const startX = x + Math.max(0, (width - textWidth) / 2);
+  page.drawText(value, { x: startX, y, size, font, color, maxWidth: width });
 }
 
 function cover(page: any, x: number, y: number, width: number, height: number) {
@@ -130,31 +231,31 @@ async function createPdf(templateBytes: Uint8Array, certificate: CertificateRow)
   const qrImage = await pdf.embedPng(qrDataUrl.split(',')[1]);
 
   if (text(certificate.certificate_type) === 'live_project') {
-    cover(page, 310, 217, 210, 33);
-    drawCenteredText(page, text(certificate.student_name), 229, 16, bold, black, 220);
+    cover(page, 300, 214, 260, 42);
+    drawCenteredInBox(page, text(certificate.student_name), 300, 229, 260, 16, bold, black);
 
-    cover(page, 500, 166, 180, 40);
-    page.drawText(`${text(certificate.project_role, 'Project')} Intern`, { x: 505, y: 189, size: 8, font: bold, color: black, maxWidth: 165 });
+    cover(page, 468, 180, 205, 26);
+    page.drawText(`${text(certificate.project_role, 'Project')} Intern`, { x: 505, y: 189, size: 8, font: bold, color: black, maxWidth: 150 });
 
-    cover(page, 280, 158, 300, 28);
-    drawCenteredText(page, `${formatDate(certificate.project_start_date)} to ${formatDate(certificate.project_end_date)}`, 168, 10, regular, black, 280);
+    cover(page, 300, 154, 250, 30);
+    drawCenteredInBox(page, `${formatDate(certificate.project_start_date)} to ${formatDate(certificate.project_end_date)}`, 300, 168, 250, 10, regular, black);
 
-    cover(page, 450, 45, 172, 42);
-    page.drawText(text(certificate.certificate_id), { x: 500, y: 66, size: 7, font: bold, color: black, maxWidth: 118 });
-    page.drawText(formatDate(certificate.issue_date), { x: 500, y: 52, size: 8, font: bold, color: black, maxWidth: 118 });
+    cover(page, 482, 40, 142, 48);
+    page.drawText(text(certificate.certificate_id), { x: 502, y: 66, size: 7, font: bold, color: black, maxWidth: 118 });
+    page.drawText(formatDate(certificate.issue_date), { x: 502, y: 52, size: 8, font: bold, color: black, maxWidth: 118 });
     page.drawImage(qrImage, { x: 632, y: 43, width: 45, height: 45 });
   } else {
-    cover(page, 255, 220, 225, 34);
-    drawCenteredText(page, text(certificate.student_name), 232, 14, bold, red, 240);
+    cover(page, 250, 216, 250, 44);
+    drawCenteredInBox(page, text(certificate.student_name), 250, 232, 250, 14, bold, red);
 
-    cover(page, 272, 196, 225, 22);
-    page.drawText(text(certificate.program_name, text(certificate.program_key, 'Leadership Program')), { x: 276, y: 205, size: 6, font: bold, color: black, maxWidth: 200 });
+    cover(page, 268, 194, 250, 24);
+    drawCenteredInBox(page, text(certificate.program_name, text(certificate.program_key, 'Leadership Program')), 268, 205, 250, 6, bold, black);
 
-    cover(page, 210, 140, 320, 46);
+    cover(page, 205, 138, 330, 50);
     const modules = Array.isArray(certificate.modules_covered) ? certificate.modules_covered.map(String).join(', ') : text(certificate.modules_covered);
     wrapText(modules, 72).forEach((line, index) => drawCenteredText(page, line, 166 - index * 10, 8, bold, red, 380));
 
-    cover(page, 124, 32, 132, 30);
+    cover(page, 122, 30, 138, 34);
     page.drawText(text(certificate.certificate_id), { x: 126, y: 51, size: 7, font: bold, color: black, maxWidth: 128 });
     page.drawText(formatDate(certificate.issue_date), { x: 126, y: 37, size: 8, font: bold, color: black, maxWidth: 128 });
     page.drawImage(qrImage, { x: 608, y: 34, width: 36, height: 36 });
@@ -291,28 +392,61 @@ async function generateOne(supabase: ReturnType<typeof createClient>, certificat
         throw error;
       }
     }
-    return { certificate, expiresAt: certificate.pdf_expires_at, signedUrl: signed.signedUrl, status: 'reused' };
+    const reusedCertificate = { ...certificate, generation_status: 'ready', generation_error: null, updated_at: new Date().toISOString() };
+    await supabase.from('certificates').update({
+      generation_error: null,
+      generation_status: 'ready',
+      updated_at: reusedCertificate.updated_at
+    }).eq('id', certificateId);
+    return { certificate: reusedCertificate, expiresAt: certificate.pdf_expires_at, signedUrl: signed.signedUrl, status: 'reused' };
   }
 
   if (options.force && minutesAgo(certificate.pdf_generated_at) < REGENERATION_COOLDOWN_MINUTES) {
+    if (currentPath && currentExpiry.getTime() > Date.now()) {
+      const { data: signed, error: signedError } = await supabase.storage.from(TEMP_BUCKET).createSignedUrl(currentPath, 60 * 60 * 24);
+      if (signedError) throw signedError;
+      const reusedCertificate = { ...certificate, generation_status: 'ready', generation_error: null, updated_at: new Date().toISOString() };
+      await supabase.from('certificates').update({
+        generation_error: null,
+        generation_status: 'ready',
+        updated_at: reusedCertificate.updated_at
+      }).eq('id', certificateId);
+      return { certificate: reusedCertificate, expiresAt: certificate.pdf_expires_at, signedUrl: signed.signedUrl, status: 'reused' };
+    }
     throw new Error(`Please wait ${REGENERATION_COOLDOWN_MINUTES} minutes before regenerating this certificate again.`);
   }
 
   await supabase.from('certificates').update({ generation_status: 'generating', generation_error: null, updated_at: new Date().toISOString() }).eq('id', certificateId);
 
   const templateType = certificateTypeToTemplateType(certificate.certificate_type);
-  const { data: template, error: templateError } = await supabase
-    .from('certificate_templates')
-    .select('*')
-    .eq('template_type', templateType)
-    .eq('is_active', true)
-    .single();
-  if (templateError || !template) throw new Error(`Active ${templateType} template was not found.`);
+  let slidesPdf: Awaited<ReturnType<typeof createSlidesPdf>> = null;
+  let slidesError = '';
+  try {
+    slidesPdf = await createSlidesPdf(certificate);
+  } catch (error) {
+    slidesError = error instanceof Error ? error.message : 'Google Slides certificate generator failed.';
+  }
+  let pdfBytes: Uint8Array;
+  let templateUrl: string;
 
-  const { data: templateFile, error: downloadError } = await supabase.storage.from(text(template.storage_bucket, TEMPLATE_BUCKET)).download(text(template.storage_path));
-  if (downloadError || !templateFile) throw new Error(downloadError?.message ?? 'Template download failed.');
+  if (slidesPdf) {
+    pdfBytes = slidesPdf.pdfBytes;
+    templateUrl = slidesPdf.templateUrl;
+  } else {
+    const { data: template, error: templateError } = await supabase
+      .from('certificate_templates')
+      .select('*')
+      .eq('template_type', templateType)
+      .eq('is_active', true)
+      .single();
+    if (templateError || !template) throw new Error(`Active ${templateType} template was not found.`);
 
-  const pdfBytes = await createPdf(new Uint8Array(await templateFile.arrayBuffer()), certificate);
+    const { data: templateFile, error: downloadError } = await supabase.storage.from(text(template.storage_bucket, TEMPLATE_BUCKET)).download(text(template.storage_path));
+    if (downloadError || !templateFile) throw new Error(downloadError?.message ?? 'Template download failed.');
+
+    pdfBytes = await createPdf(new Uint8Array(await templateFile.arrayBuffer()), certificate);
+    templateUrl = `${text(template.storage_bucket, TEMPLATE_BUCKET)}/${text(template.storage_path)}`;
+  }
   const year = new Date().getFullYear();
   const folder = templateType === 'live_project' ? 'live-project' : 'leadership-program';
   const outputPath = `${folder}/${year}/${text(certificate.certificate_id)}-${Date.now()}.pdf`;
@@ -326,12 +460,12 @@ async function generateOne(supabase: ReturnType<typeof createClient>, certificat
   if (currentPath && currentPath !== outputPath) await supabase.storage.from(TEMP_BUCKET).remove([currentPath]);
 
   const updatePayload = {
-    generation_error: null,
+    generation_error: slidesError ? `Google Slides fallback used: ${slidesError}` : null,
     generation_status: 'ready',
     pdf_expires_at: expiresAt,
     pdf_generated_at: new Date().toISOString(),
     pdf_storage_path: outputPath,
-    template_url: `${text(template.storage_bucket, TEMPLATE_BUCKET)}/${text(template.storage_path)}`,
+    template_url: templateUrl,
     updated_at: new Date().toISOString(),
     verification_url: verificationUrl(certificate)
   };

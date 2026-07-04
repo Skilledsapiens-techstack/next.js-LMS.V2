@@ -414,6 +414,7 @@ type EnrollStudentForm = {
   onboardingMailStatus: 'pending' | 'sent' | 'failed' | 'skipped' | 'dry-run';
   phone: string;
   programNames: string[];
+  sendOnboardingMail: boolean;
   sendInvite: boolean;
   slot: string;
   studentId: string;
@@ -433,6 +434,7 @@ const emptyEnrollStudentForm: EnrollStudentForm = {
   onboardingMailStatus: 'pending',
   phone: '',
   programNames: [],
+  sendOnboardingMail: true,
   sendInvite: true,
   slot: '',
   studentId: '',
@@ -459,6 +461,7 @@ function studentToForm(student: AdminStudent | undefined): EnrollStudentForm {
     onboardingMailStatus: (student.onboardingMailStatus as EnrollStudentForm['onboardingMailStatus'] | undefined) ?? 'pending',
     phone: student.phone ?? '',
     programNames: student.programs && student.programs.length > 0 ? student.programs : student.programName ? student.programName.split(',').map((item) => item.trim()).filter(Boolean) : [],
+    sendOnboardingMail: false,
     sendInvite: false,
     slot: student.slot ?? '',
     studentId: student.studentId ?? '',
@@ -536,6 +539,7 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
     const selectedProgramRecords = programOptions.filter((program) => form.programNames.includes(program.name));
     const payload: AdminStudentWritePayload = {
       active: form.active === 'yes',
+      assignmentMode: mode === 'create' ? 'add' : 'replace',
       altEmail: altEmail || undefined,
       cohortIds: selectedCohorts.map((cohort) => cohort.id),
       cohortNames: form.cohortNames,
@@ -546,6 +550,7 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
       phone: form.phone.trim() || undefined,
       programKeys: selectedProgramRecords.map((program) => program.programKey),
       programNames: form.programNames,
+      sendOnboardingMail: form.sendOnboardingMail,
       sendInvite: form.sendInvite,
       slot: derivedSlot || form.slot.trim() || undefined,
       studentId: form.studentId.trim() || undefined,
@@ -678,7 +683,11 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
             </label>
             <label className="enroll-checkbox enroll-student-form__wide">
               <input checked={form.sendInvite} onChange={(event) => updateForm('sendInvite', event.target.checked)} type="checkbox" />
-              <span>Record password setup invite intent</span>
+              <span>Send portal invite mail</span>
+            </label>
+            <label className="enroll-checkbox enroll-student-form__wide">
+              <input checked={form.sendOnboardingMail} onChange={(event) => updateForm('sendOnboardingMail', event.target.checked)} type="checkbox" />
+              <span>Send cohort onboarding mail</span>
             </label>
             {error ? <div className="form-banner form-banner--error enroll-student-form__wide">{error}</div> : null}
           </div>

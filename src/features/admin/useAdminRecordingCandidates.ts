@@ -14,6 +14,7 @@ export type AdminRecordingCandidate = {
   id: string;
   playUrl?: string;
   recordingEnd?: string;
+  recordingPassword?: string;
   recordingStart?: string;
   recordingType?: string;
   reviewedAt?: string;

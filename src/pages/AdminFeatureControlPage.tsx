@@ -8,6 +8,7 @@ import { FeatureControl, FeatureControlStatus, getFeatureMessage, useAdminFeatur
 type DraftFeature = {
   status: FeatureControlStatus;
   upcomingMessage: string;
+  whatsappNumber: string;
 };
 
 const statusOptions: Array<{ description: string; label: string; value: FeatureControlStatus }> = [
@@ -34,13 +35,27 @@ function statusIcon(status: FeatureControlStatus) {
   return <EyeOff size={16} />;
 }
 
+function isWhatsAppWidget(item: FeatureControl) {
+  return item.moduleId === 'whatsapp-widget';
+}
+
+function getWhatsAppNumber(item: FeatureControl) {
+  const value = item.settings?.whatsapp_number ?? item.settings?.whatsappNumber;
+  return typeof value === 'string' ? value : '';
+}
+
+function normalizeWhatsAppNumber(value: string) {
+  return value.replace(/[^\d]/g, '');
+}
+
 function buildDrafts(items: FeatureControl[]) {
   return Object.fromEntries(
     items.map((item) => [
       item.id,
       {
         status: item.status,
-        upcomingMessage: item.upcomingMessage ?? ''
+        upcomingMessage: item.upcomingMessage ?? '',
+        whatsappNumber: getWhatsAppNumber(item)
       }
     ])
   ) as Record<string, DraftFeature>;
@@ -48,7 +63,8 @@ function buildDrafts(items: FeatureControl[]) {
 
 function isDirty(item: FeatureControl, draft?: DraftFeature) {
   if (!draft) return false;
-  return item.status !== draft.status || (item.upcomingMessage ?? '') !== draft.upcomingMessage.trim();
+  const numberChanged = isWhatsAppWidget(item) && getWhatsAppNumber(item) !== draft.whatsappNumber.trim();
+  return item.status !== draft.status || (item.upcomingMessage ?? '') !== draft.upcomingMessage.trim() || numberChanged;
 }
 
 export function AdminFeatureControlPage() {
@@ -79,7 +95,7 @@ export function AdminFeatureControlPage() {
     setDrafts((current) => ({
       ...current,
       [id]: {
-        ...(current[id] ?? { status: 'show', upcomingMessage: '' }),
+        ...(current[id] ?? { status: 'show', upcomingMessage: '', whatsappNumber: '' }),
         ...patch
       }
     }));
@@ -88,12 +104,28 @@ export function AdminFeatureControlPage() {
   async function saveFeature(item: FeatureControl) {
     const draft = drafts[item.id];
     if (!draft || !isDirty(item, draft)) return;
+    const isWidget = isWhatsAppWidget(item);
+    const whatsappNumber = normalizeWhatsAppNumber(draft.whatsappNumber);
+    if (isWidget && draft.status === 'show' && !whatsappNumber) {
+      setMessage({ tone: 'error', text: 'Add a WhatsApp number before showing the student widget.' });
+      return;
+    }
     try {
+      const body = {
+        status: item.isCore ? 'show' : draft.status,
+        upcomingMessage: draft.upcomingMessage.trim() || null,
+        ...(isWidget
+          ? {
+              settings: {
+                ...(item.settings ?? {}),
+                whatsapp_number: whatsappNumber
+              }
+            }
+          : {})
+      };
+
       await updateFeature.mutateAsync({
-        body: {
-          status: item.isCore ? 'show' : draft.status,
-          upcomingMessage: draft.upcomingMessage.trim() || null
-        },
+        body,
         id: item.id
       });
       setMessage({ tone: 'success', text: `${item.studentLabel} visibility updated.` });
@@ -172,12 +204,13 @@ export function AdminFeatureControlPage() {
           </header>
           <div className="feature-control-list">
             {items.map((item) => {
-              const draft = drafts[item.id] ?? { status: item.status, upcomingMessage: item.upcomingMessage ?? '' };
+              const isWidget = isWhatsAppWidget(item);
+              const draft = drafts[item.id] ?? { status: item.status, upcomingMessage: item.upcomingMessage ?? '', whatsappNumber: getWhatsAppNumber(item) };
               const dirty = isDirty(item, draft);
               const isSaving = updateFeature.isPending;
 
               return (
-                <article className="feature-control-row" key={item.id}>
+                <article className={`feature-control-row ${isWidget ? 'feature-control-row--widget' : ''}`} key={item.id}>
                   <div className="feature-control-row__module">
                     <div className="feature-control-row__icon">{item.isCore ? <LockKeyhole size={17} /> : statusIcon(item.status)}</div>
                     <div>
@@ -203,7 +236,7 @@ export function AdminFeatureControlPage() {
                   </label>
 
                   <label className="feature-control-field feature-control-field--message">
-                    Upcoming message
+                    {isWidget ? 'Widget help text' : 'Upcoming message'}
                     <textarea
                       disabled={item.isCore || isSaving}
                       maxLength={500}
@@ -212,6 +245,22 @@ export function AdminFeatureControlPage() {
                       value={draft.upcomingMessage}
                     />
                   </label>
+
+                  {isWidget ? (
+                    <label className="feature-control-field feature-control-field--phone">
+                      WhatsApp number
+                      <input
+                        aria-invalid={draft.status === 'show' && !normalizeWhatsAppNumber(draft.whatsappNumber)}
+                        disabled={isSaving}
+                        inputMode="tel"
+                        maxLength={24}
+                        onChange={(event) => updateDraft(item.id, { whatsappNumber: event.target.value })}
+                        placeholder="+91 98765 43210"
+                        value={draft.whatsappNumber}
+                      />
+                      <span>Required when status is Show. Include country code; students will open this number from the bottom-right portal widget.</span>
+                    </label>
+                  ) : null}
 
                   <div className="feature-control-row__meta">
                     <span>Updated</span>

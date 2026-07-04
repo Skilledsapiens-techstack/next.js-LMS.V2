@@ -48,6 +48,7 @@ type ZoomRecordingFile = {
   download_url?: string;
   file_size?: number;
   file_type?: string;
+  password?: string;
   play_url?: string;
   recording_end?: string;
   recording_start?: string;
@@ -301,7 +302,7 @@ async function fetchRecordings(supabase: ReturnType<typeof createClient>, actorE
   const workshop = await getWorkshopById(supabase, workshopId);
   const account = normalizeZoomAccount(workshop.zoom_account);
   const zoomMeetingId = requireText(workshop.zoom_id, 'Workshop does not have a Zoom meeting ID.');
-  const response = await zoomRequest<{ recording_files?: ZoomRecordingFile[] }>(account, `/meetings/${encodeURIComponent(zoomMeetingId)}/recordings`);
+  const response = await zoomRequest<{ password?: string; recording_files?: ZoomRecordingFile[] }>(account, `/meetings/${encodeURIComponent(zoomMeetingId)}/recordings`);
   const files = (response.recording_files ?? []).filter(isPreferredRecording);
 
   const rows = files.map((file) => ({
@@ -310,6 +311,7 @@ async function fetchRecordings(supabase: ReturnType<typeof createClient>, actorE
     file_size: typeof file.file_size === 'number' ? file.file_size : null,
     file_type: file.file_type ?? null,
     play_url: ensureHttpUrl(file.play_url),
+    recording_password: typeof file.password === 'string' && file.password.trim() ? file.password.trim() : typeof response.password === 'string' && response.password.trim() ? response.password.trim() : null,
     recording_end: file.recording_end ?? null,
     recording_start: file.recording_start ?? null,
     recording_type: file.recording_type ?? null,
@@ -368,6 +370,7 @@ async function cancelMeeting(supabase: ReturnType<typeof createClient>, actorEma
   const workshop = await getWorkshopById(supabase, workshopId);
   const account = normalizeZoomAccount(workshop.zoom_account);
   const zoomMeetingId = workshop.zoom_id ? String(workshop.zoom_id).trim() : '';
+  let zoomCancellationWarning = '';
 
   if (zoomMeetingId) {
     try {
@@ -375,9 +378,15 @@ async function cancelMeeting(supabase: ReturnType<typeof createClient>, actorEma
     } catch (error) {
       const zoomError = error instanceof ZoomApiError ? error : null;
       const isAlreadyGone = zoomError?.status === 404 || String(zoomError?.code ?? '') === '3001';
-      const isMissingDeleteScope = zoomError?.message.toLowerCase().includes('scopes') && zoomError.message.toLowerCase().includes('meeting:delete');
-      if (isMissingDeleteScope) throw new Error('Zoom meeting delete permission is missing. Add meeting:delete scope to the Zoom Server-to-Server OAuth app, then retry.');
-      if (!isAlreadyGone) throw error;
+      if (!isAlreadyGone) {
+        zoomCancellationWarning = error instanceof Error ? error.message : 'Zoom meeting could not be cancelled from Zoom.';
+        console.warn('Zoom meeting delete failed; continuing with LMS cancellation.', {
+          account,
+          workshopId,
+          zoomMeetingId,
+          warning: zoomCancellationWarning
+        });
+      }
     }
   }
 
@@ -391,9 +400,10 @@ async function cancelMeeting(supabase: ReturnType<typeof createClient>, actorEma
   await writeAudit(supabase, actorEmail, 'admin_workshop_cancelled', data, {
     changedFields: Object.keys(updateRow).sort(),
     zoomAccount: account,
+    zoomCancellationWarning: zoomCancellationWarning || null,
     zoomId: zoomMeetingId || null
   });
-  return data;
+  return { ...data, zoom_cancellation_warning: zoomCancellationWarning || null };
 }
 
 async function publishRecording(supabase: ReturnType<typeof createClient>, actorEmail: string, payload: WorkshopPayload) {
@@ -407,6 +417,7 @@ async function publishRecording(supabase: ReturnType<typeof createClient>, actor
     .from('workshops')
     .update({
       updated_at: new Date().toISOString(),
+      zoom_recording_password: typeof candidate.recording_password === 'string' && candidate.recording_password.trim() ? candidate.recording_password.trim() : null,
       zoom_recording_url: playUrl
     })
     .eq('workshop_id', candidate.workshop_id)
