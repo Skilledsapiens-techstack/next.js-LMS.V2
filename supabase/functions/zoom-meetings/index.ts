@@ -8,6 +8,7 @@ type ZoomMeetingAction =
   | 'reschedule-meeting'
   | 'cancel-meeting'
   | 'complete-meeting'
+  | 'add-manual-recording'
   | 'fetch-recordings'
   | 'publish-recording'
   | 'reject-recording';
@@ -23,7 +24,10 @@ type WorkshopPayload = {
     time?: string;
     title?: string;
     workshopStatus?: string;
+    youtubeVideoUrl?: string | null;
     zoomAccount?: ZoomAccountLabel | string;
+    zoomRecordingPassword?: string | null;
+    zoomRecordingUrl?: string | null;
   };
   candidateId?: string;
   workshopId?: string;
@@ -317,7 +321,7 @@ async function fetchRecordings(supabase: ReturnType<typeof createClient>, actorE
     recording_type: file.recording_type ?? null,
     status: 'draft',
     updated_at: new Date().toISOString(),
-    workshop_id: workshop.workshop_id,
+    workshop_id: workshop.workshop_id ?? workshop.id,
     zoom_account: account,
     zoom_id: zoomMeetingId,
     zoom_recording_file_id: file.id ?? null
@@ -363,6 +367,45 @@ async function completeMeeting(supabase: ReturnType<typeof createClient>, actorE
   if (error) throw error;
   await writeAudit(supabase, actorEmail, 'admin_workshop_status_changed', data, { changedFields: ['updated_at', 'workshop_status'] });
   return data;
+}
+
+async function addManualRecording(supabase: ReturnType<typeof createClient>, actorEmail: string, payload: WorkshopPayload) {
+  const workshopId = requireText(payload.workshopId, 'Workshop row ID is required.');
+  const workshop = await getWorkshopById(supabase, workshopId);
+  const body = payload.body ?? {};
+  const youtubeUrl = ensureHttpUrl(body.youtubeVideoUrl);
+  const alternateUrl = ensureHttpUrl(body.zoomRecordingUrl);
+  const playUrl = youtubeUrl ?? alternateUrl;
+  if (!playUrl) throw new Error('Add a valid recording URL before sending it for review.');
+
+  const account = normalizeZoomAccount(body.zoomAccount ?? workshop.zoom_account);
+  const row = {
+    download_url: null,
+    duration_minutes: null,
+    file_size: null,
+    file_type: youtubeUrl ? 'URL' : 'MP4',
+    play_url: playUrl,
+    recording_password: typeof body.zoomRecordingPassword === 'string' && body.zoomRecordingPassword.trim() ? body.zoomRecordingPassword.trim() : null,
+    recording_end: null,
+    recording_start: null,
+    recording_type: youtubeUrl ? 'manual_youtube_link' : 'manual_recording_link',
+    status: 'draft',
+    updated_at: new Date().toISOString(),
+    workshop_id: workshop.workshop_id ?? workshop.id,
+    zoom_account: account,
+    zoom_id: workshop.zoom_id ?? workshop.workshop_id ?? workshop.id,
+    zoom_recording_file_id: null
+  };
+
+  const { data: candidate, error } = await supabase.from('workshop_recording_candidates').insert(row).select('*').single();
+  if (error) throw error;
+
+  await writeAudit(supabase, actorEmail, 'admin_workshop_recording_updated', workshop, {
+    candidateId: candidate.id,
+    source: youtubeUrl ? 'youtube' : 'manual',
+    workshopId
+  });
+  return { candidate, candidateId: candidate.id, count: 1, workshop };
 }
 
 async function cancelMeeting(supabase: ReturnType<typeof createClient>, actorEmail: string, payload: WorkshopPayload) {
@@ -413,7 +456,7 @@ async function publishRecording(supabase: ReturnType<typeof createClient>, actor
   const playUrl = ensureHttpUrl(candidate.play_url);
   if (!playUrl) throw new Error('Selected recording candidate does not have a playable URL.');
 
-  const { data: workshop, error: workshopError } = await supabase
+  let workshopResult = await supabase
     .from('workshops')
     .update({
       updated_at: new Date().toISOString(),
@@ -422,8 +465,25 @@ async function publishRecording(supabase: ReturnType<typeof createClient>, actor
     })
     .eq('workshop_id', candidate.workshop_id)
     .select('*')
-    .single();
-  if (workshopError) throw workshopError;
+    .maybeSingle();
+  if (workshopResult.error) throw workshopResult.error;
+
+  if (!workshopResult.data) {
+    workshopResult = await supabase
+      .from('workshops')
+      .update({
+        updated_at: new Date().toISOString(),
+        zoom_recording_password: typeof candidate.recording_password === 'string' && candidate.recording_password.trim() ? candidate.recording_password.trim() : null,
+        zoom_recording_url: playUrl
+      })
+      .eq('id', candidate.workshop_id)
+      .select('*')
+      .maybeSingle();
+    if (workshopResult.error) throw workshopResult.error;
+  }
+
+  const workshop = workshopResult.data;
+  if (!workshop) throw new Error('Workshop for this recording candidate could not be found.');
 
   await supabase
     .from('workshop_recording_candidates')
@@ -475,6 +535,7 @@ Deno.serve(async (request) => {
     if (payload.action === 'update-meeting' || payload.action === 'reschedule-meeting') return jsonResponse({ workshop: await updateMeeting(supabase, admin.email, payload) });
     if (payload.action === 'cancel-meeting') return jsonResponse({ workshop: await cancelMeeting(supabase, admin.email, payload) });
     if (payload.action === 'complete-meeting') return jsonResponse({ workshop: await completeMeeting(supabase, admin.email, payload) });
+    if (payload.action === 'add-manual-recording') return jsonResponse(await addManualRecording(supabase, admin.email, payload));
     if (payload.action === 'fetch-recordings') return jsonResponse(await fetchRecordings(supabase, admin.email, payload));
     if (payload.action === 'publish-recording') return jsonResponse(await publishRecording(supabase, admin.email, payload));
     if (payload.action === 'reject-recording') return jsonResponse(await rejectRecording(supabase, admin.email, payload));

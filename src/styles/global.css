@@ -9238,7 +9238,7 @@ h1 {
 }
 
 .workshop-kpi-grid {
-  grid-template-columns: repeat(6, minmax(118px, 1fr));
+  grid-template-columns: repeat(5, minmax(118px, 1fr));
   gap: 12px;
 }
 
@@ -9681,8 +9681,11 @@ h1 {
 
 .workshop-tabs {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
 }
 
 .workshop-tab,
@@ -9700,6 +9703,7 @@ h1 {
   background: #ffffff;
   color: var(--color-text);
   cursor: pointer;
+  flex: 0 0 auto;
   font: inherit;
   font-size: 12px;
   font-weight: 650;
@@ -12983,6 +12987,19 @@ h1 {
 
 .admin-support-tabs {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.support-tabs.announcement-admin-tabs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+}
+
+.announcement-admin-tabs .support-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  text-align: center;
 }
 
 .admin-support-grid--faq {
