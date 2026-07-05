@@ -33,6 +33,12 @@ type SupabaseQuery = {
   order: (column: string, options?: { ascending?: boolean }) => SupabaseQuery;
 };
 
+type LightweightCountRequest = SupabaseQuery &
+  PromiseLike<{
+    count: number | null;
+    error: { message: string } | null;
+  }>;
+
 // Keeps existing feature hooks stable while the data layer moves from HTTP routes to Supabase tables/RPCs.
 const STUDENT_BUNDLE_SECTIONS: Record<string, string[]> = {
   '/students/me/announcements': ['announcements', 'announcementList', 'studentAnnouncements'],
@@ -76,15 +82,19 @@ const STUDENT_WRITE_COLUMNS = new Set([
   'cohort_id',
   'cohort_name',
   'college_name',
+  'duration',
   'email',
   'full_name',
   'onboarding_mail_status',
+  'personalmentor',
   'phone',
   'program_name',
+  'project_start_date',
   'slot',
   'student_id',
   'track_role_ids',
-  'wa_group_name'
+  'wa_group_name',
+  'you_are_from'
 ]);
 
 const COHORT_WRITE_COLUMNS = new Set([
@@ -321,7 +331,19 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
     table: 'students',
     filterColumns: { status: 'active' },
     filterValues: { status: (value) => (value === 'active' ? true : value === 'inactive' ? false : undefined) },
-    searchColumns: ['full_name', 'email', 'student_id', 'cohort_name', 'program_name']
+    searchColumns: ['full_name', 'email', 'student_id', 'cohort_name', 'program_name', 'you_are_from', 'duration'],
+    sortColumns: {
+      access: { column: 'program_name', ascending: true },
+      auth: { column: 'onboarding_mail_status', ascending: true },
+      duration: { column: 'duration', ascending: true },
+      education: { column: 'you_are_from', ascending: true },
+      mentor: { column: 'personalmentor', ascending: true },
+      newest: { column: 'created_at', ascending: false },
+      onboarding: { column: 'project_start_date', ascending: true },
+      sequence: { column: 'onboarding_sequence', ascending: true },
+      status: { column: 'active', ascending: false },
+      student: { column: 'full_name', ascending: true }
+    }
   },
   '/admins/support-tickets': { table: 'support_tickets', filterColumns: { category: 'category_name' }, searchColumns: ['subject', 'student_email', 'category_name'] },
   '/admins/workshops': { table: 'workshops', filterColumns: { status: 'workshop_status' }, searchColumns: ['title', 'program_key', 'workshop_id', 'zoom_id'] },
@@ -413,6 +435,7 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/admins/me') return getAdminProfile(context) as Promise<TResponse>;
   if (cleanPath === '/students/me/dashboard') return getStudentDashboard(context) as Promise<TResponse>;
   if (cleanPath === '/admins/dashboard') return getAdminDashboard(context) as Promise<TResponse>;
+  if (cleanPath === '/admins/observability') return getAdminObservability(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/student-audit-logs') return getStudentAuditLogs(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/certificate-requests') return getLiveProjectCertificateRequests(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/announcements/recipient-count') return getAnnouncementRecipientCount(context, options.query) as Promise<TResponse>;
@@ -629,6 +652,7 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/certificate-program-settings') return saveCertificateProgramSetting(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/certificates/leadership') return issueLeadershipCertificates(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/certificates/live-project') return issueLiveProjectCertificate(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/students/me/presence') return updateStudentPresence(context) as Promise<TResponse>;
   if (cleanPath === '/students/me/project-submissions') return submitStudentProjectReport(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/students/me/support-tickets') return createStudentSupportTicket(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/support-categories') return createSupportCategory(context, options.body) as Promise<TResponse>;
@@ -710,7 +734,21 @@ async function getStudentProfile(context: Awaited<ReturnType<typeof createContex
   const row = chooseIdentityRow(data, context);
   if (!row) throw new ApiClientError('No student profile is linked to this Supabase user.', 404);
   if (row.active === false) throw new ApiClientError('Student profile is inactive.', 403);
+  if (!row.auth_user_id && row.id && normalizeEmail(row.email) === context.email) {
+    void context.supabase
+      .from('students')
+      .update({ auth_user_id: context.userId, updated_at: new Date().toISOString() })
+      .eq('id', row.id)
+      .is('auth_user_id', null)
+      .then(() => undefined);
+  }
   return camelize(row);
+}
+
+async function updateStudentPresence(context: Awaited<ReturnType<typeof createContext>>) {
+  const { data, error } = await context.supabase.rpc('update_student_last_seen');
+  if (error) throw new ApiClientError(error.message, 503);
+  return { lastSeenAt: data };
 }
 
 async function getAdminProfile(context: Awaited<ReturnType<typeof createContext>>) {
@@ -742,20 +780,258 @@ async function getStudentDashboard(context: Awaited<ReturnType<typeof createCont
 
 async function getAdminDashboard(context: Awaited<ReturnType<typeof createContext>>) {
   const admin = await getAdminProfile(context);
-  const [summary, recordings] = await Promise.all([
-    callRpc(context, 'lms_admin_dashboard_summary'),
-    context.supabase.from('workshops').select('id', { count: 'exact', head: true }).eq('workshop_status', 'Completed')
+  const [summaryResult, recordings, lightweightOps] = await Promise.all([
+    safeCallRpc(context, 'lms_admin_dashboard_summary'),
+    safeCountRows(context, 'workshops', (request) => request.eq('workshop_status', 'Completed')),
+    safeLightweightOperationsSummary(context)
   ]);
 
-  const published = recordings.count ?? 0;
+  const published = recordings;
+  const baseSummary = isRecord(summaryResult) ? summaryResult : {};
+  const baseOperations = isRecord(baseSummary.operations) ? baseSummary.operations : {};
+  const baseActiveUsers = isRecord(baseSummary.activeUsers) ? baseSummary.activeUsers : {};
+  const baseMeetings = isRecord(baseSummary.meetings) ? baseSummary.meetings : {};
+
   return {
     admin,
     summary: {
-      ...(isRecord(summary) ? summary : {}),
+      ...baseSummary,
+      activeUsers: { ...baseActiveUsers, ...lightweightOps.activeUsers },
+      meetings: { ...baseMeetings, ...lightweightOps.meetings },
+      operations: { ...baseOperations, ...lightweightOps.operations },
       publishedRecordings: { total: published },
-      recordings: { ...(isRecord((summary as Record<string, unknown>)?.recordings) ? (summary as Record<string, Record<string, unknown>>).recordings : {}), published, total: published }
+      recordings: { ...(isRecord(baseSummary.recordings) ? baseSummary.recordings : {}), published, total: published }
     }
   };
+}
+
+async function getAdminObservability(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const admin = await getAdminProfile(context);
+  const page = Number(query?.page ?? 1);
+  const limit = Math.min(Number(query?.limit ?? 20), 50);
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+  const severity = String(query?.severity ?? 'all');
+  const moduleFilter = String(query?.module ?? 'all');
+  const actionType = String(query?.actionType ?? 'all');
+  const search = String(query?.search ?? '').trim().toLowerCase();
+
+  let auditRequest = context.supabase.from('audit_logs').select('*', { count: 'exact' }).order('created_at', { ascending: false });
+  if (moduleFilter !== 'all') auditRequest = auditRequest.eq('entity_type', moduleFilter);
+  if (actionType !== 'all') {
+    if (actionType === 'meetings') auditRequest = auditRequest.eq('entity_type', 'workshop');
+    else auditRequest = auditRequest.eq('action', actionType);
+  }
+  if (search) {
+    const safeSearch = search.replace(/[%(),]/g, '');
+    auditRequest = auditRequest.or(`action.ilike.%${safeSearch}%,actor_email.ilike.%${safeSearch}%,entity_type.ilike.%${safeSearch}%`);
+  }
+
+  let eventRequest = context.supabase.from('system_event_logs').select('*', { count: 'exact' }).order('created_at', { ascending: false });
+  if (severity !== 'all') eventRequest = eventRequest.eq('severity', severity);
+  if (moduleFilter !== 'all') eventRequest = eventRequest.eq('module', moduleFilter);
+  if (search) {
+    const safeSearch = search.replace(/[%(),]/g, '');
+    eventRequest = eventRequest.or(`message.ilike.%${safeSearch}%,event_type.ilike.%${safeSearch}%,module.ilike.%${safeSearch}%`);
+  }
+
+  const [summary, auditLogs, eventLogs, alerts] = await Promise.all([
+    getLightweightOperationsSummary(context),
+    auditRequest.range(from, to),
+    eventRequest.range(0, 19),
+    context.supabase.from('system_alerts').select('*', { count: 'exact' }).eq('status', 'open').order('created_at', { ascending: false }).limit(10)
+  ]);
+
+  if (auditLogs.error && !isObservabilityReadError(auditLogs.error)) throw new ApiClientError(auditLogs.error.message, 503);
+  if (eventLogs.error && !isMissingSchemaError(eventLogs.error)) throw new ApiClientError(eventLogs.error.message, 503);
+  if (alerts.error && !isMissingSchemaError(alerts.error)) throw new ApiClientError(alerts.error.message, 503);
+
+  const auditRows = auditLogs.error ? [] : auditLogs.data ?? [];
+  const actorEmails = uniqueStrings(auditRows.map((row) => normalizeEmail(row.actor_email)));
+  const actorNamesByEmail = await getAdminNamesByEmail(context, actorEmails);
+
+  return {
+    admin,
+    alerts: createPaginatedResponse((alerts.error ? [] : alerts.data ?? []).map(enrichRow).map(camelize), alerts.error ? 0 : alerts.count ?? 0, 1, 10),
+    auditLogs: createPaginatedResponse(
+      auditRows.map((row) => {
+        const enriched = enrichRow(row);
+        const base = isRecord(enriched) ? enriched : row;
+        return camelize({ ...base, actor_name: actorNamesByEmail.get(normalizeEmail(row.actor_email)) ?? row.actor_email });
+      }),
+      auditLogs.error ? 0 : auditLogs.count ?? 0,
+      page,
+      limit
+    ),
+    eventLogs: createPaginatedResponse((eventLogs.error ? [] : eventLogs.data ?? []).map(enrichRow).map(camelize), eventLogs.error ? 0 : eventLogs.count ?? 0, 1, 20),
+    summary
+  };
+}
+
+async function getLightweightOperationsSummary(context: Awaited<ReturnType<typeof createContext>>) {
+  const now = new Date();
+  const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000).toISOString();
+  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+  const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const today = startOfDayIso(now);
+  const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  const [
+    activeFiveMinutes,
+    activeOneHour,
+    activeToday,
+    recentStudents,
+    recentAdminActions,
+    recentErrors,
+    openAlerts,
+    failedAdminLogins,
+    meetingsCreatedToday,
+    meetingsScheduledWeek,
+    meetingsCancelledWeek,
+    recordingsAddedToday,
+    completedMeetings,
+    completedMeetingsWithRecordings,
+    recentlyChangedMeetings
+  ] = await Promise.all([
+    safeCountRows(context, 'students', (request) => request.eq('active', true).gte('last_seen_at', fiveMinutesAgo)),
+    safeCountRows(context, 'students', (request) => request.eq('active', true).gte('last_seen_at', oneHourAgo)),
+    safeCountRows(context, 'students', (request) => request.eq('active', true).gte('last_seen_at', today)),
+    context.supabase.from('students').select('id,email,full_name,student_id,last_seen_at,cohort_name,program_name').eq('active', true).gte('last_seen_at', oneHourAgo).order('last_seen_at', { ascending: false }).limit(8),
+    safeCountRows(context, 'audit_logs', (request) => request.gte('created_at', twentyFourHoursAgo)),
+    safeCountRows(context, 'system_event_logs', (request) => request.in('severity', ['error', 'critical']).gte('created_at', twentyFourHoursAgo)),
+    safeCountRows(context, 'system_alerts', (request) => request.eq('status', 'open')),
+    safeCountRows(context, 'system_event_logs', (request) => request.eq('event_type', 'admin_login_failed').gte('created_at', today)),
+    safeCountRows(context, 'audit_logs', (request) => request.eq('entity_type', 'workshop').eq('action', 'admin_workshop_created').gte('created_at', today)),
+    countRows(context, 'workshops', (request) => request.in('workshop_status', ['Scheduled', 'Upcoming', 'Live']).gte('date', now.toISOString().slice(0, 10)).lt('date', weekEnd)),
+    safeCountRows(context, 'audit_logs', (request) => request.eq('entity_type', 'workshop').eq('action', 'admin_workshop_cancelled').gte('created_at', new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString())),
+    safeCountRows(context, 'audit_logs', (request) => request.eq('entity_type', 'workshop').in('action', ['admin_workshop_recording_updated', 'admin_workshop_recording_published']).gte('created_at', today)),
+    countRows(context, 'workshops', (request) => request.eq('workshop_status', 'Completed')),
+    countRows(context, 'workshops', (request) => request.eq('workshop_status', 'Completed').or('youtube_video_url.not.is.null,zoom_recording_url.not.is.null')),
+    context.supabase.from('workshops').select('id,title,workshop_id,workshop_status,date,updated_at,youtube_video_url,zoom_recording_url').order('updated_at', { ascending: false }).limit(6)
+  ]);
+
+  if (recentStudents.error && !isMissingSchemaError(recentStudents.error)) throw new ApiClientError(recentStudents.error.message, 503);
+  if (recentlyChangedMeetings.error) throw new ApiClientError(recentlyChangedMeetings.error.message, 503);
+
+  const changedMeetings = (recentlyChangedMeetings.data ?? []).map(enrichRow).map(camelize);
+  const completedWithoutRecordings = Math.max(0, completedMeetings - completedMeetingsWithRecordings);
+
+  return {
+    activeUsers: {
+      studentsLastFiveMinutes: activeFiveMinutes,
+      studentsLastHour: activeOneHour,
+      studentsToday: activeToday,
+      totalLastHour: activeOneHour
+    },
+    meetings: {
+      cancelledThisWeek: meetingsCancelledWeek,
+      createdToday: meetingsCreatedToday,
+      recordingsAddedToday,
+      scheduledThisWeek: meetingsScheduledWeek,
+      withoutRecordings: completedWithoutRecordings
+    },
+    operations: {
+      failedAdminLoginsToday: failedAdminLogins,
+      openAlerts,
+      recentAdminActions,
+      recentErrors
+    },
+    recentStudents: (recentStudents.error ? [] : recentStudents.data ?? []).map(enrichRow).map(camelize),
+    recentlyChangedMeetings: changedMeetings
+  };
+}
+
+async function safeLightweightOperationsSummary(context: Awaited<ReturnType<typeof createContext>>) {
+  try {
+    return await getLightweightOperationsSummary(context);
+  } catch (error) {
+    return emptyLightweightOperationsSummary();
+  }
+}
+
+function emptyLightweightOperationsSummary() {
+  return {
+    activeUsers: {
+      studentsLastFiveMinutes: 0,
+      studentsLastHour: 0,
+      studentsToday: 0,
+      totalLastHour: 0
+    },
+    meetings: {
+      cancelledThisWeek: 0,
+      createdToday: 0,
+      recordingsAddedToday: 0,
+      scheduledThisWeek: 0,
+      withoutRecordings: 0
+    },
+    operations: {
+      failedAdminLoginsToday: 0,
+      openAlerts: 0,
+      recentAdminActions: 0,
+      recentErrors: 0
+    },
+    recentStudents: [],
+    recentlyChangedMeetings: []
+  };
+}
+
+async function safeCallRpc(context: Awaited<ReturnType<typeof createContext>>, functionName: string, params?: Record<string, string>) {
+  try {
+    return await callRpc(context, functionName, params);
+  } catch (error) {
+    return {};
+  }
+}
+
+async function safeCountRows(
+  context: Awaited<ReturnType<typeof createContext>>,
+  table: string,
+  build?: (request: SupabaseQuery) => SupabaseQuery
+) {
+  try {
+    return await countRows(context, table, build);
+  } catch (error) {
+    if (error instanceof ApiClientError && isObservabilityReadError(error)) return 0;
+    throw error;
+  }
+}
+
+async function countRows(
+  context: Awaited<ReturnType<typeof createContext>>,
+  table: string,
+  build?: (request: SupabaseQuery) => SupabaseQuery
+) {
+  let request = context.supabase.from(table).select('id', { count: 'exact', head: true }) as unknown as LightweightCountRequest;
+  if (build) request = build(request) as unknown as LightweightCountRequest;
+  const { count, error } = await request;
+  if (error) throw new ApiClientError(error.message, 503);
+  return count ?? 0;
+}
+
+async function getAdminNamesByEmail(context: Awaited<ReturnType<typeof createContext>>, emails: string[]) {
+  if (emails.length === 0) return new Map<string, string>();
+  const { data, error } = await context.supabase.from('admin_users').select('email,full_name').in('email', emails).limit(100);
+  if (error) return new Map<string, string>();
+  const entries: Array<[string, string]> = (data ?? [])
+    .map((row) => [normalizeEmail(row.email), String(row.full_name || row.email || '').trim()] as [string, string])
+    .filter(([email]) => Boolean(email));
+  return new Map(entries);
+}
+
+function isMissingSchemaError(error: unknown) {
+  const message = error instanceof Error ? error.message : isRecord(error) && typeof error.message === 'string' ? error.message : '';
+  const code = isRecord(error) && typeof error.code === 'string' ? error.code : '';
+  return (
+    code === '42P01' ||
+    code === '42703' ||
+    code === 'PGRST204' ||
+    /relation .* does not exist|column .* does not exist|could not find .* column|schema cache/i.test(message)
+  );
+}
+
+function isObservabilityReadError(error: unknown) {
+  const message = error instanceof Error ? error.message : isRecord(error) && typeof error.message === 'string' ? error.message : '';
+  return isMissingSchemaError(error) || /permission denied|row-level security|not authorized|not allowed/i.test(message);
 }
 
 async function getStudentBundleList(context: Awaited<ReturnType<typeof createContext>>, sections: string[], query: ApiClientOptions['query']) {
@@ -872,6 +1148,9 @@ async function getAdminStudentsList(context: Awaited<ReturnType<typeof createCon
 
   request = applyCommonFilters(request, queryWithoutJoins, endpoint);
   request = applyCommonSort(request, queryWithoutJoins, endpoint);
+  if (!String(queryWithoutJoins?.sort ?? '').trim()) {
+    request = request.order('onboarding_sequence', { ascending: true }).order('created_at', { ascending: true });
+  }
 
   const { count, data, error } = await request.range(from, to);
   if (error) throw new ApiClientError(error.message, 503);
@@ -1441,6 +1720,12 @@ function formatCompactDate(date: Date) {
   return `${year}${month}${day}`;
 }
 
+function startOfDayIso(date: Date) {
+  const start = new Date(date);
+  start.setHours(0, 0, 0, 0);
+  return start.toISOString();
+}
+
 async function getEnrollmentDetail(context: Awaited<ReturnType<typeof createContext>>, requestId: string) {
   const { data, error } = await context.supabase.from('enrollment_requests').select('*').or(`id.eq.${requestId},request_id.eq.${requestId}`).limit(1);
   if (error) throw new ApiClientError(error.message, 503);
@@ -1468,7 +1753,7 @@ async function getStudentAttemptLimit(context: Awaited<ReturnType<typeof createC
   if (error) throw new ApiClientError(error.message, 503);
 
   return {
-    maxAttempts: Number(data?.max_attempts ?? 3),
+    maxAttempts: Number(data?.max_attempts ?? 1),
     notes: data?.notes ?? undefined,
     studentEmail: student.email,
     studentId: student.id,
@@ -1509,7 +1794,7 @@ async function updateStudentAttemptLimit(context: Awaited<ReturnType<typeof crea
   const notes = typeof payload.notes === 'string' ? payload.notes.trim() : undefined;
 
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 1000) {
-    throw new ApiClientError('LP max attempts must be a whole number between 1 and 1000.', 400);
+    throw new ApiClientError('LP project limit must be a whole number between 1 and 1000.', 400);
   }
 
   const student = await getStudentById(context, studentId);
@@ -1976,7 +2261,7 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
   const cohorts = extractItems(dashboard, ['cohorts', 'studentCohorts']).filter(isRecord);
   const submissions = extractItems(projectBundle, ['projectSubmissionRequests', 'project_submission_requests']).filter(isRecord);
   const limitRows = extractItems(projectBundle, ['projectSubmissionStudentLimits', 'project_submission_student_limits']).filter(isRecord);
-  const maxAttempts = Math.max(1, Number(limitRows[0]?.maxAttempts ?? limitRows[0]?.max_attempts ?? 3) || 3);
+  const maxAttempts = Math.max(1, Number(limitRows[0]?.maxAttempts ?? limitRows[0]?.max_attempts ?? 1) || 1);
 
   const project = projects.find((item) => String(item.projectId ?? item.project_id ?? item.id) === projectId);
   if (!project) throw new ApiClientError('This project is not available to your account.', 403);
@@ -1997,28 +2282,28 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
   const cohortKey = slugifyKey(cohortName || String(cohort.cohortId ?? cohort.cohort_id ?? cohort.id));
   const cohortSubmissions = submissions
     .filter((item) => {
-      const submissionProjectId = String(item.projectId ?? item.project_id ?? '');
-      const sameProject = submissionProjectId === projectExternalId;
       const sameCohort = String(item.cohortKey ?? item.cohort_key ?? '') === cohortKey || String(item.cohortName ?? item.cohort_name ?? '') === cohortName;
-      return sameProject && sameCohort;
+      return sameCohort;
     })
     .sort((left, right) => Number(right.attemptNumber ?? right.attempt_number ?? 0) - Number(left.attemptNumber ?? left.attempt_number ?? 0));
-  const latest = cohortSubmissions[0];
+  const projectCohortSubmissions = cohortSubmissions.filter((item) => String(item.projectId ?? item.project_id ?? '') === projectExternalId);
+  const latest = projectCohortSubmissions[0];
   const latestStatus = String(latest?.status ?? '');
   const isChangesRequestedRetry = latestStatus === 'changes_requested';
-  const isRejectedRetry = latestStatus === 'rejected';
 
   if (['submitted', 'under_review', 'approved'].includes(latestStatus)) {
     throw new ApiClientError('A project report has already been submitted for this cohort.', 409);
   }
 
-  const highestAttempt = cohortSubmissions.reduce((max, item) => Math.max(max, Number(item.attemptNumber ?? item.attempt_number ?? 0)), 0);
-  if (highestAttempt > 0 && !isChangesRequestedRetry && !isRejectedRetry) {
+  const highestAttempt = projectCohortSubmissions.reduce((max, item) => Math.max(max, Number(item.attemptNumber ?? item.attempt_number ?? 0)), 0);
+  if (highestAttempt > 0 && !isChangesRequestedRetry) {
     throw new ApiClientError('A project report has already been submitted for this cohort.', 409);
   }
 
-  if (!isChangesRequestedRetry && highestAttempt >= maxAttempts) {
-    throw new ApiClientError(`Your LP submission attempt limit for this cohort is ${maxAttempts}.`, 409);
+  const submittedProjectIds = uniqueStrings(cohortSubmissions.map((item) => String(item.projectId ?? item.project_id ?? '')).filter(Boolean));
+  const hasSubmittedThisProject = submittedProjectIds.includes(projectExternalId);
+  if (!hasSubmittedThisProject && submittedProjectIds.length >= maxAttempts) {
+    throw new ApiClientError(`Your LP project submission limit for this cohort is ${maxAttempts}.`, 409);
   }
 
   const now = new Date();
@@ -2102,10 +2387,11 @@ async function insertRow(context: Awaited<ReturnType<typeof createContext>>, tab
       return (await enrichAdminStudents(context, [data]))[0];
     }
   }
-  const { data, error } = await context.supabase.from(endpoint.table).insert(payload).select('*').single();
+  const insertPayload = endpoint.table === 'students' && !payload.student_id ? { ...payload, student_id: generateStudentRosterId() } : payload;
+  const { data, error } = await context.supabase.from(endpoint.table).insert(insertPayload).select('*').single();
   if (error) throw mutationError(error, endpoint.table);
   if (endpoint.table === 'students') await syncStudentAssignments(context, data, metadata);
-  if (auditAction) await writeAuditLog(context, endpoint.table, auditAction, data, payload);
+  if (auditAction) await writeAuditLog(context, endpoint.table, auditAction, data, insertPayload);
   if (metadata.sendInvite && endpoint.table === 'students') await queueStudentInvite(context, data);
   if (metadata.sendOnboardingMail && endpoint.table === 'students') await queueStudentOnboardingMail(context, data, metadata.cohortNames);
   return endpoint.table === 'students' ? (await enrichAdminStudents(context, [data]))[0] : camelize(enrichRow(data));
@@ -2158,7 +2444,7 @@ async function importStudents(context: Awaited<ReturnType<typeof createContext>>
         result.updated += 1;
         result.rows.push({ action: 'updated', email, rowNumber, status: 'success' });
       } else {
-        const insertPayload = { ...payload, email };
+        const insertPayload = { ...payload, email, student_id: payload.student_id || generateStudentRosterId() };
         const { data, error } = await context.supabase.from('students').insert(insertPayload).select('*').single();
         if (error) throw error;
         await syncStudentAssignments(context, data, metadata);
@@ -2304,6 +2590,7 @@ async function queueStudentInvite(context: Awaited<ReturnType<typeof createConte
   const { data, error } = await context.supabase.from('email_queue').insert(queueRow).select('*').single();
   if (error) throw new ApiClientError(`Student was saved, but invite queueing failed: ${error.message}`, 503);
   await writeAuditLog(context, 'students', 'invite_queued', student, { email_queue_id: data.id, template_key: 'portal_invite' });
+  await processQueuedStudentEmail(context, String(data.id ?? ''), 'invite');
 }
 
 async function studentOnboardingContext(context: Awaited<ReturnType<typeof createContext>>, student: Record<string, unknown>, scopedCohortNames?: string[]) {
@@ -2432,6 +2719,24 @@ async function queueStudentOnboardingMail(context: Awaited<ReturnType<typeof cre
   const { data, error } = await context.supabase.from('email_queue').insert(queueRow).select('*').single();
   if (error) throw new ApiClientError(`Student was saved, but onboarding mail queueing failed: ${error.message}`, 503);
   await writeAuditLog(context, 'students', 'onboarding_mail_queued', student, { email_queue_id: data.id, template_key: 'onboarding_welcome' });
+  await processQueuedStudentEmail(context, String(data.id ?? ''), 'onboarding mail');
+}
+
+async function processQueuedStudentEmail(context: Awaited<ReturnType<typeof createContext>>, queueId: string, label: string) {
+  if (!queueId) throw new ApiClientError(`Student was saved, but ${label} delivery failed because the queue id is missing.`, 503);
+  const { data, error } = await context.supabase.functions.invoke('transactional-email', {
+    body: {
+      action: 'processQueuedStudentEmail',
+      queueId
+    }
+  });
+  if (error) {
+    const message = getFunctionErrorMessage(data, error);
+    throw new ApiClientError(`Student was saved, but ${label} delivery failed: ${message}`, 503);
+  }
+  if (isRecord(data) && typeof data.error === 'string') {
+    throw new ApiClientError(`Student was saved, but ${label} delivery failed: ${data.error}`, 503);
+  }
 }
 
 async function callRpc(context: Awaited<ReturnType<typeof createContext>>, functionName: string, params?: Record<string, string>) {
@@ -2441,7 +2746,7 @@ async function callRpc(context: Awaited<ReturnType<typeof createContext>>, funct
 }
 
 function applyCommonFilters<TQuery extends SupabaseQuery>(request: TQuery, query: ApiClientOptions['query'], endpoint: TableEndpoint): TQuery {
-  const ignored = new Set(['activeOnly', 'limit', 'page', 'search', 'sort']);
+  const ignored = new Set(['activeOnly', 'direction', 'limit', 'page', 'search', 'sort']);
   Object.entries(query ?? {}).forEach(([key, value]) => {
     if (ignored.has(key) || value === undefined || value === '' || value === 'all' || value === 'any') return;
     if (key === 'submittedDate') {
@@ -2482,7 +2787,9 @@ function applyCommonFilters<TQuery extends SupabaseQuery>(request: TQuery, query
 function applyCommonSort<TQuery extends SupabaseQuery>(request: TQuery, query: ApiClientOptions['query'], endpoint: TableEndpoint): TQuery {
   const sort = String(query?.sort ?? '').trim();
   const order = sort ? endpoint.sortColumns?.[sort] : undefined;
-  return order ? (request.order(order.column, { ascending: order.ascending }) as TQuery) : request;
+  const direction = String(query?.direction ?? '').trim().toLowerCase();
+  const ascending = direction === 'asc' ? true : direction === 'desc' ? false : order?.ascending;
+  return order ? (request.order(order.column, { ascending }) as TQuery) : request;
 }
 
 function paginate(rawItems: unknown[], query: ApiClientOptions['query']) {
@@ -2501,7 +2808,7 @@ function paginate(rawItems: unknown[], query: ApiClientOptions['query']) {
 function matchesClientFilters(item: unknown, query: ApiClientOptions['query']) {
   if (!isRecord(item)) return true;
 
-  const ignored = new Set(['activeOnly', 'limit', 'page', 'search', 'sort']);
+  const ignored = new Set(['activeOnly', 'direction', 'limit', 'page', 'search', 'sort']);
   return Object.entries(query ?? {}).every(([key, value]) => {
     if (ignored.has(key) || value === undefined || value === '' || value === 'all' || value === 'any') return true;
 
@@ -2572,16 +2879,22 @@ function enrichRow(row: unknown) {
     deliverables: normalizeProjectList(row.deliverables, 'deliverable'),
     documents: normalizeProjectList(row.documents ?? row.resources, 'document'),
     id: row.id ?? row.request_id ?? row.ticket_id ?? row.student_id ?? row.workshop_id,
+    education_year: row.education_year ?? row.you_are_from,
     join_url: row.locked === true ? null : row.join_url ?? row.joinUrl,
+    live_project_duration: row.live_project_duration ?? row.duration,
     category: row.category ?? row.role_category,
     name: row.name ?? row.role_name,
+    onboarding_date: row.onboarding_date ?? row.project_start_date,
+    personal_mentor: row.personal_mentor ?? row.personalmentor,
     recording_password: row.locked === true ? null : row.recording_password ?? row.recordingPassword ?? row.zoom_recording_password ?? row.zoomRecordingPassword,
     recording_url: row.locked === true ? null : row.recording_url ?? row.recordingUrl ?? row.youtube_video_url ?? row.youtubeVideoUrl ?? row.zoom_recording_url ?? row.zoomRecordingUrl,
     self_paced_resources: row.self_paced_resources ?? row.sp_resources,
     self_paced_sessions: row.self_paced_sessions ?? row.sp_sessions,
     source: row.source ?? (row.youtube_video_url || row.youtubeVideoUrl ? 'youtube' : row.zoom_recording_url || row.zoomRecordingUrl ? 'zoom' : undefined),
     status: row.status ?? row.workshop_status ?? row.workshopStatus,
-    tasks: normalizeProjectList(row.tasks ?? row.action_items ?? row.actionItems, 'task')
+    tasks: normalizeProjectList(row.tasks ?? row.action_items ?? row.actionItems, 'task'),
+    whatsapp_group_name: row.whatsapp_group_name ?? row.whatsappGroupName ?? row.wa_group_name ?? row.waGroupName,
+    whatsapp_link: row.whatsapp_link ?? row.whatsappLink ?? row.wa_link ?? row.waLink
   };
 }
 
@@ -2858,14 +3171,22 @@ function normalizeStudentWriteBody(payload: Record<string, unknown>) {
     ...payload,
     cohort_id: cohortIds[0] || payload.cohort_id,
     cohort_name: cohortNames[0] || payload.cohort_name,
+    duration: payload.duration ?? payload.live_project_duration,
     email: payload.email ? normalizeEmail(payload.email) : payload.email,
     alt_email: payload.alt_email ? normalizeEmail(payload.alt_email) : payload.alt_email,
     onboarding_mail_status: typeof payload.onboarding_mail_status === 'string' ? payload.onboarding_mail_status.toLowerCase() : payload.onboarding_mail_status,
+    personalmentor: payload.personalmentor ?? payload.personal_mentor,
     program_name: programNames.join(', ') || programKeys.join(', ') || payload.program_name,
+    project_start_date: payload.project_start_date ?? payload.onboarding_date,
     track_role_ids: programKeys.length > 0 ? programKeys : payload.track_role_ids,
     wa_group_name: payload.wa_group_name ?? payload.wa_group,
+    you_are_from: payload.you_are_from ?? payload.education_year,
     cohort_ids: undefined,
     cohort_names: undefined,
+    education_year: undefined,
+    live_project_duration: undefined,
+    onboarding_date: undefined,
+    personal_mentor: undefined,
     program_keys: undefined,
     program_names: undefined,
     send_onboarding_mail: undefined,
@@ -2873,6 +3194,15 @@ function normalizeStudentWriteBody(payload: Record<string, unknown>) {
     assignment_mode: undefined,
     wa_group: undefined
   };
+}
+
+function generateStudentRosterId() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const random = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `STU-${year}${month}${day}-${random}`;
 }
 
 function normalizeCohortWriteBody(payload: Record<string, unknown>) {
@@ -3306,13 +3636,29 @@ function validateStudentWriteBody(payload: Record<string, unknown>, inserting: b
   const fullName = typeof payload.full_name === 'string' ? payload.full_name.trim() : '';
   const email = typeof payload.email === 'string' ? payload.email.trim() : '';
   const altEmail = typeof payload.alt_email === 'string' ? payload.alt_email.trim() : '';
+  const educationYear = typeof payload.you_are_from === 'string' ? payload.you_are_from.trim() : '';
+  const liveProjectDuration = typeof payload.duration === 'string' ? payload.duration.trim() : '';
   const onboardingMailStatus = typeof payload.onboarding_mail_status === 'string' ? payload.onboarding_mail_status : undefined;
+  const onboardingDate = typeof payload.project_start_date === 'string' ? payload.project_start_date.trim() : '';
+  const personalMentor = typeof payload.personalmentor === 'string' ? payload.personalmentor.trim() : '';
   const trackRoleIds = payload.track_role_ids;
 
   if (inserting && !fullName) throw new ApiClientError('Student full name is required.', 400);
   if (inserting && !email) throw new ApiClientError('Student email is required.', 400);
   if (email && !isValidEmail(email)) throw new ApiClientError('Student email is invalid.', 400);
   if (altEmail && !isValidEmail(altEmail)) throw new ApiClientError('Alternative email is invalid.', 400);
+  if (personalMentor && !['Yes', 'No'].includes(personalMentor)) {
+    throw new ApiClientError('Opted for Personal Mentor must be Yes or No.', 400);
+  }
+  if (educationYear && !['1st Year', '2nd Year', '3rd Year', '4th Year', 'Graduate', 'Working Professional'].includes(educationYear)) {
+    throw new ApiClientError('Education Year is invalid.', 400);
+  }
+  if (liveProjectDuration && !['2 weeks', '4 weeks', '6 weeks', '8 weeks'].includes(liveProjectDuration)) {
+    throw new ApiClientError('Live Project Duration is invalid.', 400);
+  }
+  if (onboardingDate && Number.isNaN(new Date(`${onboardingDate}T00:00:00`).getTime())) {
+    throw new ApiClientError('Onboarding Date is invalid.', 400);
+  }
   if (onboardingMailStatus && !['pending', 'sent', 'failed', 'skipped', 'dry-run'].includes(onboardingMailStatus)) {
     throw new ApiClientError('Onboarding mail status is invalid.', 400);
   }

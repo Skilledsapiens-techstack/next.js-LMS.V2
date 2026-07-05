@@ -1,1 +1,0 @@
-import{u as n}from"./query-KwLY7MqA.js";import{u as i,a as m}from"./index-BklQEUSo.js";function p(s){const{accessToken:a}=i(),e=s.limit??25,t=s.page??1,o=s.search?.trim(),r=s.status??"all";return n({enabled:!!a,queryFn:()=>m("/admins/programs",{accessToken:a??void 0,query:{limit:e,page:t,search:o,status:r}}),queryKey:["admin-programs",a,t,e,r,o],staleTime:6e4})}export{p as u};

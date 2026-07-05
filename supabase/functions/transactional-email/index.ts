@@ -12,7 +12,7 @@ const portalUrlFallback =
   Deno.env.get('LMS_PORTAL_URL') ||
   Deno.env.get('PUBLIC_SITE_URL') ||
   Deno.env.get('SITE_URL') ||
-  'https://staging.skilledsapiens.com/';
+  'https://login.skilledsapiens.com/login';
 const DAILY_EMAIL_LIMIT = 300;
 const DEFAULT_BATCH_SIZE = 50;
 const MAX_BATCH_SIZE = 100;
@@ -171,7 +171,7 @@ function normalizePortalUrl(value: unknown) {
   const raw = text(value);
   if (/^https?:\/\//i.test(raw)) return raw;
   if (/^https?:\/\//i.test(portalUrlFallback)) return portalUrlFallback;
-  return 'https://staging.skilledsapiens.com/';
+  return 'https://login.skilledsapiens.com/login';
 }
 
 function normalizeStudentRedirectUrl(value: unknown) {
@@ -181,16 +181,12 @@ function normalizeStudentRedirectUrl(value: unknown) {
     url.searchParams.set('reset_role', 'student');
     return url.toString();
   } catch (_err) {
-    return 'https://staging.skilledsapiens.com/?reset_role=student';
+    return 'https://login.skilledsapiens.com/login?reset_role=student';
   }
 }
 
 async function assertPublicCaller(req: Request) {
-  const apikey = req.headers.get('apikey') || '';
-  const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
-  if (!anonKey || (apikey !== anonKey && bearer !== anonKey)) {
-    throw new Error('Invalid transactional email caller.');
-  }
+  if (req.method !== 'POST') throw new Error('POST is required.');
 }
 
 async function assertAdminCaller(req: Request) {
@@ -874,6 +870,151 @@ async function handlePasswordSetup(payload: JsonRecord) {
   }
 }
 
+async function processQueuedStudentEmail(payload: JsonRecord, actor: JsonRecord) {
+  const queueId = text(payload.queueId || payload.queue_id);
+  if (!queueId) throw new Error('Queued email id is required.');
+
+  const { data: queueData, error: queueError } = await admin
+    .from('email_queue')
+    .select('*')
+    .eq('id', queueId)
+    .maybeSingle();
+  if (queueError) throw new Error(queueError.message);
+  if (!queueData) throw new Error('Queued email was not found.');
+
+  const queue = asRecord(queueData);
+  const email = normalizeEmail(queue.recipient_email);
+  const templateKey = text(queue.template_key);
+  if (!email) throw new Error('Queued email is missing a recipient.');
+  if (!['portal_invite', 'onboarding_welcome'].includes(templateKey)) {
+    throw new Error(`Queued template is not supported for student delivery: ${templateKey || 'unknown'}.`);
+  }
+
+  const students = await studentsByEmails([email]);
+  const student = students.get(email) || { email, full_name: queue.recipient_name };
+  const params = asRecord(queue.params);
+  let vars = studentVars(student, email, params);
+  let fallbackSubject = text(queue.subject, 'Skilled Sapiens LMS update');
+  let fallbackBody = [
+    `Hi ${text(vars.student_name, 'Student')},`,
+    '',
+    'Your Skilled Sapiens LMS profile has been updated.',
+    '',
+    text(vars.portal_url, portalUrlFallback),
+    '',
+    'Skilled Sapiens Team',
+  ].join('\n');
+  const buttonUrls: string[] = [];
+  const linkLabels: Record<string, string> = {};
+
+  if (templateKey === 'portal_invite') {
+    const redirectUrl = normalizeStudentRedirectUrl(payload.redirect_url || payload.redirectUrl || params.redirect_url || params.redirectUrl);
+    const { actionLink, mode } = await passwordSetupLink(student, redirectUrl);
+    const portalUrl = portalUrlFromRedirect(redirectUrl);
+    vars = {
+      ...vars,
+      action_link: actionLink,
+      portal_url: portalUrl,
+    };
+    fallbackSubject = mode === 'recovery'
+      ? 'Reset your Skilled Sapiens LMS password'
+      : 'Create your Skilled Sapiens LMS password';
+    fallbackBody = [
+      `Hi ${text(vars.student_name, 'Student')},`,
+      '',
+      mode === 'recovery'
+        ? 'Use the secure link below to reset your Skilled Sapiens LMS password.'
+        : 'Use the secure link below to create your Skilled Sapiens LMS password.',
+      '',
+      actionLink,
+      '',
+      'Open LMS:',
+      portalUrl,
+      '',
+      'If you did not request this email, please ignore it.',
+      '',
+      'Skilled Sapiens Team',
+    ].join('\n');
+    buttonUrls.push(actionLink);
+    linkLabels[actionLink] = mode === 'recovery' ? 'Reset Password' : 'Create Password';
+    linkLabels[portalUrl] = 'Open LMS Portal';
+  } else if (templateKey === 'onboarding_welcome') {
+    fallbackSubject = `Welcome to Skilled Sapiens LMS, ${text(vars.student_name, 'Student')}`;
+    fallbackBody = [
+      `Hi ${text(vars.student_name, 'Student')},`,
+      '',
+      'Welcome to Skilled Sapiens. Your LMS access is now active.',
+      '',
+      'Your registered program(s):',
+      text(vars.programs),
+      '',
+      'Your registered cohort(s):',
+      text(vars.cohorts),
+      '',
+      'Cohort communication details:',
+      text(vars.cohort_group_details),
+      '',
+      'Open your LMS portal:',
+      text(vars.portal_url, portalUrlFallback),
+      '',
+      'Please keep these details handy for live sessions, resources, project submissions, announcements, and support.',
+      '',
+      'Skilled Sapiens Team',
+    ].join('\n');
+    linkLabels[text(vars.portal_url, portalUrlFallback)] = 'Open LMS Portal';
+  }
+
+  const template = await emailTemplateByKey(templateKey);
+  const subject = fillVars(template?.subject || fallbackSubject, vars);
+  const bodyTemplate = template?.body || fallbackBody;
+  const renderedBody = fillVars(bodyTemplate, vars, { html: looksLikeHtml(bodyTemplate) });
+  const htmlContent = richPlainTextToHtml(renderedBody, { buttonUrls, linkLabels });
+  const textContent = htmlToPlainText(htmlContent) || renderedBody;
+  const tags = Array.from(new Set([...stringList(queue.tags), templateKey === 'portal_invite' ? 'portal-invite' : 'onboarding']));
+
+  try {
+    const delivery = await sendBrevo(email, text(queue.recipient_name || vars.student_name, email), subject, htmlContent, textContent, tags);
+    const now = new Date().toISOString();
+    const { error: updateError } = await admin
+      .from('email_queue')
+      .update({
+        failure_message: null,
+        params: vars,
+        provider: 'brevo',
+        provider_message_id: delivery.messageId || null,
+        sent_at: now,
+        status: 'sent',
+        subject,
+        tags,
+        updated_at: now,
+      })
+      .eq('id', queueId);
+    if (updateError) throw new Error(updateError.message);
+    await admin.from('audit_logs').insert({
+      action: templateKey === 'portal_invite' ? 'admin_student_invite_sent' : 'admin_student_onboarding_mail_sent',
+      actor_email: text(actor.email),
+      actor_role: 'admin',
+      details: { email_queue_id: queueId, provider: 'brevo', provider_message_id: delivery.messageId || null, template_key: templateKey },
+      entity_id: text(queue.related_entity_id, email),
+      entity_type: 'student',
+      status: 'success',
+    });
+    return { ok: true, status: 'sent', email, messageId: delivery.messageId || '', templateKey };
+  } catch (error) {
+    const message = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+    await admin
+      .from('email_queue')
+      .update({
+        failure_message: message,
+        provider: 'brevo',
+        status: 'failed',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', queueId);
+    throw new Error(message);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
@@ -887,6 +1028,10 @@ Deno.serve(async (req) => {
     if (action === 'sendAdminStudentCommunication') {
       const actor = await assertAdminCaller(req);
       return json(200, await handleAdminStudentCommunication(payload, actor));
+    }
+    if (action === 'processQueuedStudentEmail') {
+      const actor = await assertAdminCaller(req);
+      return json(200, await processQueuedStudentEmail(payload, actor));
     }
     if (action === 'resolveAdminStudentCommunication') {
       await assertAdminCaller(req);

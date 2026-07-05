@@ -1,4 +1,4 @@
-import { CheckSquare, Download, Eye, FileUp, History, Link2, Mail, Plus, RefreshCw, Search, Square, UserCheck, Users, X } from 'lucide-react';
+import { CheckSquare, ClipboardPaste, Download, Eye, FileUp, Link2, Mail, Pencil, Plus, RefreshCw, Search, Square, UserCheck, Users, X } from 'lucide-react';
 import { DragEvent, FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { Sheet, SheetData } from 'write-excel-file/browser';
@@ -12,11 +12,9 @@ import {
   AdminStudentStatus,
   AdminStudentWritePayload,
   AdminStudentsBulkPayload,
-  useAdminStudentAuditLogs,
   useAdminStudentAuthStatuses,
   useAdminStudentAttemptLimit,
   useAdminStudentAccessPreview,
-  useAdminStudentInviteHealth,
   useAdminStudents,
   useBackfillAdminStudentAuthLinks,
   useBulkUpdateAdminStudents,
@@ -37,7 +35,17 @@ const statusOptions: Array<{ label: string; value: AdminStudentStatus | 'all' }>
   { label: 'Inactive Students', value: 'inactive' }
 ];
 
-const studentImportHeaders = ['studentId', 'fullName', 'email', 'altEmail', 'phone', 'collegeName', 'cohortNames', 'programNames', 'waGroup', 'onboardingMailStatus', 'active'];
+const educationYearOptions = ['1st Year', '2nd Year', '3rd Year', '4th Year', 'Graduate', 'Working Professional'] as const;
+const personalMentorOptions = ['Yes', 'No'] as const;
+const liveProjectDurationOptions = ['2 weeks', '4 weeks', '6 weeks', '8 weeks'] as const;
+const studentRowsPerPageOptions = [25, 50, 75, 100] as const;
+
+const studentImportHeaders = ['studentId', 'fullName', 'email', 'altEmail', 'phone', 'collegeName', 'cohortNames', 'programNames', 'waGroup', 'personalmentor', 'you_are_from', 'project_start_date', 'duration', 'onboardingMailStatus', 'active'];
+const studentExportHeaders = ['serialNumber', ...studentImportHeaders];
+const studentSortOptions = ['sequence', 'student', 'access', 'education', 'mentor', 'onboarding', 'duration', 'auth', 'status'] as const;
+
+type StudentSortKey = (typeof studentSortOptions)[number];
+type SortDirection = 'asc' | 'desc';
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
@@ -48,6 +56,19 @@ function parseStatus(value: string | null): AdminStudentStatus | 'all' {
   return statusOptions.some((option) => option.value === value) ? (value as AdminStudentStatus | 'all') : 'all';
 }
 
+function parseRowsPerPage(value: string | null) {
+  const parsed = Number(value);
+  return studentRowsPerPageOptions.some((option) => option === parsed) ? parsed : 25;
+}
+
+function parseStudentSort(value: string | null): StudentSortKey {
+  return studentSortOptions.some((option) => option === value) ? (value as StudentSortKey) : 'sequence';
+}
+
+function parseSortDirection(value: string | null): SortDirection {
+  return value === 'desc' ? 'desc' : 'asc';
+}
+
 function formatDate(value: string | undefined) {
   if (!value) return '-';
 
@@ -55,10 +76,10 @@ function formatDate(value: string | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function formatValue(value: string | number | undefined | null) {
-  if (value === null || value === undefined) return '-';
+function formatValue(value: string | number | undefined | null, fallback = '-') {
+  if (value === null || value === undefined) return fallback;
   const normalized = String(value).trim();
-  return normalized || '-';
+  return normalized || fallback;
 }
 
 function formatList(values: Array<string | undefined> | undefined, fallback?: string) {
@@ -92,9 +113,12 @@ function deriveSlotFromSelectedCohorts(cohorts: AdminCohort[]) {
   return cohorts.map(deriveSlotFromCohortStartDate).find(Boolean) ?? '';
 }
 
-function buildPageLink(page: number, search: string, status: AdminStudentStatus | 'all', cohortName: string, programKey: string) {
+function buildPageLink(page: number, search: string, status: AdminStudentStatus | 'all', cohortName: string, programKey: string, limit: number, sort: StudentSortKey, direction: SortDirection) {
   const params = new URLSearchParams();
   params.set('page', String(page));
+  params.set('limit', String(limit));
+  params.set('sort', sort);
+  params.set('direction', direction);
   if (search) params.set('search', search);
   if (status !== 'all') params.set('status', status);
   if (cohortName) params.set('cohortName', cohortName);
@@ -145,8 +169,24 @@ function parseCsvRows(text: string) {
   return rows;
 }
 
+function parsePastedTableRows(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  if (!trimmed.includes('\t')) return parseCsvRows(trimmed);
+  return trimmed
+    .split(/\r?\n/)
+    .map((row) => row.split('\t').map((cell) => cell.trim()))
+    .filter((row) => row.some(Boolean));
+}
+
 function normalizedHeader(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function looksLikeImportHeader(row: string[]) {
+  const normalizedHeaders = new Set(row.map(normalizedHeader));
+  const hasEmail = normalizedHeaders.has('email') || normalizedHeaders.has('emailaddress');
+  return hasEmail && (normalizedHeaders.has('fullname') || normalizedHeaders.has('name'));
 }
 
 function splitImportList(value: string) {
@@ -159,6 +199,28 @@ function splitImportList(value: string) {
 function normalizeImportStatus(value: string): AdminStudentWritePayload['onboardingMailStatus'] {
   const normalized = value.trim().toLowerCase();
   return ['pending', 'sent', 'failed', 'skipped', 'dry-run'].includes(normalized) ? (normalized as AdminStudentWritePayload['onboardingMailStatus']) : 'pending';
+}
+
+function normalizeOptionValue<TValue extends string>(value: string, options: readonly TValue[]) {
+  const normalized = value.trim().toLowerCase();
+  return options.find((option) => option.toLowerCase() === normalized);
+}
+
+function normalizeYesNo(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (['yes', 'y', 'true', '1'].includes(normalized)) return 'Yes';
+  if (['no', 'n', 'false', '0'].includes(normalized)) return 'No';
+  return normalizeOptionValue(value, personalMentorOptions);
+}
+
+function normalizeImportDate(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return trimmed;
+  return parsed.toISOString().slice(0, 10);
 }
 
 function makeHeaderReader(headers: string[]) {
@@ -194,6 +256,10 @@ function validateImportPayload(
   else if (!isValidEmail(email)) errors.push('Email invalid');
   else if (duplicateEmail) errors.push('Duplicate email in file');
   if (payload.altEmail && !isValidEmail(payload.altEmail)) errors.push('Alt email invalid');
+  if (payload.personalMentor && !personalMentorOptions.includes(payload.personalMentor as (typeof personalMentorOptions)[number])) errors.push('Opted for Personal Mentor must be Yes or No');
+  if (payload.educationYear && !educationYearOptions.includes(payload.educationYear as (typeof educationYearOptions)[number])) errors.push('Education Year invalid');
+  if (payload.liveProjectDuration && !liveProjectDurationOptions.includes(payload.liveProjectDuration as (typeof liveProjectDurationOptions)[number])) errors.push('Live Project Duration invalid');
+  if (payload.onboardingDate && Number.isNaN(new Date(`${payload.onboardingDate}T00:00:00`).getTime())) errors.push('Onboarding Date invalid');
   const missingCohorts = (payload.cohortNames ?? []).filter((name) => !cohortByName.has(name.toLowerCase()));
   if (missingCohorts.length > 0) errors.push(`Unknown cohorts: ${missingCohorts.join(', ')}`);
   const missingPrograms = (payload.programNames ?? []).filter((name) => !programByKeyOrName.has(name.toLowerCase()));
@@ -217,8 +283,12 @@ function buildImportPayloadFromRow(row: string[], headers: string[], cohortByNam
     cohortNames,
     collegeName: getValue(row, ['collegeName', 'college']) || undefined,
     email: getValue(row, ['email', 'emailAddress']).toLowerCase(),
+    educationYear: normalizeOptionValue(getValue(row, ['you_are_from', 'educationYear', 'education year']), educationYearOptions),
     fullName: getValue(row, ['fullName', 'name']),
+    liveProjectDuration: normalizeOptionValue(getValue(row, ['duration', 'liveProjectDuration', 'live project duration']), liveProjectDurationOptions),
     onboardingMailStatus: normalizeImportStatus(getValue(row, ['onboardingMailStatus'])),
+    onboardingDate: normalizeImportDate(getValue(row, ['project_start_date', 'onboardingDate', 'onboarding date'])),
+    personalMentor: normalizeYesNo(getValue(row, ['personalmentor', 'personalMentor', 'optedForPersonalMentor', 'opted for personal mentor'])),
     phone: getValue(row, ['phone', 'phoneNumber']) || undefined,
     programKeys: selectedPrograms.map((program) => program.programKey),
     programNames: selectedPrograms.length > 0 ? selectedPrograms.map((program) => program.name) : programValues,
@@ -250,7 +320,18 @@ type BulkAssignForm = {
 };
 
 type StudentImportAssignmentMode = 'add' | 'replace';
+type StudentImportEntryMode = 'file' | 'paste';
+type StudentImportProgress = {
+  completed: number;
+  created: number;
+  failed: number;
+  percent: number;
+  total: number;
+  updated: number;
+};
 type StudentImportPreviewFilter = 'all' | 'errors' | 'new' | 'existing';
+
+const studentImportBatchSize = 10;
 
 function summarizeAuthStatus(status: AdminStudentAuthStatus | undefined) {
   if (!status) return 'Checking';
@@ -263,19 +344,9 @@ function summarizeInviteStatus(status: AdminStudentAuthStatus | undefined, fallb
 }
 
 function isFailureMessage(message: string) {
+  const importSummary = message.match(/^Student import finished:\s*\d+\s+created,\s*\d+\s+updated,\s*(\d+)\s+failed\.$/i);
+  if (importSummary) return Number(importSummary[1]) > 0;
   return /\b(could not|failed|invalid|unavailable|error|skipped)\b/i.test(message);
-}
-
-function formatAuditAction(value: string) {
-  return value.replace(/^admin_student_/, '').replace(/_/g, ' ');
-}
-
-function formatDateTime(value: string | undefined) {
-  if (!value) return '-';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleString(undefined, { day: '2-digit', hour: '2-digit', minute: '2-digit', month: 'short', year: 'numeric' });
 }
 
 function DetailField({ label, value }: { label: string; value: string }) {
@@ -289,19 +360,30 @@ function DetailField({ label, value }: { label: string; value: string }) {
 
 function StudentImportMultiSelect({
   label,
+  metaLabel,
   onChange,
   options,
   selected
 }: {
   label: string;
+  metaLabel?: string;
   onChange: (values: string[]) => void;
-  options: Array<{ id: string; label: string; value: string }>;
+  options: Array<{ id: string; label: string; meta?: string; value: string }>;
   selected: string[];
 }) {
+  const [searchTerm, setSearchTerm] = useState('');
   const selectedSet = new Set(selected);
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredOptions = normalizedSearch
+    ? options.filter((option) => [option.label, option.value, option.meta].some((value) => value?.toLowerCase().includes(normalizedSearch)))
+    : options;
 
   function toggleValue(value: string) {
     onChange(selectedSet.has(value) ? selected.filter((item) => item !== value) : [...selected, value]);
+  }
+
+  function removeValue(value: string) {
+    onChange(selected.filter((item) => item !== value));
   }
 
   return (
@@ -310,7 +392,18 @@ function StudentImportMultiSelect({
         {selected.length > 0 ? (
           selected.map((item) => (
             <span key={item} className="student-import-chip">
-              {item}
+              <span>{item}</span>
+              <button
+                aria-label={`Remove ${item}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  removeValue(item);
+                }}
+                type="button"
+              >
+                <X size={13} />
+              </button>
             </span>
           ))
         ) : (
@@ -318,12 +411,24 @@ function StudentImportMultiSelect({
         )}
       </summary>
       <div className="student-import-picker__list" aria-label={`${label} options`}>
-        {options.map((option) => (
-          <label key={option.id} className="student-import-picker__option">
-            <input checked={selectedSet.has(option.value)} onChange={() => toggleValue(option.value)} type="checkbox" />
-            <span>{option.label}</span>
-          </label>
-        ))}
+        <label className="student-import-picker__search">
+          <Search size={15} />
+          <span className="sr-only">Search {label}</span>
+          <input autoComplete="off" onChange={(event) => setSearchTerm(event.target.value)} placeholder={`Search ${label}`} type="search" value={searchTerm} />
+        </label>
+        {filteredOptions.length > 0 ? (
+          filteredOptions.map((option) => (
+            <label key={option.id} className="student-import-picker__option">
+              <input checked={selectedSet.has(option.value)} onChange={() => toggleValue(option.value)} type="checkbox" />
+              <span>
+                <strong>{option.label}</strong>
+                {option.meta ? <small>{metaLabel ? `${metaLabel}: ${option.meta}` : option.meta}</small> : null}
+              </span>
+            </label>
+          ))
+        ) : (
+          <p className="student-import-picker__empty">No matching {label} found.</p>
+        )}
       </div>
     </details>
   );
@@ -332,11 +437,16 @@ function StudentImportMultiSelect({
 function StudentDetailsModal({ student, onClose }: { student: AdminStudent; onClose: () => void }) {
   const accessPreview = useAdminStudentAccessPreview(student.id);
   const detailRows = [
+    ['Serial No.', formatValue(student.onboardingSequence)],
     ['Full Name', formatValue(student.fullName)],
     ['Email ID', formatValue(student.email)],
     ['Alt. Email', formatValue(student.altEmail)],
     ['Phone', formatValue(student.phone)],
     ['College', formatValue(student.collegeName)],
+    ['Education Year', formatValue(student.educationYear)],
+    ['Opted for Personal Mentor', formatValue(student.personalMentor)],
+    ['Onboarding Date', formatDate(student.onboardingDate)],
+    ['Live Project Duration', formatValue(student.liveProjectDuration)],
     ['Cohorts', formatList(studentCohortNames(student), student.cohortName)],
     ['Slot', formatValue(student.slot)],
     ['Live Project Domain(s)', formatList(student.liveProjectDomains, student.trackRoleIds.join(', '))],
@@ -409,9 +519,13 @@ type EnrollStudentForm = {
   altEmail: string;
   cohortNames: string[];
   collegeName: string;
+  educationYear: string;
   email: string;
   fullName: string;
+  liveProjectDuration: string;
   onboardingMailStatus: 'pending' | 'sent' | 'failed' | 'skipped' | 'dry-run';
+  onboardingDate: string;
+  personalMentor: string;
   phone: string;
   programNames: string[];
   sendOnboardingMail: boolean;
@@ -429,9 +543,13 @@ const emptyEnrollStudentForm: EnrollStudentForm = {
   altEmail: '',
   cohortNames: [],
   collegeName: '',
+  educationYear: '',
   email: '',
   fullName: '',
+  liveProjectDuration: '',
   onboardingMailStatus: 'pending',
+  onboardingDate: '',
+  personalMentor: '',
   phone: '',
   programNames: [],
   sendOnboardingMail: true,
@@ -456,9 +574,13 @@ function studentToForm(student: AdminStudent | undefined): EnrollStudentForm {
     altEmail: student.altEmail ?? '',
     cohortNames: studentCohortNames(student),
     collegeName: student.collegeName ?? '',
+    educationYear: student.educationYear ?? '',
     email: student.email,
     fullName: student.fullName,
+    liveProjectDuration: student.liveProjectDuration ?? '',
     onboardingMailStatus: (student.onboardingMailStatus as EnrollStudentForm['onboardingMailStatus'] | undefined) ?? 'pending',
+    onboardingDate: student.onboardingDate ? student.onboardingDate.slice(0, 10) : '',
+    personalMentor: student.personalMentor ?? '',
     phone: student.phone ?? '',
     programNames: student.programs && student.programs.length > 0 ? student.programs : student.programName ? student.programName.split(',').map((item) => item.trim()).filter(Boolean) : [],
     sendOnboardingMail: false,
@@ -479,11 +601,11 @@ function isValidEmail(value: string) {
 
 function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSubmit, programOptions, student }: EnrollStudentModalProps) {
   const [form, setForm] = useState<EnrollStudentForm>(() => studentToForm(student));
-  const [isCohortPickerOpen, setIsCohortPickerOpen] = useState(false);
-  const [isProgramPickerOpen, setIsProgramPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const selectedCohorts = cohortOptions.filter((cohort) => form.cohortNames.includes(cohort.name));
+  const cohortPickerOptions = useMemo(() => cohortOptions.map((cohort) => ({ id: cohort.id, label: cohort.name, meta: cohort.status.toUpperCase(), value: cohort.name })), [cohortOptions]);
+  const programPickerOptions = useMemo(() => programOptions.map((program) => ({ id: program.id, label: program.name, meta: program.programKey, value: program.name })), [programOptions]);
   const selectedCohortSummary =
     selectedCohorts.length > 0
       ? selectedCohorts
@@ -495,20 +617,6 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
 
   function updateForm<K extends keyof EnrollStudentForm>(key: K, value: EnrollStudentForm[K]) {
     setForm((current) => ({ ...current, [key]: value }));
-  }
-
-  function toggleCohort(name: string) {
-    setForm((current) => ({
-      ...current,
-      cohortNames: current.cohortNames.includes(name) ? current.cohortNames.filter((item) => item !== name) : [...current.cohortNames, name]
-    }));
-  }
-
-  function toggleProgram(name: string) {
-    setForm((current) => ({
-      ...current,
-      programNames: current.programNames.includes(name) ? current.programNames.filter((item) => item !== name) : [...current.programNames, name]
-    }));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -545,8 +653,12 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
       cohortNames: form.cohortNames,
       collegeName: form.collegeName.trim() || undefined,
       email,
+      educationYear: form.educationYear || undefined,
       fullName,
+      liveProjectDuration: form.liveProjectDuration || undefined,
       onboardingMailStatus: form.onboardingMailStatus,
+      onboardingDate: form.onboardingDate || undefined,
+      personalMentor: form.personalMentor || undefined,
       phone: form.phone.trim() || undefined,
       programKeys: selectedProgramRecords.map((program) => program.programKey),
       programNames: form.programNames,
@@ -617,51 +729,66 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
                 ))}
               </select>
             </label>
+            <label>
+              <span>Education Year</span>
+              <select value={form.educationYear} onChange={(event) => updateForm('educationYear', event.target.value)}>
+                <option value="">Select education year</option>
+                {educationYearOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Opted for Personal Mentor</span>
+              <select value={form.personalMentor} onChange={(event) => updateForm('personalMentor', event.target.value)}>
+                <option value="">Select mentor option</option>
+                {personalMentorOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Onboarding Date</span>
+              <input value={form.onboardingDate} onChange={(event) => updateForm('onboardingDate', event.target.value)} type="date" />
+            </label>
+            <label>
+              <span>Live Project Duration</span>
+              <select value={form.liveProjectDuration} onChange={(event) => updateForm('liveProjectDuration', event.target.value)}>
+                <option value="">Select duration</option>
+                {liveProjectDurationOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
 
             <div className="enroll-multi-field enroll-student-form__wide">
               <span>Cohorts (select one or more)</span>
-              <button className="enroll-picker-button" onClick={() => setIsCohortPickerOpen((current) => !current)} type="button">
-                {form.cohortNames.length > 0 ? `${form.cohortNames.length} cohort${form.cohortNames.length === 1 ? '' : 's'} selected` : 'Select cohorts'}
-              </button>
-              {isCohortPickerOpen ? (
-                <div className="enroll-picker-list">
-                  {cohortOptions.length > 0 ? (
-                    cohortOptions.map((cohort) => (
-                      <label className="enroll-picker-row" key={cohort.id}>
-                        <input checked={form.cohortNames.includes(cohort.name)} onChange={() => toggleCohort(cohort.name)} type="checkbox" />
-                        <strong>{cohort.name}</strong>
-                        <span>{cohort.status.toUpperCase()}</span>
-                      </label>
-                    ))
-                  ) : (
-                    <p>No cohorts available.</p>
-                  )}
-                </div>
-              ) : null}
+              <StudentImportMultiSelect
+                label="cohorts"
+                metaLabel="Status"
+                onChange={(cohortNames) => updateForm('cohortNames', cohortNames)}
+                options={cohortPickerOptions}
+                selected={form.cohortNames}
+              />
             </div>
 
             <div className="enroll-summary enroll-student-form__wide">{selectedCohortSummary}</div>
 
             <div className="enroll-multi-field enroll-student-form__wide">
               <span>Program Name (select one or more)</span>
-              <button className="enroll-picker-button" onClick={() => setIsProgramPickerOpen((current) => !current)} type="button">
-                {form.programNames.length > 0 ? `${form.programNames.length} program${form.programNames.length === 1 ? '' : 's'} selected` : 'Select programs'}
-              </button>
-              {isProgramPickerOpen ? (
-                <div className="enroll-picker-list">
-                  {programOptions.length > 0 ? (
-                    programOptions.map((program) => (
-                      <label className="enroll-picker-row" key={program.id}>
-                        <input checked={form.programNames.includes(program.name)} onChange={() => toggleProgram(program.name)} type="checkbox" />
-                        <strong>{program.name}</strong>
-                        <span>{program.programKey}</span>
-                      </label>
-                    ))
-                  ) : (
-                    <p>No programs available.</p>
-                  )}
-                </div>
-              ) : null}
+              <StudentImportMultiSelect
+                label="programs"
+                metaLabel="Key"
+                onChange={(programNames) => updateForm('programNames', programNames)}
+                options={programPickerOptions}
+                selected={form.programNames}
+              />
             </div>
 
             <label>
@@ -710,7 +837,7 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
 function LpAttemptsModal({ onClose, student }: { onClose: () => void; student: AdminStudent }) {
   const attemptsQuery = useAdminStudentAttemptLimit(student.id);
   const updateAttempts = useUpdateAdminStudentAttemptLimit();
-  const [maxAttempts, setMaxAttempts] = useState(3);
+  const [maxAttempts, setMaxAttempts] = useState(1);
   const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -744,9 +871,12 @@ function LpAttemptsModal({ onClose, student }: { onClose: () => void; student: A
           <div className="enroll-student-form">
             <DetailField label="Student" value={`${student.fullName} (${student.email})`} />
             <label>
-              <span>Max Attempts</span>
+              <span>Max Projects per Cohort</span>
               <input min={1} max={1000} value={maxAttempts} onChange={(event) => setMaxAttempts(Number(event.target.value))} type="number" />
             </label>
+            <div className="form-banner enroll-student-form__wide">
+              This controls how many different live projects the student can submit for each cohort.
+            </div>
             <label className="enroll-student-form__wide">
               <span>Notes</span>
               <input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Optional reason for the change" type="text" />
@@ -759,7 +889,7 @@ function LpAttemptsModal({ onClose, student }: { onClose: () => void; student: A
           <button className="segmented-button" onClick={onClose} type="button">
             Cancel
           </button>
-          <button className="segmented-button" disabled={updateAttempts.isPending} onClick={() => void saveAttempts(3, 'Reset to default')} type="button">
+          <button className="segmented-button" disabled={updateAttempts.isPending} onClick={() => void saveAttempts(1, 'Reset to default')} type="button">
             Reset
           </button>
           <button className="segmented-button segmented-button--active" disabled={updateAttempts.isPending || attemptsQuery.isLoading} onClick={() => void saveAttempts()} type="button">
@@ -773,13 +903,17 @@ function LpAttemptsModal({ onClose, student }: { onClose: () => void; student: A
 
 function ImportPreviewModal({
   cohortOptions,
+  entryMode,
   error,
   existingEmails,
   importStudents,
+  importProgress,
   onClose,
   onConfirm,
   onDownloadTemplate,
+  onEntryModeChange,
   onFile,
+  onPasteRows,
   preview,
   result,
   setPreview,
@@ -787,32 +921,37 @@ function ImportPreviewModal({
   uploading
 }: {
   cohortOptions: AdminCohort[];
+  entryMode: StudentImportEntryMode;
   error: string | null;
   existingEmails: Set<string>;
   importStudents: ReturnType<typeof useImportAdminStudents>;
+  importProgress: StudentImportProgress | null;
   onClose: () => void;
   onDownloadTemplate: () => Promise<void> | void;
+  onEntryModeChange: (mode: StudentImportEntryMode) => void;
   onConfirm: (assignmentMode: StudentImportAssignmentMode) => Promise<void>;
   onFile: (file: File) => Promise<void>;
+  onPasteRows: (text: string) => Promise<void>;
   preview: StudentImportPreview | null;
   programOptions: AdminProgram[];
   result: AdminStudentImportRowResult[] | null;
   setPreview: (updater: (current: StudentImportPreview | null) => StudentImportPreview | null) => void;
   uploading: boolean;
 }) {
-  const [isEditing, setIsEditing] = useState(false);
   const [previewFilter, setPreviewFilter] = useState<StudentImportPreviewFilter>('all');
   const [importAssignmentMode, setImportAssignmentMode] = useState<StudentImportAssignmentMode>('add');
   const [selectedRowNumbers, setSelectedRowNumbers] = useState<number[]>([]);
   const [bulkCohortNames, setBulkCohortNames] = useState<string[]>([]);
   const [bulkProgramNames, setBulkProgramNames] = useState<string[]>([]);
+  const [editingRowNumber, setEditingRowNumber] = useState<number | null>(null);
+  const [pasteText, setPasteText] = useState('');
   const validRows = preview?.rows.filter((row) => row.errors.length === 0) ?? [];
   const invalidRows = preview?.rows.filter((row) => row.errors.length > 0) ?? [];
   const previewRows = useMemo(() => preview?.rows ?? [], [preview?.rows]);
   const cohortByName = useMemo(() => new Map(cohortOptions.map((cohort) => [cohort.name.toLowerCase(), cohort])), [cohortOptions]);
   const programByName = useMemo(() => new Map(programOptions.flatMap((program) => [[program.name.toLowerCase(), program], [program.programKey.toLowerCase(), program]] as const)), [programOptions]);
-  const cohortPickerOptions = useMemo(() => cohortOptions.map((cohort) => ({ id: cohort.id, label: cohort.name, value: cohort.name })), [cohortOptions]);
-  const programPickerOptions = useMemo(() => programOptions.map((program) => ({ id: program.id, label: program.name, value: program.name })), [programOptions]);
+  const cohortPickerOptions = useMemo(() => cohortOptions.map((cohort) => ({ id: cohort.id, label: cohort.name, meta: cohort.status.toUpperCase(), value: cohort.name })), [cohortOptions]);
+  const programPickerOptions = useMemo(() => programOptions.map((program) => ({ id: program.id, label: program.name, meta: program.programKey, value: program.name })), [programOptions]);
   const filteredRows = useMemo(
     () =>
       previewRows.filter((row) => {
@@ -826,6 +965,8 @@ function ImportPreviewModal({
   const visibleRows = filteredRows.slice(0, 100);
   const selectedRowSet = useMemo(() => new Set(selectedRowNumbers), [selectedRowNumbers]);
   const visibleSelectedCount = visibleRows.filter((row) => selectedRowSet.has(row.rowNumber)).length;
+  const editingRow = editingRowNumber === null ? null : previewRows.find((row) => row.rowNumber === editingRowNumber) ?? null;
+  const isImporting = Boolean(importProgress) || importStudents.isPending;
 
   useEffect(() => {
     setSelectedRowNumbers((current) => {
@@ -833,6 +974,12 @@ function ImportPreviewModal({
       return next.length === current.length ? current : next;
     });
   }, [previewRows]);
+
+  useEffect(() => {
+    if (editingRowNumber !== null && !previewRows.some((row) => row.rowNumber === editingRowNumber)) {
+      setEditingRowNumber(null);
+    }
+  }, [editingRowNumber, previewRows]);
 
   function recalculateRows(rows: StudentImportPreviewRow[]) {
     const emailCounts = rows.reduce<Map<string, number>>((counts, row) => {
@@ -914,6 +1061,10 @@ function ImportPreviewModal({
     if (file) await onFile(file);
   }
 
+  async function handlePastePreview() {
+    await onPasteRows(pasteText);
+  }
+
   return (
     <div className="student-modal-backdrop" role="presentation">
       <section aria-labelledby="student-import-title" aria-modal="true" className="student-modal student-import-modal" role="dialog">
@@ -922,27 +1073,61 @@ function ImportPreviewModal({
             <span className="modal-eyebrow">Student Import</span>
             <h2 id="student-import-title">{preview ? preview.fileName : 'Upload students'}</h2>
           </div>
-          <button aria-label="Close import preview" className="student-modal__icon-button" onClick={onClose} type="button">
+          <button aria-label="Close import preview" className="student-modal__icon-button" disabled={isImporting} onClick={onClose} type="button">
             <X size={26} />
           </button>
         </header>
         <div className="student-modal__body">
           {!preview ? (
             <div className="student-import-upload">
-              <button className="segmented-button" onClick={() => void onDownloadTemplate()} type="button">
-                <Download size={16} />
-                Download Excel Template
-              </button>
-              <label className="student-import-dropzone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => void handleDrop(event)}>
-                <FileUp size={32} />
-                <strong>{uploading ? 'Reading file...' : 'Drop Excel or CSV file here'}</strong>
-                <span>Supported formats: .xlsx and .csv</span>
-                <input accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="sr-only" disabled={uploading} onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  event.target.value = '';
-                  if (file) void onFile(file);
-                }} type="file" />
-              </label>
+              <div className="student-import-entry-tabs" role="group" aria-label="Choose student import method">
+                <button className={`segmented-button ${entryMode === 'file' ? 'segmented-button--active' : ''}`} onClick={() => onEntryModeChange('file')} type="button">
+                  <FileUp size={16} />
+                  Upload file
+                </button>
+                <button className={`segmented-button ${entryMode === 'paste' ? 'segmented-button--active' : ''}`} onClick={() => onEntryModeChange('paste')} type="button">
+                  <ClipboardPaste size={16} />
+                  Paste table
+                </button>
+                <button className="segmented-button" onClick={() => void onDownloadTemplate()} type="button">
+                  <Download size={16} />
+                  Download template
+                </button>
+              </div>
+              {entryMode === 'file' ? (
+                <label className="student-import-dropzone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => void handleDrop(event)}>
+                  <FileUp size={32} />
+                  <strong>{uploading ? 'Reading file...' : 'Drop Excel or CSV file here'}</strong>
+                  <span>Supported formats: .xlsx and .csv</span>
+                  <input accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="sr-only" disabled={uploading} onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = '';
+                    if (file) void onFile(file);
+                  }} type="file" />
+                </label>
+              ) : (
+                <section className="student-import-paste-panel" aria-label="Paste student table">
+                  <div>
+                    <strong>Paste rows from Google Sheets</strong>
+                    <span>Use the same column order as the Excel template. Header row is optional.</span>
+                  </div>
+                  <textarea
+                    autoFocus
+                    disabled={uploading}
+                    onChange={(event) => setPasteText(event.target.value)}
+                    placeholder={studentImportHeaders.join('\t')}
+                    value={pasteText}
+                  />
+                  <div className="student-import-paste-panel__actions">
+                    <button className="segmented-button" onClick={() => setPasteText('')} type="button" disabled={!pasteText.trim() || uploading}>
+                      Clear
+                    </button>
+                    <button className="segmented-button segmented-button--active" onClick={() => void handlePastePreview()} type="button" disabled={!pasteText.trim() || uploading}>
+                      {uploading ? 'Reading rows...' : 'Review Pasted Rows'}
+                    </button>
+                  </div>
+                </section>
+              )}
               {error ? <div className="form-banner form-banner--error">{error}</div> : null}
             </div>
           ) : (
@@ -952,14 +1137,36 @@ function ImportPreviewModal({
                 <DetailField label="Needs review" value={String(invalidRows.length)} />
                 <DetailField label="Total rows" value={String(preview.rows.length)} />
               </div>
+              {importProgress ? (
+                <section className="student-import-progress" aria-label="Student import progress" aria-live="polite">
+                  <div className="student-import-progress__header">
+                    <div>
+                      <strong>Importing students</strong>
+                      <span>
+                        {importProgress.completed} of {importProgress.total} processed
+                      </span>
+                    </div>
+                    <b>{importProgress.percent}%</b>
+                  </div>
+                  <div className="student-import-progress__track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={importProgress.percent}>
+                    <span style={{ width: `${importProgress.percent}%` }} />
+                  </div>
+                  <p>
+                    Created {importProgress.created}, updated {importProgress.updated}
+                    {importProgress.failed ? `, failed ${importProgress.failed}` : ''}.
+                  </p>
+                </section>
+              ) : null}
               <div className="student-import-modebar">
                 <div>
-                  <strong>{isEditing ? 'Edit mode' : 'Review mode'}</strong>
-                  <span>{isEditing ? 'Update missing details, cohort tags, program tags, and email actions before import.' : 'Review detected rows first. Switch to edit mode only where corrections are needed.'}</span>
+                  <strong>{editingRow ? `Editing row ${editingRow.rowNumber}` : 'Review rows'}</strong>
+                  <span>{editingRow ? 'Use the side editor for student details, cohorts, programs, invite, and onboarding actions.' : 'Scan the import rows below. Open any row for a cleaner edit experience.'}</span>
                 </div>
-                <button className="segmented-button" onClick={() => setIsEditing((current) => !current)} type="button">
-                  {isEditing ? 'Back to Review' : 'Edit Rows'}
-                </button>
+                {editingRow ? (
+                  <button className="segmented-button" onClick={() => setEditingRowNumber(null)} type="button">
+                    Close Editor
+                  </button>
+                ) : null}
               </div>
               <div className="student-import-assignmentbar" aria-label="Existing student assignment behavior">
                 <div>
@@ -992,153 +1199,250 @@ function ImportPreviewModal({
                   Showing {visibleRows.length} of {filteredRows.length} matching rows. Import will use all {validRows.length} valid rows.
                 </div>
               </div>
-              {isEditing ? (
-                <div className="student-import-bulkbar" aria-label="Bulk apply import tags">
-                  <div>
-                    <strong>{selectedRowNumbers.length} selected</strong>
-                    <span>Select rows, choose cohorts/programs, then apply to those rows.</span>
-                  </div>
-                  <StudentImportMultiSelect label="bulk cohorts" options={cohortPickerOptions} selected={bulkCohortNames} onChange={setBulkCohortNames} />
-                  <StudentImportMultiSelect label="bulk programs" options={programPickerOptions} selected={bulkProgramNames} onChange={setBulkProgramNames} />
-                  <button className="segmented-button segmented-button--active" disabled={selectedRowNumbers.length === 0 || (bulkCohortNames.length === 0 && bulkProgramNames.length === 0)} onClick={applyBulkImportAssignments} type="button">
-                    Apply to Selected
-                  </button>
+              <div className="student-import-bulkbar" aria-label="Bulk apply import tags">
+                <div>
+                  <strong>{selectedRowNumbers.length} selected</strong>
+                  <span>Select rows, choose cohorts/programs, then apply to those rows.</span>
                 </div>
-              ) : null}
-              <div className="student-import-table-wrap">
-                <table className="data-table student-import-table student-import-edit-table">
-                  <colgroup>
-                    <col className="student-import-col--select" />
-                    <col className="student-import-col--row" />
-                    <col className="student-import-col--student" />
-                    <col className="student-import-col--email" />
-                    <col className="student-import-col--cohorts" />
-                    <col className="student-import-col--programs" />
-                    <col className="student-import-col--invite" />
-                    <col className="student-import-col--onboarding" />
-                    <col className="student-import-col--status" />
-                  </colgroup>
-                  <thead>
-                    <tr>
-                      <th scope="col">
-                        <button className="admin-student-check" onClick={toggleVisibleImportRows} type="button" aria-label="Select visible import rows">
-                          {visibleRows.length > 0 && visibleSelectedCount === visibleRows.length ? <CheckSquare size={18} /> : <Square size={18} />}
-                        </button>
-                      </th>
-                      <th scope="col">Row</th>
-                      <th scope="col">Student</th>
-                      <th scope="col">Email</th>
-                      <th scope="col">Cohorts</th>
-                      <th scope="col">Programs</th>
-                      <th scope="col">Invite</th>
-                      <th scope="col">Onboarding</th>
-                      <th scope="col">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleRows.map((row) => (
-                      <tr key={row.rowNumber} className={row.errors.length > 0 ? 'student-import-row--invalid' : undefined}>
-                        <td>
-                          <button className="admin-student-check" onClick={() => toggleImportRow(row.rowNumber)} type="button" aria-label={`Select import row ${row.rowNumber}`}>
-                            {selectedRowSet.has(row.rowNumber) ? <CheckSquare size={18} /> : <Square size={18} />}
+                <StudentImportMultiSelect label="bulk cohorts" options={cohortPickerOptions} selected={bulkCohortNames} onChange={setBulkCohortNames} />
+                <StudentImportMultiSelect label="bulk programs" options={programPickerOptions} selected={bulkProgramNames} onChange={setBulkProgramNames} />
+                <button className="segmented-button segmented-button--active" disabled={selectedRowNumbers.length === 0 || (bulkCohortNames.length === 0 && bulkProgramNames.length === 0)} onClick={applyBulkImportAssignments} type="button">
+                  Apply to Selected
+                </button>
+              </div>
+              <div className={`student-import-editor-layout ${editingRow ? 'student-import-editor-layout--open' : ''}`}>
+                <div className="student-import-table-wrap">
+                  <table className="data-table student-import-table student-import-edit-table">
+                    <colgroup>
+                      <col className="student-import-col--select" />
+                      <col className="student-import-col--row" />
+                      <col className="student-import-col--student" />
+                      <col className="student-import-col--email" />
+                      <col className="student-import-col--profile" />
+                      <col className="student-import-col--cohorts" />
+                      <col className="student-import-col--programs" />
+                      <col className="student-import-col--actions" />
+                      <col className="student-import-col--status" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th scope="col">
+                          <button className="admin-student-check" onClick={toggleVisibleImportRows} type="button" aria-label="Select visible import rows">
+                            {visibleRows.length > 0 && visibleSelectedCount === visibleRows.length ? <CheckSquare size={18} /> : <Square size={18} />}
                           </button>
-                        </td>
-                        <td>{row.rowNumber}</td>
-                        <td>
-                          {isEditing ? (
-                            <>
-                              <input value={row.payload.fullName} onChange={(event) => updatePayload(row.rowNumber, { fullName: event.target.value })} placeholder="Full name" type="text" />
-                              <input value={row.payload.studentId ?? ''} onChange={(event) => updatePayload(row.rowNumber, { studentId: event.target.value || undefined })} placeholder="Student ID" type="text" />
-                            </>
-                          ) : (
+                        </th>
+                        <th scope="col">Row</th>
+                        <th scope="col">Student</th>
+                        <th scope="col">Email</th>
+                        <th scope="col">Profile</th>
+                        <th scope="col">Cohorts</th>
+                        <th scope="col">Programs</th>
+                        <th scope="col">Edit</th>
+                        <th scope="col">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleRows.map((row) => (
+                        <tr key={row.rowNumber} className={`${row.errors.length > 0 ? 'student-import-row--invalid' : ''} ${editingRowNumber === row.rowNumber ? 'student-import-row--active' : ''}`.trim()}>
+                          <td>
+                            <button className="admin-student-check" onClick={() => toggleImportRow(row.rowNumber)} type="button" aria-label={`Select import row ${row.rowNumber}`}>
+                              {selectedRowSet.has(row.rowNumber) ? <CheckSquare size={18} /> : <Square size={18} />}
+                            </button>
+                          </td>
+                          <td>{row.rowNumber}</td>
+                          <td>
                             <div className="student-import-readonly">
                               <strong>{formatValue(row.payload.fullName)}</strong>
                               <span>{formatValue(row.payload.studentId)}</span>
                             </div>
-                          )}
-                        </td>
-                        <td>
-                          {isEditing ? (
-                            <>
-                              <input value={row.payload.email} onChange={(event) => updatePayload(row.rowNumber, { email: event.target.value.toLowerCase() })} placeholder="Email" type="email" />
-                              <input value={row.payload.altEmail ?? ''} onChange={(event) => updatePayload(row.rowNumber, { altEmail: event.target.value || undefined })} placeholder="Alt email" type="email" />
-                            </>
-                          ) : (
+                          </td>
+                          <td>
                             <div className="student-import-readonly">
                               <strong>{formatValue(row.payload.email)}</strong>
                               <span>{formatValue(row.payload.altEmail)}</span>
                             </div>
-                          )}
-                        </td>
-                        <td>
-                          {isEditing ? (
-                            <StudentImportMultiSelect
-                              label="cohorts"
-                              options={cohortPickerOptions}
-                              selected={row.payload.cohortNames ?? []}
-                              onChange={(cohortNames) => {
-                              const selectedCohorts = cohortOptions.filter((cohort) => cohortNames.includes(cohort.name));
-                              updatePayload(row.rowNumber, { cohortIds: selectedCohorts.map((cohort) => cohort.id), cohortNames, slot: deriveSlotFromSelectedCohorts(selectedCohorts) || undefined });
-                            }}
-                            />
-                          ) : (
+                          </td>
+                          <td>
+                            <div className="student-import-readonly">
+                              <strong>{formatValue(row.payload.educationYear)}</strong>
+                              <span>Mentor: {formatValue(row.payload.personalMentor)}</span>
+                              <span>Onboarding: {formatDate(row.payload.onboardingDate)}</span>
+                              <span>Duration: {formatValue(row.payload.liveProjectDuration)}</span>
+                            </div>
+                          </td>
+                          <td>
                             <span className="student-import-readonly-list">{formatList(row.payload.cohortNames)}</span>
-                          )}
-                        </td>
-                        <td>
-                          {isEditing ? (
-                            <StudentImportMultiSelect
-                              label="programs"
-                              options={programPickerOptions}
-                              selected={row.payload.programNames ?? []}
-                              onChange={(programNames) => {
-                              const selectedPrograms = programOptions.filter((program) => programNames.includes(program.name));
-                              updatePayload(row.rowNumber, { programKeys: selectedPrograms.map((program) => program.programKey), programNames });
-                            }}
-                            />
-                          ) : (
+                          </td>
+                          <td>
                             <span className="student-import-readonly-list">{formatList(row.payload.programNames)}</span>
-                          )}
-                        </td>
-                        <td>
+                          </td>
+                          <td>
+                            <button className={`segmented-button student-import-edit-button ${editingRowNumber === row.rowNumber ? 'segmented-button--active' : ''}`} onClick={() => setEditingRowNumber(row.rowNumber)} type="button">
+                              <Pencil size={15} />
+                              Edit
+                            </button>
+                          </td>
+                          <td>
+                            {row.errors.length > 0 ? (
+                              <div className="student-import-errors">
+                                {row.errors.map((item) => (
+                                  <span key={item}>{item}</span>
+                                ))}
+                              </div>
+                            ) : (
+                              <StatusBadge tone="safe">Ready</StatusBadge>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                      {visibleRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={9}>
+                            <div className="student-import-empty">No rows match this preview filter.</div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+                {editingRow ? (
+                  <aside className="student-import-row-editor" aria-label={`Edit import row ${editingRow.rowNumber}`}>
+                    <div className="student-import-row-editor__header">
+                      <div>
+                        <span className="modal-eyebrow">Row {editingRow.rowNumber}</span>
+                        <strong>{formatValue(editingRow.payload.fullName, 'Student details')}</strong>
+                      </div>
+                      <button aria-label="Close row editor" className="student-modal__icon-button" onClick={() => setEditingRowNumber(null)} type="button">
+                        <X size={20} />
+                      </button>
+                    </div>
+                    <div className="student-import-row-editor__body">
+                      <div className="student-import-editor-section">
+                        <strong>Student identity</strong>
+                        <div className="student-import-editor-grid">
+                          <label>
+                            <span>Full name</span>
+                            <input value={editingRow.payload.fullName} onChange={(event) => updatePayload(editingRow.rowNumber, { fullName: event.target.value })} placeholder="Full name" type="text" />
+                          </label>
+                          <label>
+                            <span>Student ID</span>
+                            <input value={editingRow.payload.studentId ?? ''} onChange={(event) => updatePayload(editingRow.rowNumber, { studentId: event.target.value || undefined })} placeholder="Student ID" type="text" />
+                          </label>
+                          <label>
+                            <span>Email</span>
+                            <input value={editingRow.payload.email} onChange={(event) => updatePayload(editingRow.rowNumber, { email: event.target.value.toLowerCase() })} placeholder="Email" type="email" />
+                          </label>
+                          <label>
+                            <span>Alt email</span>
+                            <input value={editingRow.payload.altEmail ?? ''} onChange={(event) => updatePayload(editingRow.rowNumber, { altEmail: event.target.value || undefined })} placeholder="Alt email" type="email" />
+                          </label>
+                          <label>
+                            <span>Phone</span>
+                            <input value={editingRow.payload.phone ?? ''} onChange={(event) => updatePayload(editingRow.rowNumber, { phone: event.target.value || undefined })} placeholder="Phone" type="tel" />
+                          </label>
+                          <label>
+                            <span>College</span>
+                            <input value={editingRow.payload.collegeName ?? ''} onChange={(event) => updatePayload(editingRow.rowNumber, { collegeName: event.target.value || undefined })} placeholder="College name" type="text" />
+                          </label>
+                          <label>
+                            <span>Education Year</span>
+                            <select value={editingRow.payload.educationYear ?? ''} onChange={(event) => updatePayload(editingRow.rowNumber, { educationYear: event.target.value || undefined })}>
+                              <option value="">Select education year</option>
+                              {educationYearOptions.map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            <span>Opted for Personal Mentor</span>
+                            <select value={editingRow.payload.personalMentor ?? ''} onChange={(event) => updatePayload(editingRow.rowNumber, { personalMentor: event.target.value || undefined })}>
+                              <option value="">Select mentor option</option>
+                              {personalMentorOptions.map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            <span>Onboarding Date</span>
+                            <input value={editingRow.payload.onboardingDate ?? ''} onChange={(event) => updatePayload(editingRow.rowNumber, { onboardingDate: event.target.value || undefined })} type="date" />
+                          </label>
+                          <label>
+                            <span>Live Project Duration</span>
+                            <select value={editingRow.payload.liveProjectDuration ?? ''} onChange={(event) => updatePayload(editingRow.rowNumber, { liveProjectDuration: event.target.value || undefined })}>
+                              <option value="">Select duration</option>
+                              {liveProjectDurationOptions.map((option) => (
+                                <option key={option} value={option}>
+                                  {option}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                      </div>
+                      <div className="student-import-editor-section">
+                        <strong>Cohorts and programs</strong>
+                        <label className="student-import-editor-picker">
+                          <span>Cohorts</span>
+                          <StudentImportMultiSelect
+                            label="cohorts"
+                            options={cohortPickerOptions}
+                            selected={editingRow.payload.cohortNames ?? []}
+                            onChange={(cohortNames) => {
+                              const selectedCohorts = cohortOptions.filter((cohort) => cohortNames.includes(cohort.name));
+                              updatePayload(editingRow.rowNumber, { cohortIds: selectedCohorts.map((cohort) => cohort.id), cohortNames, slot: deriveSlotFromSelectedCohorts(selectedCohorts) || undefined });
+                            }}
+                          />
+                        </label>
+                        <label className="student-import-editor-picker">
+                          <span>Programs</span>
+                          <StudentImportMultiSelect
+                            label="programs"
+                            options={programPickerOptions}
+                            selected={editingRow.payload.programNames ?? []}
+                            onChange={(programNames) => {
+                              const selectedPrograms = programOptions.filter((program) => programNames.includes(program.name));
+                              updatePayload(editingRow.rowNumber, { programKeys: selectedPrograms.map((program) => program.programKey), programNames });
+                            }}
+                          />
+                        </label>
+                      </div>
+                      <div className="student-import-editor-section">
+                        <strong>Email actions</strong>
+                        <div className="student-import-editor-actions">
                           <label className="student-import-checkbox">
                             <input
-                              checked={row.sendPortalInvite}
-                              disabled={!isEditing || row.existingStudent}
-                              onChange={(event) => updateRow(row.rowNumber, (current) => ({ ...current, sendPortalInvite: event.target.checked }))}
+                              checked={editingRow.sendPortalInvite}
+                              disabled={editingRow.existingStudent}
+                              onChange={(event) => updateRow(editingRow.rowNumber, (current) => ({ ...current, sendPortalInvite: event.target.checked }))}
                               type="checkbox"
                             />
-                            <span>{row.existingStudent ? 'Existing' : 'Send'}</span>
+                            <span>{editingRow.existingStudent ? 'Existing student - invite skipped' : 'Send portal invite'}</span>
                           </label>
-                        </td>
-                        <td>
                           <label className="student-import-checkbox">
-                            <input checked={row.sendOnboardingMail} disabled={!isEditing} onChange={(event) => updateRow(row.rowNumber, (current) => ({ ...current, sendOnboardingMail: event.target.checked }))} type="checkbox" />
-                            <span>Send</span>
+                            <input checked={editingRow.sendOnboardingMail} onChange={(event) => updateRow(editingRow.rowNumber, (current) => ({ ...current, sendOnboardingMail: event.target.checked }))} type="checkbox" />
+                            <span>Send onboarding email</span>
                           </label>
-                        </td>
-                        <td>
-                          {row.errors.length > 0 ? (
-                            <div className="student-import-errors">
-                              {row.errors.map((item) => (
-                                <span key={item}>{item}</span>
-                              ))}
-                            </div>
-                          ) : (
-                            <StatusBadge tone="safe">Ready</StatusBadge>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                    {visibleRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={9}>
-                          <div className="student-import-empty">No rows match this preview filter.</div>
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
+                        </div>
+                      </div>
+                      <div className="student-import-editor-section">
+                        <strong>Row status</strong>
+                        {editingRow.errors.length > 0 ? (
+                          <div className="student-import-errors">
+                            {editingRow.errors.map((item) => (
+                              <span key={item}>{item}</span>
+                            ))}
+                          </div>
+                        ) : (
+                          <StatusBadge tone="safe">Ready to import</StatusBadge>
+                        )}
+                      </div>
+                    </div>
+                  </aside>
+                ) : null}
               </div>
             </>
           )}
@@ -1154,12 +1458,12 @@ function ImportPreviewModal({
           ) : null}
         </div>
         <footer className="student-modal__footer enroll-student-modal__footer">
-          <button className="segmented-button" onClick={onClose} type="button">
+          <button className="segmented-button" disabled={isImporting} onClick={onClose} type="button">
             Close
           </button>
           {preview ? (
-            <button className="segmented-button segmented-button--active" disabled={validRows.length === 0 || importStudents.isPending} onClick={() => void onConfirm(importAssignmentMode)} type="button">
-              {importStudents.isPending ? 'Importing...' : `Import ${validRows.length} Rows`}
+            <button className="segmented-button segmented-button--active" disabled={validRows.length === 0 || isImporting} onClick={() => void onConfirm(importAssignmentMode)} type="button">
+              {isImporting ? `${importProgress?.percent ?? 0}% Importing` : `Import ${validRows.length} Rows`}
             </button>
           ) : null}
         </footer>
@@ -1265,6 +1569,9 @@ function BulkAssignModal({
 export function AdminStudentsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const page = asPositiveInteger(searchParams.get('page'), 1);
+  const limit = parseRowsPerPage(searchParams.get('limit'));
+  const sort = parseStudentSort(searchParams.get('sort'));
+  const direction = parseSortDirection(searchParams.get('direction'));
   const status = parseStatus(searchParams.get('status'));
   const search = searchParams.get('search')?.trim() ?? '';
   const cohortName = searchParams.get('cohortName')?.trim() ?? '';
@@ -1280,13 +1587,15 @@ export function AdminStudentsPage() {
   const [importPreview, setImportPreview] = useState<StudentImportPreview | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importResultRows, setImportResultRows] = useState<AdminStudentImportRowResult[] | null>(null);
+  const [importProgress, setImportProgress] = useState<StudentImportProgress | null>(null);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isImportParsing, setIsImportParsing] = useState(false);
+  const [importEntryMode, setImportEntryMode] = useState<StudentImportEntryMode>('file');
   const [importExistingEmails, setImportExistingEmails] = useState<Set<string>>(new Set());
   const [isBulkAssignOpen, setIsBulkAssignOpen] = useState(false);
   const [bulkAssignForm, setBulkAssignForm] = useState<BulkAssignForm>({ assignmentMode: 'add', cohortNames: [], programNames: [] });
 
-  const studentsQuery = useAdminStudents({ page, programKey, search, status, cohortName });
+  const studentsQuery = useAdminStudents({ page, programKey, search, status, cohortName, limit, sort, direction });
   const exportStudents = useExportAdminStudents();
   const saveStudent = useSaveAdminStudent();
   const updateStudent = useUpdateAdminStudent();
@@ -1295,8 +1604,6 @@ export function AdminStudentsPage() {
   const bulkUpdateStudents = useBulkUpdateAdminStudents();
   const backfillAuthLinks = useBackfillAdminStudentAuthLinks();
   const resendStudentInvite = useResendAdminStudentInvite();
-  const inviteHealthQuery = useAdminStudentInviteHealth();
-  const auditLogsQuery = useAdminStudentAuditLogs();
   const programsQuery = useAdminPrograms({ limit: 100, page: 1, status: 'all' });
   const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, status: 'all' });
   const cohortsPageTwoQuery = useAdminCohorts({ limit: 100, page: 2, status: 'all' });
@@ -1335,7 +1642,7 @@ export function AdminStudentsPage() {
 
   useEffect(() => {
     setSelectedStudentIds([]);
-  }, [page, search, status, cohortName, programKey]);
+  }, [page, search, status, cohortName, programKey, limit, sort, direction]);
 
   useEffect(() => {
     setSearchInput(search);
@@ -1381,6 +1688,31 @@ export function AdminStudentsPage() {
     updateParams({ status: nextStatus === 'all' ? undefined : nextStatus });
   }
 
+  function handleRowsPerPageChange(nextLimit: string) {
+    updateParams({ limit: nextLimit });
+  }
+
+  function handleSort(nextSort: StudentSortKey) {
+    const nextDirection: SortDirection = sort === nextSort && direction === 'asc' ? 'desc' : 'asc';
+    updateParams({ sort: nextSort, direction: nextDirection });
+  }
+
+  function renderSortHeader(label: string, key: StudentSortKey) {
+    const isActive = sort === key;
+    return (
+      <button
+        aria-label={`Sort by ${label}`}
+        aria-sort={isActive ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+        className={`admin-student-sort-button ${isActive ? 'admin-student-sort-button--active' : ''}`}
+        onClick={() => handleSort(key)}
+        type="button"
+      >
+        <span>{label}</span>
+        <span aria-hidden="true">{isActive ? (direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+      </button>
+    );
+  }
+
   async function handleCreateStudent(payload: AdminStudentWritePayload) {
     await saveStudent.mutateAsync(payload);
     setActionMessage('Student saved. Profile and selected links were recorded.');
@@ -1406,11 +1738,12 @@ export function AdminStudentsPage() {
 
   function downloadStudentsCsv(students: AdminStudent[], fileName: string) {
     if (!students.length) return;
-    const headers = ['studentId', 'fullName', 'email', 'altEmail', 'phone', 'collegeName', 'cohortName', 'slot', 'programs', 'waGroup', 'onboardingMailStatus', 'active'];
+    const headers = studentExportHeaders;
     const lines = [
       headers.join(','),
       ...students.map((student) =>
         [
+          student.onboardingSequence,
           student.studentId,
           student.fullName,
           student.email,
@@ -1418,9 +1751,12 @@ export function AdminStudentsPage() {
           student.phone,
           student.collegeName,
           formatList(studentCohortNames(student), student.cohortName),
-          student.slot,
           formatList(student.programs, student.programName),
           student.waGroup,
+          student.personalMentor,
+          student.educationYear,
+          student.onboardingDate ? student.onboardingDate.slice(0, 10) : '',
+          student.liveProjectDuration,
           student.onboardingMailStatus,
           student.active
         ]
@@ -1442,7 +1778,7 @@ export function AdminStudentsPage() {
       const { default: writeXlsxFile } = await import('write-excel-file/browser');
       const studentRows: SheetData = [
         studentImportHeaders,
-        ['STU-1001', 'Example Student', 'student@example.com', '', '+91 90000 00000', 'Example College', 'Cohort A|Cohort B', 'Program A|Program B', 'WA Group Name', 'pending', 'true']
+        ['STU-1001', 'Example Student', 'student@example.com', '', '+91 90000 00000', 'Example College', 'Cohort A|Cohort B', 'Program A|Program B', 'WA Group Name', 'Yes', 'Graduate', '2026-07-05', '4 weeks', 'pending', 'true']
       ];
       const cohortRows: SheetData = [
         ['Cohort Name', 'Cohort ID', 'Start Date', 'Derived Slot', 'Status'],
@@ -1473,7 +1809,7 @@ export function AdminStudentsPage() {
 
   async function handleExportCsv() {
     try {
-      const result = await exportStudents.mutateAsync({ cohortName, programKey, search, status });
+      const result = await exportStudents.mutateAsync({ cohortName, direction, programKey, search, sort, status });
       downloadStudentsCsv(result.items, `students-filtered-${new Date().toISOString().slice(0, 10)}.csv`);
       setActionMessage(`Exported ${result.items.length} filtered students.`);
     } catch (error) {
@@ -1486,66 +1822,78 @@ export function AdminStudentsPage() {
     setActionMessage(`Exported ${selectedStudents.length} selected students.`);
   }
 
-  function openImportModal() {
+  function openImportModal(mode: StudentImportEntryMode = 'file') {
     setImportError(null);
     setImportPreview(null);
     setImportResultRows(null);
+    setImportProgress(null);
+    setImportEntryMode(mode);
     setIsImportModalOpen(true);
   }
 
-  function closeImportModal() {
+  function closeImportModal(force = false) {
+    if (!force && (importProgress || importStudents.isPending)) return;
     setIsImportModalOpen(false);
     setImportError(null);
     setImportPreview(null);
     setImportResultRows(null);
+    setImportProgress(null);
     setIsImportParsing(false);
     setImportExistingEmails(new Set());
+    setImportEntryMode('file');
+  }
+
+  async function buildImportPreviewFromRows(rows: string[][], sourceName: string) {
+    const [firstRow, ...remainingRows] = rows;
+    const headers = firstRow && looksLikeImportHeader(firstRow) ? firstRow : studentImportHeaders;
+    const bodyRows = firstRow && looksLikeImportHeader(firstRow) ? remainingRows : rows;
+    if (!headers || bodyRows.length === 0) {
+      setImportError('No student rows found. Use the template format and try again.');
+      return;
+    }
+
+    const cohortByName = new Map(cohortRecords.map((cohort) => [cohort.name.toLowerCase(), cohort]));
+    const programByKeyOrName = new Map(programRecords.flatMap((program) => [[program.name.toLowerCase(), program], [program.programKey.toLowerCase(), program]] as const));
+    const existingResult = await exportStudents.mutateAsync({ status: 'all' });
+    const existingEmails = new Set(existingResult.items.map((student) => student.email.trim().toLowerCase()).filter(Boolean));
+    setImportExistingEmails(existingEmails);
+
+    const emailCounts = bodyRows.reduce<Map<string, number>>((counts, row) => {
+      const email = buildImportPayloadFromRow(row, headers, cohortByName, programByKeyOrName).email.trim().toLowerCase();
+      if (email) counts.set(email, (counts.get(email) ?? 0) + 1);
+      return counts;
+    }, new Map());
+
+    const rowNumberOffset = firstRow && looksLikeImportHeader(firstRow) ? 2 : 1;
+    const previewRows = bodyRows.map((row, index) => {
+      const payload = buildImportPayloadFromRow(row, headers, cohortByName, programByKeyOrName);
+      const email = payload.email.trim().toLowerCase();
+      const existingStudent = existingEmails.has(email);
+      return {
+        errors: validateImportPayload(payload, cohortByName, programByKeyOrName, Boolean(email && (emailCounts.get(email) ?? 0) > 1)),
+        existingStudent,
+        payload,
+        rowNumber: index + rowNumberOffset,
+        sendOnboardingMail: true,
+        sendPortalInvite: !existingStudent
+      };
+    });
+
+    if (previewRows.length === 0) {
+      setImportError('No readable student rows found.');
+      return;
+    }
+
+    setImportPreview({ fileName: sourceName, rows: previewRows });
   }
 
   async function handleImportFile(file: File) {
     try {
       setImportError(null);
       setImportResultRows(null);
+      setImportProgress(null);
       setIsImportParsing(true);
-      const rows = await readImportRows(file);
-      const [headers, ...bodyRows] = rows;
-      if (!headers || bodyRows.length === 0) {
-        setImportError('No student rows found. Use the template format and upload again.');
-        return;
-      }
-
-      const cohortByName = new Map(cohortRecords.map((cohort) => [cohort.name.toLowerCase(), cohort]));
-      const programByKeyOrName = new Map(programRecords.flatMap((program) => [[program.name.toLowerCase(), program], [program.programKey.toLowerCase(), program]] as const));
-      const existingResult = await exportStudents.mutateAsync({ status: 'all' });
-      const existingEmails = new Set(existingResult.items.map((student) => student.email.trim().toLowerCase()).filter(Boolean));
-      setImportExistingEmails(existingEmails);
-
-      const emailCounts = bodyRows.reduce<Map<string, number>>((counts, row) => {
-        const email = buildImportPayloadFromRow(row, headers, cohortByName, programByKeyOrName).email.trim().toLowerCase();
-        if (email) counts.set(email, (counts.get(email) ?? 0) + 1);
-        return counts;
-      }, new Map());
-
-      const previewRows = bodyRows.map((row, index) => {
-        const payload = buildImportPayloadFromRow(row, headers, cohortByName, programByKeyOrName);
-        const email = payload.email.trim().toLowerCase();
-        const existingStudent = existingEmails.has(email);
-        return {
-          errors: validateImportPayload(payload, cohortByName, programByKeyOrName, Boolean(email && (emailCounts.get(email) ?? 0) > 1)),
-          existingStudent,
-          payload,
-          rowNumber: index + 2,
-          sendOnboardingMail: true,
-          sendPortalInvite: !existingStudent
-        };
-      });
-
-      if (previewRows.length === 0) {
-        setImportError('No readable student rows found.');
-        return;
-      }
-
-      setImportPreview({ fileName: file.name, rows: previewRows });
+      await buildImportPreviewFromRows(await readImportRows(file), file.name);
     } catch (error) {
       setImportError(readableError(error, 'Import file could not be read.'));
     } finally {
@@ -1553,10 +1901,29 @@ export function AdminStudentsPage() {
     }
   }
 
+  async function handleImportPaste(text: string) {
+    try {
+      setImportError(null);
+      setImportResultRows(null);
+      setImportProgress(null);
+      setIsImportParsing(true);
+      const rows = parsePastedTableRows(text);
+      if (rows.length === 0) {
+        setImportError('Paste at least one student row before reviewing.');
+        return;
+      }
+      await buildImportPreviewFromRows(rows, 'Pasted student table');
+    } catch (error) {
+      setImportError(readableError(error, 'Pasted rows could not be read.'));
+    } finally {
+      setIsImportParsing(false);
+    }
+  }
+
   async function confirmImportStudents(assignmentMode: StudentImportAssignmentMode = 'add') {
     if (!importPreview) return;
-    const payload = importPreview.rows
-      .filter((row) => row.errors.length === 0)
+    const validImportRows = importPreview.rows.filter((row) => row.errors.length === 0);
+    const payload = validImportRows
       .map((row) => ({
         ...row.payload,
         assignmentMode,
@@ -1567,9 +1934,51 @@ export function AdminStudentsPage() {
       setActionMessage('Student import skipped: preview has no valid rows.');
       return;
     }
-    const result = await importStudents.mutateAsync(payload);
-    setImportResultRows(result.rows ?? null);
-    setActionMessage(`Student import finished: ${result.created} created, ${result.updated} updated, ${result.failed} failed.`);
+    const aggregate = { created: 0, failed: 0, rows: [] as AdminStudentImportRowResult[], updated: 0 };
+    setImportError(null);
+    setImportResultRows(null);
+    setImportProgress({ completed: 0, created: 0, failed: 0, percent: 0, total: payload.length, updated: 0 });
+
+    try {
+      for (let index = 0; index < payload.length; index += studentImportBatchSize) {
+        const batchPayload = payload.slice(index, index + studentImportBatchSize);
+        const batchRows = validImportRows.slice(index, index + studentImportBatchSize);
+        const result = await importStudents.mutateAsync({ invalidate: false, students: batchPayload });
+        const normalizedRows = (result.rows ?? []).map((row, rowIndex) => ({
+          ...row,
+          rowNumber: batchRows[rowIndex]?.rowNumber ?? row.rowNumber
+        }));
+        aggregate.created += result.created;
+        aggregate.updated += result.updated;
+        aggregate.failed += result.failed;
+        aggregate.rows.push(...normalizedRows);
+
+        const completed = Math.min(payload.length, index + batchPayload.length);
+        setImportProgress({
+          completed,
+          created: aggregate.created,
+          failed: aggregate.failed,
+          percent: Math.round((completed / payload.length) * 100),
+          total: payload.length,
+          updated: aggregate.updated
+        });
+      }
+
+      setImportResultRows(aggregate.rows);
+      setActionMessage(`Student import finished: ${aggregate.created} created, ${aggregate.updated} updated, ${aggregate.failed} failed.`);
+      await studentsQuery.refetch();
+      if (aggregate.failed === 0) {
+        window.setTimeout(() => {
+          setImportProgress(null);
+          closeImportModal(true);
+        }, 650);
+      }
+    } catch (error) {
+      setImportError(readableError(error, 'Student import failed before all rows were processed.'));
+      setImportProgress(null);
+    } finally {
+      if (aggregate.failed > 0) setImportProgress(null);
+    }
   }
 
   function toggleSelectedStudent(studentId: string) {
@@ -1698,9 +2107,13 @@ export function AdminStudentsPage() {
             <Download size={16} />
             {exportStudents.isPending ? 'Exporting...' : 'Export Filtered'}
           </button>
-          <button className="segmented-button" disabled={importStudents.isPending || isImportParsing} onClick={openImportModal} type="button">
+          <button className="segmented-button" disabled={importStudents.isPending || isImportParsing} onClick={() => openImportModal('file')} type="button">
             <FileUp size={16} />
             Import
+          </button>
+          <button className="segmented-button" disabled={importStudents.isPending || isImportParsing} onClick={() => openImportModal('paste')} type="button">
+            <ClipboardPaste size={16} />
+            Paste Table
           </button>
           <button className="segmented-button segmented-button--active" onClick={() => setIsEnrollModalOpen(true)} type="button">
             <Plus size={16} />
@@ -1757,8 +2170,13 @@ export function AdminStudentsPage() {
             <table className="data-table admin-student-table">
               <colgroup>
                 <col className="admin-student-col--select" />
+                <col className="admin-student-col--serial" />
                 <col className="admin-student-col--name" />
                 <col className="admin-student-col--access" />
+                <col className="admin-student-col--education" />
+                <col className="admin-student-col--mentor" />
+                <col className="admin-student-col--onboarding" />
+                <col className="admin-student-col--duration" />
                 <col className="admin-student-col--auth" />
                 <col className="admin-student-col--status" />
                 <col className="admin-student-col--actions" />
@@ -1770,10 +2188,15 @@ export function AdminStudentsPage() {
                       {pageStudents.length > 0 && pageStudents.every((student) => selectedStudentIds.includes(student.id)) ? <CheckSquare size={18} /> : <Square size={18} />}
                     </button>
                   </th>
-                  <th scope="col">Student</th>
-                  <th scope="col">Access</th>
-                  <th scope="col">Auth & Invite</th>
-                  <th scope="col">Status</th>
+                  <th scope="col">{renderSortHeader('Serial', 'sequence')}</th>
+                  <th scope="col">{renderSortHeader('Student', 'student')}</th>
+                  <th scope="col">{renderSortHeader('Access', 'access')}</th>
+                  <th scope="col">{renderSortHeader('Education Year', 'education')}</th>
+                  <th scope="col">{renderSortHeader('Personal Mentor', 'mentor')}</th>
+                  <th scope="col">{renderSortHeader('Onboarding Date', 'onboarding')}</th>
+                  <th scope="col">{renderSortHeader('Live Project Duration', 'duration')}</th>
+                  <th scope="col">{renderSortHeader('Auth & Invite', 'auth')}</th>
+                  <th scope="col">{renderSortHeader('Status', 'status')}</th>
                   <th scope="col">Actions</th>
                 </tr>
               </thead>
@@ -1786,6 +2209,9 @@ export function AdminStudentsPage() {
                       <button className="admin-student-check" onClick={() => toggleSelectedStudent(student.id)} type="button" aria-label={`Select ${student.fullName}`}>
                         {selectedStudentIds.includes(student.id) ? <CheckSquare size={18} /> : <Square size={18} />}
                       </button>
+                    </td>
+                    <td>
+                      <span className="admin-student-serial">{formatValue(student.onboardingSequence)}</span>
                     </td>
                     <td>
                       <div className="admin-student-name">
@@ -1802,6 +2228,18 @@ export function AdminStudentsPage() {
                         <span>{formatList(student.programs, student.programName)}</span>
                         <small>{formatList(studentCohortNames(student), student.cohortName)}</small>
                       </div>
+                    </td>
+                    <td>
+                      <span className="admin-student-table-value">{formatValue(student.educationYear)}</span>
+                    </td>
+                    <td>
+                      <span className="admin-student-table-value">{formatValue(student.personalMentor)}</span>
+                    </td>
+                    <td>
+                      <span className="admin-student-table-value">{formatDate(student.onboardingDate)}</span>
+                    </td>
+                    <td>
+                      <span className="admin-student-table-value">{formatValue(student.liveProjectDuration)}</span>
                     </td>
                     <td>
                       <div className="admin-student-auth-cell">
@@ -1845,7 +2283,7 @@ export function AdminStudentsPage() {
 
       <nav className="pagination-bar" aria-label="Admin student pagination">
         {data?.hasPreviousPage ? (
-          <Link className="pagination-link" to={buildPageLink(page - 1, search, status, cohortName, programKey)}>
+          <Link className="pagination-link" to={buildPageLink(page - 1, search, status, cohortName, programKey, limit, sort, direction)}>
             Previous page
           </Link>
         ) : (
@@ -1855,85 +2293,23 @@ export function AdminStudentsPage() {
           Page {page} of {totalPages}
         </span>
         {data?.hasNextPage ? (
-          <Link className="pagination-link" to={buildPageLink(page + 1, search, status, cohortName, programKey)}>
+          <Link className="pagination-link" to={buildPageLink(page + 1, search, status, cohortName, programKey, limit, sort, direction)}>
             Next page
           </Link>
         ) : (
           <span className="pagination-link pagination-link--disabled">Next page</span>
         )}
+        <label className="pagination-size-control">
+          <span>Rows per page</span>
+          <select aria-label="Rows per page" value={limit} onChange={(event) => handleRowsPerPageChange(event.target.value)}>
+            {studentRowsPerPageOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
       </nav>
-
-      <section className="admin-student-ops-panel" aria-label="Student operations health and audit">
-        <div className="admin-student-ops-card">
-          <div className="admin-student-ops-card__header">
-            <Mail size={18} />
-            <div>
-              <span>Invite System</span>
-              <strong>Invite delivery health</strong>
-            </div>
-          </div>
-          <p>Tracks password setup invite queue health so admins can quickly spot stuck or failed student invite emails.</p>
-          {inviteHealthQuery.isLoading ? (
-            <p>Checking invite queue...</p>
-          ) : inviteHealthQuery.isError ? (
-            <p>Invite queue status unavailable.</p>
-          ) : inviteHealthQuery.data ? (
-            <dl className="admin-student-health-list">
-              <div>
-                <dt>Recent total</dt>
-                <dd>{inviteHealthQuery.data.total}</dd>
-              </div>
-              <div>
-                <dt>Queued</dt>
-                <dd>{inviteHealthQuery.data.counts.queued ?? 0}</dd>
-              </div>
-              <div>
-                <dt>Sent</dt>
-                <dd>{inviteHealthQuery.data.counts.sent ?? 0}</dd>
-              </div>
-              <div>
-                <dt>Failed</dt>
-                <dd>{inviteHealthQuery.data.counts.failed ?? 0}</dd>
-              </div>
-              <div>
-                <dt>Latest update</dt>
-                <dd>{formatDateTime(inviteHealthQuery.data.latestAt ?? undefined)}</dd>
-              </div>
-              <div>
-                <dt>Latest failure</dt>
-                <dd>{formatValue(inviteHealthQuery.data.latestFailure)}</dd>
-              </div>
-            </dl>
-          ) : null}
-        </div>
-        <div className="admin-student-ops-card">
-          <div className="admin-student-ops-card__header">
-            <History size={18} />
-            <div>
-              <span>Audit Trail</span>
-              <strong>Recent access changes</strong>
-            </div>
-          </div>
-          <p>Shows recent student profile, access, invite, and attempt-limit changes for traceability after admin actions.</p>
-          {auditLogsQuery.isLoading ? (
-            <p>Loading recent actions...</p>
-          ) : auditLogsQuery.isError ? (
-            <p>Student audit history unavailable.</p>
-          ) : auditLogsQuery.data?.items.length ? (
-            <div className="admin-student-audit-list">
-              {auditLogsQuery.data.items.map((entry) => (
-                <article key={entry.id}>
-                  <strong>{formatAuditAction(entry.action)}</strong>
-                  <span>{entry.actorEmail || 'System action'}</span>
-                  <time dateTime={entry.createdAt}>{formatDateTime(entry.createdAt)}</time>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <p>No student audit entries yet.</p>
-          )}
-        </div>
-      </section>
 
       {selectedStudent ? <StudentDetailsModal student={selectedStudent} onClose={() => setSelectedStudent(null)} /> : null}
       {isEnrollModalOpen ? (
@@ -1961,13 +2337,17 @@ export function AdminStudentsPage() {
       {isImportModalOpen ? (
         <ImportPreviewModal
           cohortOptions={cohortRecords}
+          entryMode={importEntryMode}
           error={importError}
           existingEmails={importExistingEmails}
+          importProgress={importProgress}
           importStudents={importStudents}
           onClose={closeImportModal}
           onConfirm={confirmImportStudents}
           onDownloadTemplate={handleDownloadImportTemplate}
+          onEntryModeChange={setImportEntryMode}
           onFile={handleImportFile}
+          onPasteRows={handleImportPaste}
           preview={importPreview}
           programOptions={programRecords}
           result={importResultRows}

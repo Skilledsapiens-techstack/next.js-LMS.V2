@@ -111,6 +111,27 @@ function isReviewableCandidate(candidate: AdminRecordingCandidate) {
   return fileType === 'MP4' && String(candidate.recordingType ?? '').toLowerCase() === 'shared_screen_with_speaker_view';
 }
 
+function hasOpenRecordingReviewHistory(candidates: AdminRecordingCandidate[], workshop: AdminWorkshop) {
+  const workshopKey = workshop.workshopId ?? workshop.id;
+  return candidates.some((candidate) => candidate.workshopId === workshopKey && (candidate.status === 'draft' || candidate.status === 'rejected'));
+}
+
+function latestTimestamp(candidate: AdminRecordingCandidate) {
+  return new Date(candidate.reviewedAt ?? candidate.updatedAt ?? candidate.detectedAt ?? 0).getTime();
+}
+
+function dedupeRejectedCandidates(candidates: AdminRecordingCandidate[]) {
+  const byWorkshopAndUrl = new Map<string, AdminRecordingCandidate>();
+  candidates.forEach((candidate) => {
+    const key = `${candidate.workshopId}::${candidate.playUrl ?? candidate.zoomRecordingFileId ?? candidate.id}`;
+    const current = byWorkshopAndUrl.get(key);
+    if (!current || latestTimestamp(candidate) >= latestTimestamp(current)) {
+      byWorkshopAndUrl.set(key, candidate);
+    }
+  });
+  return Array.from(byWorkshopAndUrl.values()).sort((left, right) => latestTimestamp(right) - latestTimestamp(left));
+}
+
 function visibilityText(workshop: AdminWorkshop) {
   if (!hasRecordingLink(workshop)) return 'Not visible: no published recording link.';
   if (workshop.status !== 'Completed') return `Not visible: workshop status is ${workshop.status}.`;
@@ -196,13 +217,19 @@ export function AdminRecordingCandidatesPage() {
   );
 
   const addLinkWorkshops = useMemo(
-    () => workshops.filter((workshop) => !hasRecordingLink(workshop) && workshopMatches(workshop, normalizedSearch, programFilter, cohortFilter)),
-    [cohortFilter, normalizedSearch, programFilter, workshops]
+    () =>
+      workshops.filter(
+        (workshop) =>
+          !hasRecordingLink(workshop) &&
+          !hasOpenRecordingReviewHistory(candidates, workshop) &&
+          workshopMatches(workshop, normalizedSearch, programFilter, cohortFilter)
+      ),
+    [candidates, cohortFilter, normalizedSearch, programFilter, workshops]
   );
 
   const rejectedCandidates = useMemo(
     () =>
-      candidates.filter((candidate) => {
+      dedupeRejectedCandidates(candidates.filter((candidate) => {
         const workshop = workshopsByKey.get(candidate.workshopId);
         return (
           candidate.status === 'rejected' &&
@@ -210,12 +237,12 @@ export function AdminRecordingCandidatesPage() {
           (programFilter === 'all' || workshop?.programKey === programFilter) &&
           (cohortFilter === 'all' || Boolean(workshop?.cohortNames.includes(cohortFilter)))
         );
-      }),
+      })),
     [candidates, cohortFilter, normalizedSearch, programFilter, workshopsByKey]
   );
 
   const reviewedCount = candidates.filter((candidate) => candidate.status === 'reviewed').length;
-  const rejectedCount = candidates.filter((candidate) => candidate.status === 'rejected').length;
+  const rejectedCount = rejectedCandidates.length;
   const visibleByTab = {
     'add-link': addLinkWorkshops,
     pending: pendingCandidates,
@@ -602,7 +629,7 @@ export function AdminRecordingCandidatesPage() {
           <div className="admin-recording-panel__header">
             <div>
               <h2>Add recording links</h2>
-              <p>Completed workshops land here until a Zoom MP4 or manual link is saved for review.</p>
+              <p>Completed workshops land here only when no recording is published and no review history exists.</p>
             </div>
           </div>
           {addLinkWorkshops.length > 0 ? (
@@ -659,7 +686,7 @@ export function AdminRecordingCandidatesPage() {
           <div className="admin-recording-panel__header">
             <div>
               <h2>Rejected recording candidates</h2>
-              <p>Rejected candidates stay here as admin history and do not block future fetches for the same Zoom file.</p>
+              <p>Rejected candidates stay here as admin history and keep the workshop out of Add Link to prevent repeated rejected entries.</p>
             </div>
           </div>
           {rejectedCandidates.length > 0 ? (

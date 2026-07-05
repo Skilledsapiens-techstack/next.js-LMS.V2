@@ -379,6 +379,21 @@ async function addManualRecording(supabase: ReturnType<typeof createClient>, act
   if (!playUrl) throw new Error('Add a valid recording URL before sending it for review.');
 
   const account = normalizeZoomAccount(body.zoomAccount ?? workshop.zoom_account);
+  const workshopKey = workshop.workshop_id ?? workshop.id;
+  const { data: existingManualCandidate, error: existingManualCandidateError } = await supabase
+    .from('workshop_recording_candidates')
+    .select('id,status')
+    .eq('workshop_id', workshopKey)
+    .eq('play_url', playUrl)
+    .in('status', ['draft', 'rejected'])
+    .limit(1)
+    .maybeSingle();
+  if (existingManualCandidateError) throw existingManualCandidateError;
+  if (existingManualCandidate) {
+    const status = String(existingManualCandidate.status ?? '');
+    throw new Error(status === 'draft' ? 'This recording link is already waiting for review.' : 'This recording link was already rejected for this workshop.');
+  }
+
   const row = {
     download_url: null,
     duration_minutes: null,
@@ -391,7 +406,7 @@ async function addManualRecording(supabase: ReturnType<typeof createClient>, act
     recording_type: youtubeUrl ? 'manual_youtube_link' : 'manual_recording_link',
     status: 'draft',
     updated_at: new Date().toISOString(),
-    workshop_id: workshop.workshop_id ?? workshop.id,
+    workshop_id: workshopKey,
     zoom_account: account,
     zoom_id: workshop.zoom_id ?? workshop.workshop_id ?? workshop.id,
     zoom_recording_file_id: null
