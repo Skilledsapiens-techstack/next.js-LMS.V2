@@ -1,4 +1,4 @@
-import { CalendarDays, Check, CheckCircle2, Clapperboard, Clock3, Copy, Edit3, Link as LinkIcon, Loader2, Plus, Radio, Save, Search, Trash2, Video, X } from 'lucide-react';
+import { CalendarDays, Check, Clapperboard, Clock3, Copy, Edit3, Link as LinkIcon, Loader2, Plus, Radio, Save, Search, Trash2, Video, X } from 'lucide-react';
 import { FormEvent, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ErrorState, LoadingState } from '../components/ScreenStates';

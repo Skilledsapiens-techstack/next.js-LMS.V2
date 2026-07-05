@@ -6,6 +6,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { StatusBadge } from '../components/StatusBadge';
 import { useStudentFeatureControls } from '../features/useFeatureControls';
 import { StudentAnnouncement, useStudentAnnouncements } from '../features/student/useStudentAnnouncements';
+import { apiPost } from '../lib/supabaseApi';
 
 type AppShellProps = {
   navItems: NavItem[];
@@ -29,9 +30,12 @@ const adminSections: NavSection[] = [
   { title: 'Main', moduleIds: ['dashboard', 'recording-candidates', 'workshops', 'resources'] },
   { title: 'Administration', moduleIds: ['students', 'cohorts', 'programs', 'projects', 'project-submissions', 'certificates', 'enrollments', 'feature-control'] },
   { title: 'Community', moduleIds: ['community'] },
-  { title: 'Help', moduleIds: ['announcements', 'support', 'email-center'] },
+  { title: 'Help', moduleIds: ['announcements', 'support', 'email-center', 'observability'] },
   { title: 'Payments', moduleIds: ['payment-orders', 'paid-access'] }
 ];
+
+const PRESENCE_STORAGE_KEY = 'lms.studentPresenceLastSentAt';
+const PRESENCE_THROTTLE_MS = 5 * 60 * 1000;
 
 function groupNavItems(navItems: NavItem[], portal: Portal) {
   const sections = portal === 'student' ? studentSections : adminSections;
@@ -85,7 +89,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   const announcementMenuRef = useRef<HTMLDivElement | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
-  const { signOut } = useAuth();
+  const { accessToken, signOut } = useAuth();
   const featureControlsQuery = useStudentFeatureControls({ enabled: portal === 'student' });
   const visibleNavItems = portal === 'student' ? filterStudentNavItems(navItems, featureControlsQuery.data) : navItems;
   const featureStatusMap = new Map((featureControlsQuery.data?.items ?? []).map((item) => [item.moduleId, item.status]));
@@ -111,6 +115,16 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   useEffect(() => {
     setIsAnnouncementOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    if (portal !== 'student' || !accessToken) return;
+
+    const lastSent = Number(window.localStorage.getItem(PRESENCE_STORAGE_KEY) ?? 0);
+    if (Number.isFinite(lastSent) && Date.now() - lastSent < PRESENCE_THROTTLE_MS) return;
+
+    window.localStorage.setItem(PRESENCE_STORAGE_KEY, String(Date.now()));
+    void apiPost('/students/me/presence', { accessToken }).catch(() => undefined);
+  }, [accessToken, location.pathname, portal]);
 
   useEffect(() => {
     if (!isAnnouncementOpen) return;

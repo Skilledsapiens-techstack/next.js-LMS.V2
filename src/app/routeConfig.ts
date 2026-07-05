@@ -11,6 +11,7 @@ import {
   Mail,
   Megaphone,
   MessageCircle,
+  MonitorCheck,
   ShieldCheck,
   SlidersHorizontal,
   Ticket,
@@ -60,6 +61,7 @@ export const adminNavItems: NavItem[] = [
   { label: 'Announcements', path: '/admin/announcements', moduleId: 'announcements', icon: Megaphone, mode: 'read-only' },
   { label: 'Support', path: '/admin/support', moduleId: 'support', icon: HelpCircle, mode: 'write' },
   { label: 'Email Centre', path: '/admin/email-center', moduleId: 'email-center', icon: Mail, mode: 'write' },
+  { label: 'Audit & Health', path: '/admin/observability', moduleId: 'observability', icon: MonitorCheck, mode: 'read-only' },
   { label: 'Feature Control', path: '/admin/feature-control', moduleId: 'feature-control', icon: SlidersHorizontal, mode: 'write' },
   { label: 'Payments', path: '/admin/payment-orders', moduleId: 'payment-orders', icon: BadgeIndianRupee, mode: 'read-only' },
   { label: 'Paid Access', path: '/admin/paid-access', moduleId: 'paid-access', icon: ShieldCheck, mode: 'read-only' }

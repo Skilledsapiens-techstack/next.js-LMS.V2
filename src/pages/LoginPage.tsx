@@ -49,12 +49,14 @@ async function resolveSignedInPortal(accessToken: string, requestedPortal: Login
 }
 
 export function LoginPage() {
-  const { isConfigured, isPasswordRecovery, resetPasswordForEmail, signInWithPassword, signOut, updatePassword } = useAuth();
+  const { isConfigured, isPasswordRecovery, resetPasswordForEmail, session, signInWithPassword, status: authStatus, updatePassword } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const portal: LoginPortal = searchParams.get('portal') === 'admin' ? 'admin' : 'student';
   const urlIntent = searchParams.get('intent') === 'create' ? 'create' : 'forgot';
-  const isRecoveryMode = searchParams.get('mode') === 'recovery' || isPasswordRecovery;
+  const isPasswordActionRoute = searchParams.get('mode') === 'recovery';
+  const canSetPassword = isPasswordActionRoute && isPasswordRecovery && Boolean(session?.access_token);
+  const isCheckingPasswordLink = isPasswordActionRoute && authStatus === 'loading';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -107,7 +109,7 @@ export function LoginPage() {
     }
 
     try {
-      await resetPasswordForEmail(normalizedEmail, intent);
+      await resetPasswordForEmail(normalizedEmail, intent, portal);
       setRequestStatus('sent');
       setNoticeMessage(
         intent === 'create'
@@ -140,10 +142,14 @@ export function LoginPage() {
 
     try {
       await updatePassword(newPassword);
-      await signOut();
       setPasswordUpdateStatus('updated');
       setNewPassword('');
       setConfirmPassword('');
+      if (session?.access_token) {
+        const resolvedPortal = await resolveSignedInPortal(session.access_token, portal);
+        navigate(`/${resolvedPortal}`, { replace: true });
+        return;
+      }
       setNoticeMessage('Password updated. Sign in with your new password to continue.');
     } catch (error) {
       setPasswordUpdateStatus('failed');
@@ -164,15 +170,23 @@ export function LoginPage() {
           </div>
 
           <div className="auth-copy">
-            <span>{isRecoveryMode ? recoveryTitle : 'Welcome back'}</span>
+            <span>{isPasswordActionRoute ? recoveryTitle : 'Welcome back'}</span>
             <div className="auth-title-row">
-              <h1>{isRecoveryMode ? recoveryTitle : 'Welcome back'}</h1>
-              <HelpTip text={isRecoveryMode ? 'Use the secure email link to set your LMS password.' : 'Use the email registered with your LMS account.'} />
+              <h1>{isPasswordActionRoute ? recoveryTitle : 'Welcome back'}</h1>
+              <HelpTip text={isPasswordActionRoute ? 'Use the secure email link to set your LMS password.' : 'Use the email registered with your LMS account.'} />
             </div>
-            <p>{isRecoveryMode ? 'Set a secure password for your Skilled Sapiens account.' : 'Sign in to continue your Skilled Sapiens journey.'}</p>
+            <p>{isPasswordActionRoute ? 'Set a secure password for your Skilled Sapiens account.' : 'Sign in to continue your Skilled Sapiens journey.'}</p>
           </div>
 
-          {isRecoveryMode && passwordUpdateStatus !== 'updated' ? (
+          {isCheckingPasswordLink ? (
+            <StateBlock title="Checking secure link" tone="info">
+              Please wait while we verify your password setup link.
+            </StateBlock>
+          ) : isPasswordActionRoute && !canSetPassword ? (
+            <StateBlock title="Password link expired" tone="warning">
+              This password setup link is invalid or has expired. Request a new password link from the login screen.
+            </StateBlock>
+          ) : canSetPassword && passwordUpdateStatus !== 'updated' ? (
             <form className="auth-form" onSubmit={handlePasswordUpdate}>
               <FieldLabel htmlFor="new-password" label="New password" help="Create a password with at least 8 characters." />
               <PasswordInput
@@ -251,17 +265,21 @@ export function LoginPage() {
                 </button>
               </div>
 
-              <button className="auth-create-action" type="button" disabled={!isConfigured || requestStatus === 'sending'} onClick={() => handlePasswordEmail('create')}>
-                {requestStatus === 'sending' && requestIntent === 'create' ? 'Sending create link' : 'Create password'}
-              </button>
+              {portal === 'student' ? (
+                <button className="auth-create-action" type="button" disabled={!isConfigured || requestStatus === 'sending'} onClick={() => handlePasswordEmail('create')}>
+                  {requestStatus === 'sending' && requestIntent === 'create' ? 'Sending create link' : 'Create password'}
+                </button>
+              ) : null}
             </form>
           )}
 
           <div className="auth-helper-copy">
-            <p>
-              <HelpCircle size={16} />
-              First-time users can create a password with their registered LMS email.
-            </p>
+            {portal === 'student' ? (
+              <p>
+                <HelpCircle size={16} />
+                First-time users can create a password with their registered LMS email.
+              </p>
+            ) : null}
             <p>
               <CheckCircle2 size={16} />
               Secure password links expire automatically for your account protection.
@@ -274,8 +292,8 @@ export function LoginPage() {
             </StateBlock>
           ) : null}
 
-          {status === 'failed' ? (
-            <StateBlock title="Sign-in could not complete" tone="warning">
+          {status === 'failed' || requestStatus === 'failed' || passwordUpdateStatus === 'failed' ? (
+            <StateBlock title={status === 'failed' ? 'Sign-in could not complete' : 'Password request could not complete'} tone="warning">
               {errorMessage}
             </StateBlock>
           ) : null}

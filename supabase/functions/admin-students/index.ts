@@ -15,6 +15,7 @@ const corsHeaders = {
 };
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
 function jsonResponse(body: unknown, status = 200) {
@@ -114,7 +115,27 @@ async function getStatusSummary(supabase: ReturnType<typeof createClient>, paylo
   };
 }
 
-async function queueInvite(supabase: ReturnType<typeof createClient>, actorEmail: string, student: Record<string, unknown>) {
+async function processQueuedStudentEmail(authorization: string, queueId: string) {
+  if (!queueId) throw new Error('Queued email id is missing.');
+  const response = await fetch(`${supabaseUrl.replace(/\/+$/, '')}/functions/v1/transactional-email`, {
+    method: 'POST',
+    headers: {
+      apikey: anonKey,
+      Authorization: authorization,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      action: 'processQueuedStudentEmail',
+      queueId
+    })
+  });
+  const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok || typeof body.error === 'string') {
+    throw new Error(typeof body.error === 'string' ? body.error : `Email delivery failed with status ${response.status}.`);
+  }
+}
+
+async function queueInvite(supabase: ReturnType<typeof createClient>, authorization: string, actorEmail: string, student: Record<string, unknown>) {
   const email = normalizeEmail(student.email);
   if (!email) throw new Error('Student email is missing.');
 
@@ -149,9 +170,11 @@ async function queueInvite(supabase: ReturnType<typeof createClient>, actorEmail
     entity_type: 'student',
     status: 'success'
   });
+
+  await processQueuedStudentEmail(authorization, String(data.id ?? ''));
 }
 
-async function resendInvite(supabase: ReturnType<typeof createClient>, actorEmail: string, payload: AdminStudentPayload) {
+async function resendInvite(supabase: ReturnType<typeof createClient>, authorization: string, actorEmail: string, payload: AdminStudentPayload) {
   const studentIds = uniqueStrings(payload.studentIds ?? []).slice(0, 500);
   if (studentIds.length === 0) throw new Error('Select at least one student.');
 
@@ -169,15 +192,15 @@ async function resendInvite(supabase: ReturnType<typeof createClient>, actorEmai
     }
 
     try {
-      await queueInvite(supabase, actorEmail, student);
+      await queueInvite(supabase, authorization, actorEmail, student);
       rows.push({ email: normalizeEmail(student.email), status: 'success', studentId });
     } catch (error) {
-      rows.push({ email: normalizeEmail(student.email), error: error instanceof Error ? error.message : 'Invite queue failed.', status: 'failed', studentId });
+      rows.push({ email: normalizeEmail(student.email), error: error instanceof Error ? error.message : 'Invite delivery failed.', status: 'failed', studentId });
     }
   }
 
   const failed = rows.filter((row) => row.status === 'failed').length;
-  return { failed, queued: failed === 0, rows, updated: rows.length - failed };
+  return { failed, queued: false, rows, sent: rows.length - failed, updated: rows.length - failed };
 }
 
 async function findAuthUsersByEmail(supabase: ReturnType<typeof createClient>, targetEmails: string[]) {
@@ -319,7 +342,7 @@ Deno.serve(async (request) => {
     if (payload.action === 'backfill-auth-links') return jsonResponse(await backfillAuthLinks(supabase, admin.email, payload));
     if (payload.action === 'invite-health') return jsonResponse(await getInviteHealth(supabase));
     if (payload.action === 'status-summary') return jsonResponse(await getStatusSummary(supabase, payload));
-    if (payload.action === 'resend-invite') return jsonResponse(await resendInvite(supabase, admin.email, payload));
+    if (payload.action === 'resend-invite') return jsonResponse(await resendInvite(supabase, authorization, admin.email, payload));
 
     return jsonResponse({ error: 'Unsupported admin students action.' }, 400);
   } catch (error) {

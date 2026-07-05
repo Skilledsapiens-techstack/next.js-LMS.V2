@@ -15,14 +15,19 @@ export type AdminStudent = {
   cohortName?: string;
   cohorts?: Array<{ cohortId?: string; cohortName: string }>;
   collegeName?: string;
+  educationYear?: string;
   enrolledDate?: string;
   email: string;
   fullName: string;
   id: string;
   liveProjectDomains?: string[];
+  liveProjectDuration?: string;
   latestInviteError?: string;
   latestInviteStatus?: string;
   onboardingMailStatus?: string;
+  onboardingDate?: string;
+  onboardingSequence?: number;
+  personalMentor?: string;
   phone?: string;
   programKeys?: string[];
   programName?: string;
@@ -36,11 +41,13 @@ export type AdminStudent = {
 
 export type AdminStudentsQuery = {
   cohortName?: string;
+  direction?: 'asc' | 'desc';
   enabled?: boolean;
   limit?: number;
   page?: number;
   programKey?: string;
   search?: string;
+  sort?: string;
   status?: AdminStudentStatus | 'all';
 };
 
@@ -51,9 +58,13 @@ export type AdminStudentWritePayload = {
   cohortIds?: string[];
   cohortNames?: string[];
   collegeName?: string;
+  educationYear?: string;
   email: string;
   fullName: string;
+  liveProjectDuration?: string;
   onboardingMailStatus?: 'pending' | 'sent' | 'failed' | 'skipped' | 'dry-run';
+  onboardingDate?: string;
+  personalMentor?: string;
   phone?: string;
   programKeys?: string[];
   programNames?: string[];
@@ -78,6 +89,13 @@ export type AdminStudentImportRowResult = {
   rowNumber: number;
   status: 'success' | 'failed';
 };
+
+type AdminStudentImportMutationPayload =
+  | AdminStudentWritePayload[]
+  | {
+      invalidate?: boolean;
+      students: AdminStudentWritePayload[];
+    };
 
 export type AdminStudentAuthStatus = {
   authAccountExists: boolean;
@@ -154,6 +172,8 @@ export function useAdminStudents(query: AdminStudentsQuery) {
   const page = query.page ?? 1;
   const programKey = query.programKey?.trim();
   const search = query.search?.trim();
+  const sort = query.sort?.trim();
+  const direction = query.direction;
   const status = query.status ?? 'all';
   const cohortName = query.cohortName?.trim();
 
@@ -167,11 +187,13 @@ export function useAdminStudents(query: AdminStudentsQuery) {
           page,
           programKey,
           search,
+          sort,
+          direction,
           status,
           cohortName
         }
       }),
-    queryKey: ['admin-students', accessToken, page, limit, status, search, cohortName, programKey],
+    queryKey: ['admin-students', accessToken, page, limit, status, search, cohortName, programKey, sort, direction],
     staleTime: 60_000
   });
 }
@@ -194,6 +216,8 @@ export function useExportAdminStudents() {
             page: currentPage,
             programKey: query.programKey?.trim(),
             search: query.search?.trim(),
+            sort: query.sort?.trim(),
+            direction: query.direction,
             status: query.status ?? 'all'
           }
         });
@@ -253,12 +277,17 @@ export function useImportAdminStudents() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (students: AdminStudentWritePayload[]) =>
-      apiPost<AdminStudentImportResult, { students: AdminStudentWritePayload[] }>('/admins/students/import', {
+    mutationFn: (payload: AdminStudentImportMutationPayload) => {
+      const students = Array.isArray(payload) ? payload : payload.students;
+      return apiPost<AdminStudentImportResult, { students: AdminStudentWritePayload[] }>('/admins/students/import', {
         accessToken: accessToken ?? undefined,
         body: { students }
-      }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-students'] })
+      });
+    },
+    onSuccess: (_result, payload) => {
+      if (!Array.isArray(payload) && payload.invalidate === false) return;
+      queryClient.invalidateQueries({ queryKey: ['admin-students'] });
+    }
   });
 }
 
