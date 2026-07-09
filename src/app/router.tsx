@@ -1,6 +1,7 @@
 import { lazy, ReactNode, Suspense } from 'react';
 import { createBrowserRouter, isRouteErrorResponse, Navigate, useRouteError } from 'react-router-dom';
 import { ProtectedPortalRoute } from '../auth/ProtectedPortalRoute';
+import { AdminPermissionGate } from '../auth/AdminPermissionGate';
 import { AppShell } from '../layouts/AppShell';
 import { LoadingState } from '../components/ScreenStates';
 import { StudentFeatureGate } from '../components/StudentFeatureGate';
@@ -37,6 +38,7 @@ const AdminPaidAccessPage = lazy(() => import('../pages/AdminPaidAccessPage').th
 const AdminSupportPage = lazy(() => import('../pages/AdminSupportPage').then((module) => ({ default: module.AdminSupportPage })));
 const AdminSupportDetailPage = lazy(() => import('../pages/AdminSupportDetailPage').then((module) => ({ default: module.AdminSupportDetailPage })));
 const AdminFeatureControlPage = lazy(() => import('../pages/AdminFeatureControlPage').then((module) => ({ default: module.AdminFeatureControlPage })));
+const AdminUsersPage = lazy(() => import('../pages/AdminUsersPage').then((module) => ({ default: module.AdminUsersPage })));
 const AdminEmailCenterPage = lazy(() => import('../pages/AdminEmailCenterPage').then((module) => ({ default: module.AdminEmailCenterPage })));
 const AdminObservabilityPage = lazy(() => import('../pages/AdminObservabilityPage').then((module) => ({ default: module.AdminObservabilityPage })));
 const LoginPage = lazy(() => import('../pages/LoginPage').then((module) => ({ default: module.LoginPage })));
@@ -63,6 +65,10 @@ function PageLoader({ children }: { children: React.ReactNode }) {
 
 function StudentFeaturePage({ children, moduleId }: { children: ReactNode; moduleId: string }) {
   return <StudentFeatureGate moduleId={moduleId}>{children}</StudentFeatureGate>;
+}
+
+function AdminFeaturePage({ children, moduleId }: { children: ReactNode; moduleId: string }) {
+  return <AdminPermissionGate moduleId={moduleId}>{children}</AdminPermissionGate>;
 }
 
 function RouteErrorFallback() {
@@ -272,7 +278,9 @@ export const router = createBrowserRouter([
             index: true,
             element: (
               <PageLoader>
-                <AdminDashboardPage />
+                <AdminFeaturePage moduleId="dashboard">
+                  <AdminDashboardPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -280,7 +288,9 @@ export const router = createBrowserRouter([
             path: 'announcements',
             element: (
               <PageLoader>
-                <AdminAnnouncementsPage />
+                <AdminFeaturePage moduleId="announcements">
+                  <AdminAnnouncementsPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -288,7 +298,9 @@ export const router = createBrowserRouter([
             path: 'students',
             element: (
               <PageLoader>
-                <AdminStudentsPage />
+                <AdminFeaturePage moduleId="students">
+                  <AdminStudentsPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -296,7 +308,9 @@ export const router = createBrowserRouter([
             path: 'cohorts',
             element: (
               <PageLoader>
-                <AdminCohortsPage />
+                <AdminFeaturePage moduleId="cohorts">
+                  <AdminCohortsPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -304,7 +318,9 @@ export const router = createBrowserRouter([
             path: 'programs',
             element: (
               <PageLoader>
-                <AdminProgramsPage />
+                <AdminFeaturePage moduleId="programs">
+                  <AdminProgramsPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -312,7 +328,9 @@ export const router = createBrowserRouter([
             path: 'projects',
             element: (
               <PageLoader>
-                <AdminProjectsPage />
+                <AdminFeaturePage moduleId="projects">
+                  <AdminProjectsPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -320,7 +338,9 @@ export const router = createBrowserRouter([
             path: 'project-submissions',
             element: (
               <PageLoader>
-                <AdminProjectSubmissionsPage />
+                <AdminFeaturePage moduleId="project-submissions">
+                  <AdminProjectSubmissionsPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -328,7 +348,9 @@ export const router = createBrowserRouter([
             path: 'resources',
             element: (
               <PageLoader>
-                <AdminResourcesPage />
+                <AdminFeaturePage moduleId="resources">
+                  <AdminResourcesPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -336,7 +358,9 @@ export const router = createBrowserRouter([
             path: 'workshops',
             element: (
               <PageLoader>
-                <AdminWorkshopsPage />
+                <AdminFeaturePage moduleId="workshops">
+                  <AdminWorkshopsPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -344,7 +368,9 @@ export const router = createBrowserRouter([
             path: 'recording-candidates',
             element: (
               <PageLoader>
-                <AdminRecordingCandidatesPage />
+                <AdminFeaturePage moduleId="recording-candidates">
+                  <AdminRecordingCandidatesPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -352,7 +378,9 @@ export const router = createBrowserRouter([
             path: 'certificates',
             element: (
               <PageLoader>
-                <AdminCertificatesPage />
+                <AdminFeaturePage moduleId="certificates">
+                  <AdminCertificatesPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -360,7 +388,9 @@ export const router = createBrowserRouter([
             path: 'certificate-requests',
             element: (
               <PageLoader>
-                <AdminCertificateRequestsPage />
+                <AdminFeaturePage moduleId="certificates">
+                  <AdminCertificateRequestsPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -368,7 +398,9 @@ export const router = createBrowserRouter([
             path: 'enrollments',
             element: (
               <PageLoader>
-                <AdminEnrollmentsPage />
+                <AdminFeaturePage moduleId="enrollments">
+                  <AdminEnrollmentsPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -376,7 +408,9 @@ export const router = createBrowserRouter([
             path: 'enrollments/:requestId',
             element: (
               <PageLoader>
-                <AdminEnrollmentDetailPage />
+                <AdminFeaturePage moduleId="enrollments">
+                  <AdminEnrollmentDetailPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -384,7 +418,9 @@ export const router = createBrowserRouter([
             path: 'enrollment-exceptions',
             element: (
               <PageLoader>
-                <AdminEnrollmentExceptionsPage />
+                <AdminFeaturePage moduleId="enrollments">
+                  <AdminEnrollmentExceptionsPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -392,7 +428,9 @@ export const router = createBrowserRouter([
             path: 'webhook-events',
             element: (
               <PageLoader>
-                <AdminEnrollmentWebhookEventsPage />
+                <AdminFeaturePage moduleId="enrollments">
+                  <AdminEnrollmentWebhookEventsPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -400,7 +438,9 @@ export const router = createBrowserRouter([
             path: 'payment-orders',
             element: (
               <PageLoader>
-                <AdminPaymentOrdersPage />
+                <AdminFeaturePage moduleId="payment-orders">
+                  <AdminPaymentOrdersPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -408,7 +448,9 @@ export const router = createBrowserRouter([
             path: 'paid-access',
             element: (
               <PageLoader>
-                <AdminPaidAccessPage />
+                <AdminFeaturePage moduleId="paid-access">
+                  <AdminPaidAccessPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -416,7 +458,9 @@ export const router = createBrowserRouter([
             path: 'support',
             element: (
               <PageLoader>
-                <AdminSupportPage />
+                <AdminFeaturePage moduleId="support">
+                  <AdminSupportPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -424,7 +468,9 @@ export const router = createBrowserRouter([
             path: 'support/:ticketId',
             element: (
               <PageLoader>
-                <AdminSupportDetailPage />
+                <AdminFeaturePage moduleId="support">
+                  <AdminSupportDetailPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -432,7 +478,9 @@ export const router = createBrowserRouter([
             path: 'email-center',
             element: (
               <PageLoader>
-                <AdminEmailCenterPage />
+                <AdminFeaturePage moduleId="email-center">
+                  <AdminEmailCenterPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -440,7 +488,19 @@ export const router = createBrowserRouter([
             path: 'feature-control',
             element: (
               <PageLoader>
-                <AdminFeatureControlPage />
+                <AdminFeaturePage moduleId="feature-control">
+                  <AdminFeatureControlPage />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'admin-users',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="admin-users">
+                  <AdminUsersPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },
@@ -448,7 +508,9 @@ export const router = createBrowserRouter([
             path: 'observability',
             element: (
               <PageLoader>
-                <AdminObservabilityPage />
+                <AdminFeaturePage moduleId="observability">
+                  <AdminObservabilityPage />
+                </AdminFeaturePage>
               </PageLoader>
             )
           },

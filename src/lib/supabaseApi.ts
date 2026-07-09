@@ -1,6 +1,7 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseClient } from './supabaseClient';
 import { webEnv } from '../config/env';
+import { getEffectiveAdminPermissions, hasAdminPermission, normalizeAdminRole, type AdminPermission } from '../auth/adminPermissions';
 
 const CERTIFICATE_VERIFY_BASE_URL = 'https://skilledsapiens.com/verify-your-certificate/';
 
@@ -39,10 +40,51 @@ type LightweightCountRequest = SupabaseQuery &
     error: { message: string } | null;
   }>;
 
+type AdminProfileRecord = Record<string, unknown> & {
+  email?: string;
+  permissions: AdminPermission[];
+  role: string;
+};
+
+let requestClientCache: { client: SupabaseClient; key: string } | null = null;
+
 // Keeps existing feature hooks stable while the data layer moves from HTTP routes to Supabase tables/RPCs.
 const STUDENT_BUNDLE_SECTIONS: Record<string, string[]> = {
   '/students/me/announcements': ['announcements', 'announcementList', 'studentAnnouncements'],
   '/students/me/cohorts': ['cohorts', 'studentCohorts']
+};
+
+const ADMIN_READ_PERMISSIONS_BY_PATH: Record<string, AdminPermission> = {
+  '/admins/announcements': 'admin.announcements.view',
+  '/admins/announcements/recipient-count': 'admin.announcements.view',
+  '/admins/audit-logs': 'admin.observability.view',
+  '/admins/certificate-program-settings': 'admin.certificates.view',
+  '/admins/certificate-requests': 'admin.certificates.view',
+  '/admins/certificates': 'admin.certificates.view',
+  '/admins/cohorts': 'admin.cohorts.view',
+  '/admins/dashboard': 'admin.dashboard.view',
+  '/admins/email-queue': 'admin.email.view',
+  '/admins/email-templates': 'admin.email.view',
+  '/admins/enrollment-exceptions': 'admin.enrollments.view',
+  '/admins/enrollment-requests': 'admin.enrollments.view',
+  '/admins/enrollment-webhook-events': 'admin.enrollments.view',
+  '/admins/admin-users': 'admin.admin_users.view',
+  '/admins/feature-controls': 'admin.feature_control.manage',
+  '/admins/observability': 'admin.observability.view',
+  '/admins/paid-access': 'admin.paid_access.view',
+  '/admins/payment-orders': 'admin.payments.view',
+  '/admins/programs': 'admin.programs.view',
+  '/admins/project-roles': 'admin.projects.view',
+  '/admins/project-submissions': 'admin.submissions.view',
+  '/admins/projects': 'admin.projects.view',
+  '/admins/recording-candidates': 'admin.recordings.view',
+  '/admins/resources': 'admin.resources.view',
+  '/admins/student-audit-logs': 'admin.observability.view',
+  '/admins/students': 'admin.students.view',
+  '/admins/support-categories': 'admin.support.view',
+  '/admins/support-faqs': 'admin.support.view',
+  '/admins/support-tickets': 'admin.support.view',
+  '/admins/workshops': 'admin.meetings.view'
 };
 
 const RPC_LIST_ENDPOINTS: Record<string, { functionName: string; section?: string[] }> = {
@@ -433,6 +475,8 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
 
   if (cleanPath === '/students/me') return getStudentProfile(context) as Promise<TResponse>;
   if (cleanPath === '/admins/me') return getAdminProfile(context) as Promise<TResponse>;
+  const readPermission = getAdminReadPermission(cleanPath);
+  if (readPermission) await requireAdminPermission(context, readPermission);
   if (cleanPath === '/students/me/dashboard') return getStudentDashboard(context) as Promise<TResponse>;
   if (cleanPath === '/admins/dashboard') return getAdminDashboard(context) as Promise<TResponse>;
   if (cleanPath === '/admins/observability') return getAdminObservability(context, options.query) as Promise<TResponse>;
@@ -489,6 +533,8 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
 
   const context = await createContext(options.accessToken);
   const cleanPath = stripQuery(path);
+  const writePermission = getAdminWritePermission(cleanPath, 'patch');
+  if (writePermission) await requireAdminPermission(context, writePermission);
 
   const studentStatus = cleanPath.match(/^\/admins\/students\/([^/]+)\/status$/);
   if (studentStatus) return updateById(context, 'students', studentStatus[1], options.body, 'status_changed') as Promise<TResponse>;
@@ -624,6 +670,8 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
 
   const context = await createContext(options.accessToken);
   const cleanPath = stripQuery(path);
+  const writePermission = getAdminWritePermission(cleanPath, 'post');
+  if (writePermission) await requireAdminPermission(context, writePermission);
 
   if (cleanPath === '/admins/students/import') return importStudents(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/students/bulk') return bulkUpdateStudents(context, options.body) as Promise<TResponse>;
@@ -673,6 +721,8 @@ export async function apiInvokeFunction<TResponse, TBody = unknown>(functionName
   }
 
   const context = await createContext(options.accessToken);
+  const functionPermission = getFunctionPermission(functionName, options.body);
+  if (functionPermission) await requireAdminPermission(context, functionPermission);
   const { data, error } = await context.supabase.functions.invoke(functionName, {
     body: options.body as Record<string, unknown> | undefined
   });
@@ -694,6 +744,84 @@ function getFunctionErrorMessage(data: unknown, error: unknown) {
   return 'Request could not be completed. Please try again.';
 }
 
+function getAdminReadPermission(path: string): AdminPermission | undefined {
+  if (!path.startsWith('/admins/')) return undefined;
+  if (path.match(/^\/admins\/students\/[^/]+\/lp-attempts$/)) return 'admin.students.view';
+  if (path.match(/^\/admins\/students\/[^/]+\/access-preview$/)) return 'admin.students.view';
+  if (path.match(/^\/admins\/support-tickets\/[^/]+$/)) return 'admin.support.view';
+  if (path.match(/^\/admins\/enrollment-requests\/[^/]+$/)) return 'admin.enrollments.view';
+  return ADMIN_READ_PERMISSIONS_BY_PATH[path];
+}
+
+function getAdminWritePermission(path: string, method: 'patch' | 'post'): AdminPermission | undefined {
+  if (!path.startsWith('/admins/')) return undefined;
+
+  if (path === '/admins/students/import' || path === '/admins/students/bulk') return 'admin.students.import';
+  if (path === '/admins/students/resend-invites') return 'admin.students.invite';
+  if (path === '/admins/students') return 'admin.students.manage';
+  if (path.match(/^\/admins\/students\/[^/]+\/lp-attempts$/)) return 'admin.students.manage';
+  if (path.match(/^\/admins\/students\/[^/]+/)) return 'admin.students.manage';
+
+  if (path === '/admins/cohorts' || path.match(/^\/admins\/cohorts\/[^/]+/)) return 'admin.cohorts.manage';
+  if (path === '/admins/programs' || path.match(/^\/admins\/programs\/[^/]+/)) return 'admin.programs.manage';
+  if (path === '/admins/projects' || path === '/admins/project-roles' || path.match(/^\/admins\/projects\/[^/]+/) || path.match(/^\/admins\/project-roles\/[^/]+/)) {
+    return 'admin.projects.manage';
+  }
+  if (path.match(/^\/admins\/project-submissions\/[^/]+\/(approve|reject|changes-requested)$/)) return 'admin.submissions.review';
+  if (path === '/admins/workshops' || path.match(/^\/admins\/workshops\/[^/]+/)) return 'admin.meetings.manage';
+  if (path === '/admins/resources' || path.match(/^\/admins\/resources\/[^/]+/)) return 'admin.resources.manage';
+  if (path === '/admins/announcements' || path.match(/^\/admins\/announcements\/[^/]+/)) return 'admin.announcements.manage';
+  if (path === '/admins/email-templates' || path.match(/^\/admins\/email-templates\/[^/]+/)) return 'admin.email.manage';
+  if (path === '/admins/feature-controls' || path.match(/^\/admins\/feature-controls\/[^/]+/)) return 'admin.feature_control.manage';
+  if (path === '/admins/certificate-program-settings' || path === '/admins/certificates/leadership' || path === '/admins/certificates/live-project') return 'admin.certificates.issue';
+  if (path.match(/^\/admins\/certificates\/[^/]+\/revoke$/)) return 'admin.certificates.issue';
+  if (path === '/admins/support-categories' || path === '/admins/support-faqs') return 'admin.support.manage';
+  if (path.match(/^\/admins\/support-(categories|faqs)\/[^/]+/)) return 'admin.support.manage';
+  if (path.match(/^\/admins\/support-tickets\/[^/]+/)) return 'admin.support.manage';
+
+  return method === 'post' || method === 'patch' ? 'admin.dashboard.view' : undefined;
+}
+
+function getFunctionPermission(functionName: string, body: unknown): AdminPermission | undefined {
+  if (functionName === 'admin-users') return 'admin.admin_users.manage';
+  if (functionName === 'zoom-meetings') return 'admin.meetings.manage';
+  if (functionName === 'certificate-issuance') return isRecord(body) && 'sendEmail' in body ? 'admin.certificates.issue' : undefined;
+  if (functionName === 'admin-students') {
+    const action = isRecord(body) ? String(body.action ?? '') : '';
+    if (action === 'status-summary' || action === 'invite-health') return 'admin.students.view';
+    if (action === 'resend-invite') return 'admin.students.invite';
+    return 'admin.students.manage';
+  }
+  if (functionName === 'transactional-email') return 'admin.email.manage';
+  return undefined;
+}
+
+function getRequestSupabaseClient(accessToken: string, userId: string) {
+  if (!webEnv.supabaseUrl || !webEnv.supabaseAnonKey) {
+    throw new ApiClientError('Supabase is not configured.', 503);
+  }
+
+  const cacheKey = `${userId}:${accessToken}`;
+  if (requestClientCache?.key === cacheKey) return requestClientCache.client;
+
+  const client = createClient(webEnv.supabaseUrl, webEnv.supabaseAnonKey, {
+    auth: {
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      persistSession: false,
+      storageKey: `lms-request-${userId}-${accessToken.slice(-12)}`
+    },
+    global: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    }
+  });
+
+  requestClientCache = { client, key: cacheKey };
+  return client;
+}
+
 async function createContext(accessToken?: string) {
   const authClient = getSupabaseClient();
   if (!authClient || !webEnv.supabaseUrl || !webEnv.supabaseAnonKey) {
@@ -704,20 +832,7 @@ async function createContext(accessToken?: string) {
   const { data, error } = await authClient.auth.getUser(accessToken);
   if (error || !data.user?.email) throw new ApiClientError('Supabase session is invalid.', 401);
 
-  const supabase = createClient(webEnv.supabaseUrl, webEnv.supabaseAnonKey, {
-    auth: {
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-      persistSession: false,
-      storageKey: `lms-request-${data.user.id}-${accessToken.slice(-12)}`
-    },
-    global: {
-      headers: {
-        Authorization: `Bearer ${accessToken}`
-      }
-    }
-  });
-
+  const supabase = getRequestSupabaseClient(accessToken, data.user.id);
   const email = normalizeEmail(data.user.email);
   return { accessToken, email, supabase, userId: data.user.id };
 }
@@ -751,7 +866,7 @@ async function updateStudentPresence(context: Awaited<ReturnType<typeof createCo
   return { lastSeenAt: data };
 }
 
-async function getAdminProfile(context: Awaited<ReturnType<typeof createContext>>) {
+async function getAdminProfile(context: Awaited<ReturnType<typeof createContext>>): Promise<AdminProfileRecord> {
   const { data, error } = await context.supabase
     .from('admin_users')
     .select('*')
@@ -763,7 +878,22 @@ async function getAdminProfile(context: Awaited<ReturnType<typeof createContext>
   const row = chooseIdentityRow(data, context);
   if (!row) throw new ApiClientError('No admin profile is linked to this Supabase user.', 404);
   if (row.status !== 'active') throw new ApiClientError('Admin profile is inactive.', 403);
-  return camelize(row);
+  const role = normalizeAdminRole(row.role);
+  const profile = camelize(row) as Record<string, unknown>;
+  const permissions = Array.isArray(profile.permissions) ? (profile.permissions as AdminPermission[]) : null;
+  return {
+    ...profile,
+    permissions: getEffectiveAdminPermissions(role, permissions),
+    role
+  };
+}
+
+async function requireAdminPermission(context: Awaited<ReturnType<typeof createContext>>, permission: AdminPermission) {
+  const admin = await getAdminProfile(context);
+  if (!hasAdminPermission((admin as Record<string, unknown>).role, permission, admin.permissions)) {
+    throw new ApiClientError('Your admin role does not have permission for this action.', 403);
+  }
+  return admin;
 }
 
 async function getStudentDashboard(context: Awaited<ReturnType<typeof createContext>>) {
@@ -2439,20 +2569,48 @@ async function importStudents(context: Awaited<ReturnType<typeof createContext>>
         const { data, error } = await context.supabase.from('students').update(updatePayload).eq('id', existing.data.id).select('*').single();
         if (error) throw error;
         await syncStudentAssignments(context, data, assignmentMetadata);
-        await writeAuditLog(context, 'students', 'updated', data, updatePayload);
-        if (metadata.sendOnboardingMail && scopedOnboardingCohortNames.length > 0) await queueStudentOnboardingMail(context, data, scopedOnboardingCohortNames);
+        const warnings: string[] = [];
+        try {
+          await writeAuditLog(context, 'students', 'updated', data, updatePayload);
+        } catch (auditError) {
+          warnings.push(auditError instanceof Error ? auditError.message : 'Audit logging failed after the student was updated.');
+        }
+        if (metadata.sendOnboardingMail && scopedOnboardingCohortNames.length > 0) {
+          try {
+            await queueStudentOnboardingMail(context, data, scopedOnboardingCohortNames);
+          } catch (mailError) {
+            warnings.push(mailError instanceof Error ? mailError.message : 'Onboarding mail failed after the student was updated.');
+          }
+        }
         result.updated += 1;
-        result.rows.push({ action: 'updated', email, rowNumber, status: 'success' });
+        result.rows.push({ action: 'updated', email, error: warnings.join(' '), rowNumber, status: 'success' });
       } else {
         const insertPayload = { ...payload, email, student_id: payload.student_id || generateStudentRosterId() };
         const { data, error } = await context.supabase.from('students').insert(insertPayload).select('*').single();
         if (error) throw error;
         await syncStudentAssignments(context, data, metadata);
-        await writeAuditLog(context, 'students', 'created', data, insertPayload);
-        if (metadata.sendInvite) await queueStudentInvite(context, data);
-        if (metadata.sendOnboardingMail) await queueStudentOnboardingMail(context, data, metadata.cohortNames);
+        const warnings: string[] = [];
+        try {
+          await writeAuditLog(context, 'students', 'created', data, insertPayload);
+        } catch (auditError) {
+          warnings.push(auditError instanceof Error ? auditError.message : 'Audit logging failed after the student was created.');
+        }
+        if (metadata.sendInvite) {
+          try {
+            await queueStudentInvite(context, data);
+          } catch (inviteError) {
+            warnings.push(inviteError instanceof Error ? inviteError.message : 'Invite delivery failed after the student was created.');
+          }
+        }
+        if (metadata.sendOnboardingMail) {
+          try {
+            await queueStudentOnboardingMail(context, data, metadata.cohortNames);
+          } catch (mailError) {
+            warnings.push(mailError instanceof Error ? mailError.message : 'Onboarding mail failed after the student was created.');
+          }
+        }
         result.created += 1;
-        result.rows.push({ action: 'created', email, rowNumber, status: 'success' });
+        result.rows.push({ action: 'created', email, error: warnings.join(' '), rowNumber, status: 'success' });
       }
     } catch (error) {
       result.failed += 1;
@@ -3810,6 +3968,10 @@ function buildAuditDetails(table: string, row: Record<string, unknown>, payload:
 }
 
 function mutationError(error: { code?: string; message: string }, table: string) {
+  if (error.code === '23514' && /linked to (an Admin|a Student|an admin|a student|Admin|Student) account/i.test(error.message)) {
+    return new ApiClientError(error.message, 409);
+  }
+
   if (error.code === '23505') {
     if (table === 'cohorts') return new ApiClientError('A cohort with this name or cohort ID already exists.', 409);
     if (table === 'students') return new ApiClientError('A student with this email already exists.', 409);

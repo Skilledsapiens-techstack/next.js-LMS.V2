@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 type ZoomAccountLabel = 'Zoom Account 1' | 'Zoom Account 2';
+type MeetingLinkSource = ZoomAccountLabel | 'Custom Link';
 
 type ZoomMeetingAction =
   | 'create-meeting'
@@ -21,6 +22,7 @@ type WorkshopPayload = {
     cohortNames?: string[];
     date?: string;
     durationMinutes?: number;
+    customJoinUrl?: string | null;
     time?: string;
     title?: string;
     workshopStatus?: string;
@@ -101,10 +103,20 @@ function readFirstRequiredEnv(names: string[]) {
   throw new Error(`${names.join(' or ')} is not configured.`);
 }
 
-function normalizeZoomAccount(value: unknown): ZoomAccountLabel {
+function normalizeMeetingLinkSource(value: unknown): MeetingLinkSource {
   const account = String(value ?? 'Zoom Account 1').trim().toLowerCase();
+  if (account === 'custom link' || account === 'custom' || account === 'manual link' || account === 'manual') return 'Custom Link';
   if (account === 'zoom account 2' || account === 'account2' || account === '2') return 'Zoom Account 2';
   return 'Zoom Account 1';
+}
+
+function normalizeZoomAccount(value: unknown): ZoomAccountLabel {
+  const source = normalizeMeetingLinkSource(value);
+  return source === 'Zoom Account 2' ? 'Zoom Account 2' : 'Zoom Account 1';
+}
+
+function isCustomLinkSource(value: unknown) {
+  return normalizeMeetingLinkSource(value) === 'Custom Link';
 }
 
 function zoomAccountPrefix(label: ZoomAccountLabel) {
@@ -121,10 +133,22 @@ function ensureHttpUrl(value: unknown) {
   return /^https?:\/\//i.test(url) ? url : null;
 }
 
+function requireHttpUrl(value: unknown, message: string) {
+  const url = ensureHttpUrl(value);
+  if (!url) throw new Error(message);
+  return url;
+}
+
 function requireText(value: unknown, message: string) {
   const text = typeof value === 'string' ? value.trim() : '';
   if (!text) throw new Error(message);
   return text;
+}
+
+function readDurationMinutes(value: unknown, fallback = 90) {
+  const duration = Number(value ?? fallback);
+  if (!Number.isInteger(duration) || duration <= 0) throw new Error('Meeting duration must be a positive whole number.');
+  return duration;
 }
 
 async function getZoomAccessToken(account: ZoomAccountLabel) {
@@ -175,8 +199,7 @@ async function zoomRequest<T>(account: ZoomAccountLabel, path: string, init: Req
 function buildZoomMeetingPayload(body: NonNullable<WorkshopPayload['body']>) {
   const title = requireText(body.title, 'Meeting title is required.');
   const date = requireText(body.date, 'Meeting date is required.');
-  const duration = Number(body.durationMinutes ?? 90);
-  if (!Number.isInteger(duration) || duration <= 0) throw new Error('Meeting duration must be a positive whole number.');
+  const duration = readDurationMinutes(body.durationMinutes);
 
   return {
     duration,
@@ -201,7 +224,7 @@ function buildWorkshopRow(body: NonNullable<WorkshopPayload['body']>, zoomMeetin
   return {
     cohort_names: Array.isArray(body.cohortNames) ? body.cohortNames.map(String).filter(Boolean) : [],
     date,
-    duration_minutes: Number(body.durationMinutes ?? 90),
+    duration_minutes: readDurationMinutes(body.durationMinutes),
     join_url: typeof zoomMeeting.join_url === 'string' ? zoomMeeting.join_url : null,
     time: typeof body.time === 'string' && body.time ? body.time : null,
     title,
@@ -209,6 +232,37 @@ function buildWorkshopRow(body: NonNullable<WorkshopPayload['body']>, zoomMeetin
     workshop_status: 'Scheduled',
     zoom_account: account,
     zoom_id: String(zoomMeeting.id ?? '')
+  };
+}
+
+function buildCustomWorkshopRow(body: NonNullable<WorkshopPayload['body']>) {
+  const date = requireText(body.date, 'Meeting date is required.');
+  const title = requireText(body.title, 'Meeting title is required.');
+  return {
+    cohort_names: Array.isArray(body.cohortNames) ? body.cohortNames.map(String).filter(Boolean) : [],
+    date,
+    duration_minutes: readDurationMinutes(body.durationMinutes),
+    join_url: requireHttpUrl(body.customJoinUrl, 'Add a valid custom meeting link before saving.'),
+    time: typeof body.time === 'string' && body.time ? body.time : null,
+    title,
+    workshop_id: `WS-${Date.now()}`,
+    workshop_status: 'Scheduled',
+    zoom_account: 'Custom Link',
+    zoom_id: null
+  };
+}
+
+function buildWorkshopUpdateRow(body: NonNullable<WorkshopPayload['body']>, workshop: WorkshopRow, source: MeetingLinkSource, extra: Record<string, unknown> = {}) {
+  return {
+    cohort_names: Array.isArray(body.cohortNames) ? body.cohortNames.map(String).filter(Boolean) : workshop.cohort_names,
+    date: requireText(body.date, 'Meeting date is required.'),
+    duration_minutes: readDurationMinutes(body.durationMinutes, workshop.duration_minutes ?? 90),
+    time: typeof body.time === 'string' && body.time ? body.time : null,
+    title: requireText(body.title, 'Meeting title is required.'),
+    updated_at: new Date().toISOString(),
+    workshop_status: body.workshopStatus ?? workshop.workshop_status,
+    zoom_account: source,
+    ...extra
   };
 }
 
@@ -222,13 +276,14 @@ async function getActiveAdmin(supabase: ReturnType<typeof createClient>, authori
   const email = userData.user.email.toLowerCase();
   const { data: admins, error: adminError } = await supabase
     .from('admin_users')
-    .select('id,email,status,auth_user_id')
+    .select('id,email,status,role,auth_user_id')
     .or(`auth_user_id.eq.${userData.user.id},email.eq.${email}`)
     .limit(2);
 
   if (adminError) throw adminError;
   const admin = (admins ?? []).find((row) => row.auth_user_id === userData.user.id) ?? (admins ?? []).find((row) => String(row.email).toLowerCase() === email);
   if (!admin || admin.status !== 'active') throw new Error('Active admin access is required.');
+  if (admin.role !== 'super_admin' && admin.role !== 'admin') throw new Error('Meeting management permission is required.');
 
   return { email, id: userData.user.id };
 }
@@ -253,7 +308,16 @@ async function getWorkshopById(supabase: ReturnType<typeof createClient>, worksh
 
 async function createMeeting(supabase: ReturnType<typeof createClient>, actorEmail: string, payload: WorkshopPayload) {
   const body = payload.body ?? {};
-  const account = normalizeZoomAccount(body.zoomAccount);
+  const source = normalizeMeetingLinkSource(body.zoomAccount);
+  if (source === 'Custom Link') {
+    const workshopRow = buildCustomWorkshopRow(body);
+    const { data, error } = await supabase.from('workshops').insert(workshopRow).select('*').single();
+    if (error) throw error;
+    await writeAudit(supabase, actorEmail, 'admin_workshop_created', data, { changedFields: Object.keys(workshopRow).sort(), zoomAccount: source });
+    return data;
+  }
+
+  const account = source;
   const zoomMeeting = await zoomRequest<Record<string, unknown>>(account, '/users/me/meetings', {
     body: JSON.stringify(buildZoomMeetingPayload(body)),
     method: 'POST'
@@ -269,24 +333,44 @@ async function updateMeeting(supabase: ReturnType<typeof createClient>, actorEma
   const workshopId = requireText(payload.workshopId, 'Workshop row ID is required.');
   const workshop = await getWorkshopById(supabase, workshopId);
   const body = payload.body ?? {};
-  const account = normalizeZoomAccount(body.zoomAccount ?? workshop.zoom_account);
-  const zoomMeetingId = requireText(workshop.zoom_id, 'Workshop does not have a Zoom meeting ID.');
+  const source = normalizeMeetingLinkSource(body.zoomAccount ?? workshop.zoom_account);
 
-  await zoomRequest(account, `/meetings/${encodeURIComponent(zoomMeetingId)}`, {
-    body: JSON.stringify(buildZoomMeetingPayload(body)),
-    method: 'PATCH'
-  });
+  if (source === 'Custom Link') {
+    const updateRow = buildWorkshopUpdateRow(body, workshop, source, {
+      join_url: requireHttpUrl(body.customJoinUrl ?? workshop.join_url, 'Add a valid custom meeting link before saving.'),
+      workshop_status: payload.action === 'reschedule-meeting' ? 'Scheduled' : body.workshopStatus ?? workshop.workshop_status,
+      zoom_id: null
+    });
+    const { data, error } = await supabase.from('workshops').update(updateRow).eq('id', workshopId).select('*').single();
+    if (error) throw error;
+    await writeAudit(supabase, actorEmail, payload.action === 'reschedule-meeting' ? 'admin_workshop_rescheduled' : 'admin_workshop_updated', data, {
+      changedFields: Object.keys(updateRow).sort(),
+      zoomAccount: source
+    });
+    return data;
+  }
 
-  const updateRow = {
-    cohort_names: Array.isArray(body.cohortNames) ? body.cohortNames.map(String).filter(Boolean) : workshop.cohort_names,
-    date: requireText(body.date, 'Meeting date is required.'),
-    duration_minutes: Number(body.durationMinutes ?? workshop.duration_minutes ?? 90),
-    time: typeof body.time === 'string' && body.time ? body.time : null,
-    title: requireText(body.title, 'Meeting title is required.'),
-    updated_at: new Date().toISOString(),
+  const account = source;
+  const zoomMeetingId = workshop.zoom_id ? String(workshop.zoom_id).trim() : '';
+  let zoomMeeting: Record<string, unknown> | null = null;
+
+  if (zoomMeetingId) {
+    await zoomRequest(account, `/meetings/${encodeURIComponent(zoomMeetingId)}`, {
+      body: JSON.stringify(buildZoomMeetingPayload(body)),
+      method: 'PATCH'
+    });
+  } else {
+    zoomMeeting = await zoomRequest<Record<string, unknown>>(account, '/users/me/meetings', {
+      body: JSON.stringify(buildZoomMeetingPayload(body)),
+      method: 'POST'
+    });
+  }
+
+  const updateRow = buildWorkshopUpdateRow(body, workshop, account, {
+    join_url: zoomMeeting && typeof zoomMeeting.join_url === 'string' ? zoomMeeting.join_url : workshop.join_url,
     workshop_status: payload.action === 'reschedule-meeting' ? 'Scheduled' : body.workshopStatus ?? workshop.workshop_status,
-    zoom_account: account
-  };
+    zoom_id: zoomMeeting ? String(zoomMeeting.id ?? '') : zoomMeetingId
+  });
 
   const { data, error } = await supabase.from('workshops').update(updateRow).eq('id', workshopId).select('*').single();
   if (error) throw error;
@@ -304,6 +388,9 @@ function isPreferredRecording(file: ZoomRecordingFile) {
 async function fetchRecordings(supabase: ReturnType<typeof createClient>, actorEmail: string, payload: WorkshopPayload) {
   const workshopId = requireText(payload.workshopId, 'Workshop row ID is required.');
   const workshop = await getWorkshopById(supabase, workshopId);
+  if (isCustomLinkSource(workshop.zoom_account)) {
+    throw new Error('Custom link meetings do not have Zoom recordings to fetch. Add a recording link manually.');
+  }
   const account = normalizeZoomAccount(workshop.zoom_account);
   const zoomMeetingId = requireText(workshop.zoom_id, 'Workshop does not have a Zoom meeting ID.');
   const response = await zoomRequest<{ password?: string; recording_files?: ZoomRecordingFile[] }>(account, `/meetings/${encodeURIComponent(zoomMeetingId)}/recordings`);
@@ -378,7 +465,7 @@ async function addManualRecording(supabase: ReturnType<typeof createClient>, act
   const playUrl = youtubeUrl ?? alternateUrl;
   if (!playUrl) throw new Error('Add a valid recording URL before sending it for review.');
 
-  const account = normalizeZoomAccount(body.zoomAccount ?? workshop.zoom_account);
+  const account = normalizeMeetingLinkSource(body.zoomAccount ?? workshop.zoom_account);
   const workshopKey = workshop.workshop_id ?? workshop.id;
   const { data: existingManualCandidate, error: existingManualCandidateError } = await supabase
     .from('workshop_recording_candidates')
@@ -426,11 +513,12 @@ async function addManualRecording(supabase: ReturnType<typeof createClient>, act
 async function cancelMeeting(supabase: ReturnType<typeof createClient>, actorEmail: string, payload: WorkshopPayload) {
   const workshopId = requireText(payload.workshopId, 'Workshop row ID is required.');
   const workshop = await getWorkshopById(supabase, workshopId);
+  const source = normalizeMeetingLinkSource(workshop.zoom_account);
   const account = normalizeZoomAccount(workshop.zoom_account);
   const zoomMeetingId = workshop.zoom_id ? String(workshop.zoom_id).trim() : '';
   let zoomCancellationWarning = '';
 
-  if (zoomMeetingId) {
+  if (source !== 'Custom Link' && zoomMeetingId) {
     try {
       await zoomRequest(account, `/meetings/${encodeURIComponent(zoomMeetingId)}`, { method: 'DELETE' });
     } catch (error) {
@@ -457,8 +545,8 @@ async function cancelMeeting(supabase: ReturnType<typeof createClient>, actorEma
   if (error) throw error;
   await writeAudit(supabase, actorEmail, 'admin_workshop_cancelled', data, {
     changedFields: Object.keys(updateRow).sort(),
-    zoomAccount: account,
     zoomCancellationWarning: zoomCancellationWarning || null,
+    zoomAccount: source,
     zoomId: zoomMeetingId || null
   });
   return { ...data, zoom_cancellation_warning: zoomCancellationWarning || null };

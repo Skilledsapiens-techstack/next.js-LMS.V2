@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link, Navigate, Outlet, useLocation } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Portal } from '../app/routeConfig';
 import { StateBlock } from '../components/StateBlock';
 import { apiGet, ApiClientError } from '../lib/supabaseApi';
 import { useAuth } from './AuthProvider';
+import { type AdminPermission, type AdminRoleKey } from './adminPermissions';
 
 type ProtectedPortalRouteProps = {
   portal: Portal;
@@ -20,7 +21,8 @@ type AdminProfile = {
   email: string;
   fullName?: string;
   id: string;
-  role: string;
+  permissions?: AdminPermission[];
+  role: AdminRoleKey;
   status: 'active';
 };
 
@@ -30,11 +32,12 @@ function getProbePath(portal: Portal) {
 
 export function ProtectedPortalRoute({ portal }: ProtectedPortalRouteProps) {
   const location = useLocation();
-  const { accessToken, status } = useAuth();
+  const { accessToken, signOut, status } = useAuth();
   const profileQuery = useQuery({
     enabled: status === 'authenticated' && Boolean(accessToken),
     queryFn: () => apiGet<StudentProfile | AdminProfile>(getProbePath(portal), { accessToken: accessToken ?? undefined }),
-    queryKey: ['portal-profile', portal, accessToken]
+    queryKey: portal === 'admin' ? ['admin-profile', accessToken] : ['portal-profile', portal, accessToken],
+    staleTime: portal === 'admin' ? 5 * 60 * 1000 : 0
   });
 
   if (status === 'configuration-missing') {
@@ -70,12 +73,13 @@ export function ProtectedPortalRoute({ portal }: ProtectedPortalRouteProps) {
   if (profileQuery.error instanceof ApiClientError && profileQuery.error.status === 404) {
     return (
       <main className="page-frame">
-        <StateBlock title={`${portal === 'student' ? 'Student' : 'Admin'} profile not linked`} tone="warning">
-          Your session is valid, but this email is not linked to an active {portal} profile yet.{' '}
-          <Link className="inline-link" to={portal === 'student' ? '/admin' : '/student'}>
-            Try {portal === 'student' ? 'admin' : 'student'} portal
-          </Link>
-          .
+        <StateBlock title="LMS access not linked" tone="warning">
+          Your session is valid, but this email is not linked to an active LMS profile. Please contact support or sign out and use the correct registered email.
+          <span className="state-block-actions">
+            <button className="segmented-button" type="button" onClick={() => void signOut()}>
+              Sign out
+            </button>
+          </span>
         </StateBlock>
       </main>
     );

@@ -29,6 +29,7 @@ import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { AdminDashboardDrilldowns, AdminProfile, useAdminDashboard, useAdminDashboardDrilldowns, useAdminProfile } from '../features/admin/useAdminDashboard';
+import { getAdminRoleLabel } from '../auth/adminPermissions';
 import { JsonRecord } from '../features/student/useStudentDashboard';
 
 type MetricCard = {
@@ -114,10 +115,7 @@ function formatName(profile?: AdminProfile) {
 
 function formatRole(profile?: AdminProfile) {
   if (!profile?.role) return 'Admin';
-  return profile.role
-    .split('-')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+  return getAdminRoleLabel(profile.role);
 }
 
 function formatUpdatedAt(value?: number) {
