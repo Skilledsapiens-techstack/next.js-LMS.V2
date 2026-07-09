@@ -1,12 +1,14 @@
 import { Bell, LogOut, Menu, MessageCircle, ShieldCheck, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { NavItem, Portal } from '../app/routeConfig';
 import { useAuth } from '../auth/AuthProvider';
+import { MODULE_VIEW_PERMISSIONS, hasAdminPermission, type AdminPermission } from '../auth/adminPermissions';
 import { StatusBadge } from '../components/StatusBadge';
 import { useStudentFeatureControls } from '../features/useFeatureControls';
 import { StudentAnnouncement, useStudentAnnouncements } from '../features/student/useStudentAnnouncements';
-import { apiPost } from '../lib/supabaseApi';
+import { apiGet, apiPost } from '../lib/supabaseApi';
 
 type AppShellProps = {
   navItems: NavItem[];
@@ -16,6 +18,11 @@ type AppShellProps = {
 type NavSection = {
   title: string;
   moduleIds: string[];
+};
+
+type AdminProfile = {
+  permissions?: AdminPermission[];
+  role: string;
 };
 
 const studentSections: NavSection[] = [
@@ -28,7 +35,7 @@ const studentSections: NavSection[] = [
 
 const adminSections: NavSection[] = [
   { title: 'Main', moduleIds: ['dashboard', 'recording-candidates', 'workshops', 'resources'] },
-  { title: 'Administration', moduleIds: ['students', 'cohorts', 'programs', 'projects', 'project-submissions', 'certificates', 'enrollments', 'feature-control'] },
+  { title: 'Administration', moduleIds: ['students', 'cohorts', 'programs', 'projects', 'project-submissions', 'certificates', 'enrollments', 'admin-users', 'feature-control'] },
   { title: 'Community', moduleIds: ['community'] },
   { title: 'Help', moduleIds: ['announcements', 'support', 'email-center', 'observability'] },
   { title: 'Payments', moduleIds: ['payment-orders', 'paid-access'] }
@@ -53,6 +60,11 @@ function filterStudentNavItems(navItems: NavItem[], featureControls: ReturnType<
   if (!featureControls?.items) return navItems;
   const statusMap = new Map(featureControls.items.map((item) => [item.moduleId, item.status]));
   return navItems.filter((item) => item.moduleId === 'dashboard' || statusMap.get(item.moduleId) !== 'hide');
+}
+
+function filterAdminNavItems(navItems: NavItem[], role?: string, permissions?: AdminPermission[]) {
+  if (!role) return navItems.filter((item) => item.moduleId === 'dashboard');
+  return navItems.filter((item) => hasAdminPermission(role, MODULE_VIEW_PERMISSIONS[item.moduleId], permissions));
 }
 
 function sortAnnouncements(items: StudentAnnouncement[]) {
@@ -91,7 +103,15 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   const navigate = useNavigate();
   const { accessToken, signOut } = useAuth();
   const featureControlsQuery = useStudentFeatureControls({ enabled: portal === 'student' });
-  const visibleNavItems = portal === 'student' ? filterStudentNavItems(navItems, featureControlsQuery.data) : navItems;
+  const adminProfileQuery = useQuery({
+    enabled: portal === 'admin' && Boolean(accessToken),
+    queryFn: () => apiGet<AdminProfile>('/admins/me', { accessToken: accessToken ?? undefined }),
+    queryKey: ['admin-profile', accessToken],
+    staleTime: 5 * 60 * 1000
+  });
+  const visibleNavItems = portal === 'student'
+    ? filterStudentNavItems(navItems, featureControlsQuery.data)
+    : filterAdminNavItems(navItems, adminProfileQuery.data?.role, adminProfileQuery.data?.permissions);
   const featureStatusMap = new Map((featureControlsQuery.data?.items ?? []).map((item) => [item.moduleId, item.status]));
   const announcementsEnabled = portal === 'student' && featureStatusMap.get('announcements') !== 'hide';
   const announcementsQuery = useStudentAnnouncements({ activeOnly: true, enabled: announcementsEnabled, limit: 5, page: 1, priority: 'all' });

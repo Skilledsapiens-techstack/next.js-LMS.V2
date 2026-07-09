@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Ticket,
+  UserCog,
   Users,
   Video,
   type LucideIcon
@@ -57,6 +58,7 @@ export const adminNavItems: NavItem[] = [
   { label: 'Submissions', path: '/admin/project-submissions', moduleId: 'project-submissions', icon: ClipboardCheck, mode: 'write' },
   { label: 'Certificates', path: '/admin/certificates', moduleId: 'certificates', icon: FileCheck2, mode: 'read-only' },
   { label: 'Enrollments', path: '/admin/enrollments', moduleId: 'enrollments', icon: Ticket, mode: 'read-only' },
+  { label: 'Admin Users', path: '/admin/admin-users', moduleId: 'admin-users', icon: UserCog, mode: 'write' },
   { label: 'Community', path: '/admin/community', moduleId: 'community', icon: MessageCircle, mode: 'read-only' },
   { label: 'Announcements', path: '/admin/announcements', moduleId: 'announcements', icon: Megaphone, mode: 'read-only' },
   { label: 'Support', path: '/admin/support', moduleId: 'support', icon: HelpCircle, mode: 'write' },

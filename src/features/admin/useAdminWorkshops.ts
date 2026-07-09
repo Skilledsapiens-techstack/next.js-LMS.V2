@@ -41,6 +41,7 @@ export type AdminWorkshopsQuery = {
 
 export type AdminWorkshopWritePayload = {
   cohortNames?: string[];
+  customJoinUrl?: string;
   date: string;
   durationMinutes?: number;
   time?: string;

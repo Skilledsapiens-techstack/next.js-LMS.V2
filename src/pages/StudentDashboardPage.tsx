@@ -17,12 +17,11 @@ import { PageHeader } from '../components/PageHeader';
 import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
-import { StudentAnnouncement, useStudentAnnouncements } from '../features/student/useStudentAnnouncements';
-import { useStudentCohorts } from '../features/student/useStudentCohorts';
-import { JsonRecord, StudentProfile, useStudentDashboard, useStudentProfile } from '../features/student/useStudentDashboard';
-import { StudentRecording, useStudentRecordings } from '../features/student/useStudentRecordings';
-import { StudentResource, useStudentResources } from '../features/student/useStudentResources';
-import { StudentScheduleItem, useStudentSchedule } from '../features/student/useStudentSchedule';
+import { type StudentAnnouncement } from '../features/student/useStudentAnnouncements';
+import { JsonRecord, StudentProfile, useStudentDashboard } from '../features/student/useStudentDashboard';
+import { type StudentRecording } from '../features/student/useStudentRecordings';
+import { type StudentResource } from '../features/student/useStudentResources';
+import { type StudentScheduleItem, type StudentScheduleStatus } from '../features/student/useStudentSchedule';
 
 type SummaryCard = {
   caption: string;
@@ -41,12 +40,22 @@ type ScopedCounts = {
   schedule: number;
 };
 
+type UnknownRecord = Record<string, unknown>;
+
 function asArray(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
-function pickArray(record: JsonRecord | undefined, keys: string[]) {
-  if (!record) {
+function isRecord(value: unknown): value is UnknownRecord {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function pickArray(record: unknown, keys: string[]) {
+  if (Array.isArray(record)) {
+    return record;
+  }
+
+  if (!isRecord(record)) {
     return [];
   }
 
@@ -55,6 +64,9 @@ function pickArray(record: JsonRecord | undefined, keys: string[]) {
     if (Array.isArray(value)) {
       return value;
     }
+    if (isRecord(value) && Array.isArray(value.items)) {
+      return value.items;
+    }
   }
 
   return [];
@@ -62,6 +74,44 @@ function pickArray(record: JsonRecord | undefined, keys: string[]) {
 
 function countFromBundle(bundle: JsonRecord | undefined, keys: string[]) {
   return pickArray(bundle, keys).length;
+}
+
+function firstValue(record: unknown, keys: string[]) {
+  if (!isRecord(record)) return undefined;
+  return keys.map((key) => record[key]).find((value) => value !== undefined && value !== null);
+}
+
+function textValue(record: unknown, keys: string[]) {
+  const value = firstValue(record, keys);
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function booleanValue(record: unknown, keys: string[], fallback = false) {
+  const value = firstValue(record, keys);
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function numberValue(record: unknown, keys: string[]) {
+  const value = firstValue(record, keys);
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function stringArrayValue(record: unknown, keys: string[]) {
+  const value = firstValue(record, keys);
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
+}
+
+function dateTimeValue(record: unknown, keys: string[]) {
+  const value = textValue(record, keys);
+  if (!value) return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function formatName(profile?: StudentProfile) {
@@ -112,6 +162,137 @@ function formatDateTime(value?: string) {
     day: '2-digit',
     month: 'short'
   }).format(date);
+}
+
+function isVisibleAnnouncementNow(item: unknown) {
+  if (!isRecord(item)) return false;
+
+  const status = String(firstValue(item, ['status', 'announcement_status', 'announcementStatus']) ?? 'active').toLowerCase();
+  if (status && status !== 'active') return false;
+
+  const now = Date.now();
+  const startDate = textValue(item, ['start_date', 'startDate']);
+  const endDate = textValue(item, ['end_date', 'endDate']);
+  const startsAt = startDate ? new Date(startDate).getTime() : Number.NaN;
+  const endsAt = endDate ? new Date(endDate).getTime() : Number.NaN;
+
+  if (!Number.isNaN(startsAt) && startsAt > now) return false;
+  if (!Number.isNaN(endsAt) && endsAt < now) return false;
+
+  return true;
+}
+
+function mapAnnouncement(item: unknown): StudentAnnouncement | null {
+  const title = textValue(item, ['title']);
+  if (!title) return null;
+
+  return {
+    announcementId: textValue(item, ['announcement_id', 'announcementId']),
+    audience: textValue(item, ['audience']),
+    cohortNames: stringArrayValue(item, ['cohort_names', 'cohortNames']),
+    endDate: textValue(item, ['end_date', 'endDate']),
+    id: textValue(item, ['id', 'announcement_id', 'announcementId']) ?? title,
+    linkLabel: textValue(item, ['link_label', 'linkLabel']),
+    linkUrl: textValue(item, ['link_url', 'linkUrl']),
+    message: textValue(item, ['message']) ?? '',
+    pinned: booleanValue(item, ['pinned']),
+    priority: textValue(item, ['priority']) === 'urgent' ? 'urgent' : 'normal',
+    programKeys: stringArrayValue(item, ['program_keys', 'programKeys']),
+    startDate: textValue(item, ['start_date', 'startDate']),
+    title,
+    type: textValue(item, ['type']),
+    updatedAt: textValue(item, ['updated_at', 'updatedAt'])
+  };
+}
+
+function mapResource(item: unknown): StudentResource | null {
+  const title = textValue(item, ['title']);
+  if (!title) return null;
+
+  const accessType = textValue(item, ['access_type', 'accessType']) === 'paid' ? 'paid' : 'free';
+  return {
+    accessType,
+    cohortNames: stringArrayValue(item, ['cohort_names', 'cohortNames']),
+    currency: textValue(item, ['currency']),
+    description: textValue(item, ['description']),
+    hasAccess: booleanValue(item, ['has_access', 'hasAccess'], true),
+    id: textValue(item, ['id', 'resource_id', 'resourceId']) ?? title,
+    locked: booleanValue(item, ['locked']),
+    lockReason: textValue(item, ['lock_reason', 'lockReason']),
+    paymentLink: textValue(item, ['payment_link', 'paymentLink']),
+    phase: textValue(item, ['phase']),
+    price: numberValue(item, ['price']),
+    programKeys: stringArrayValue(item, ['program_keys', 'programKeys']),
+    resourceId: textValue(item, ['resource_id', 'resourceId']),
+    resourceMode: textValue(item, ['resource_mode', 'resourceMode']),
+    resourceType: textValue(item, ['resource_type', 'resourceType']) ?? 'Learning resource',
+    title,
+    updatedAt: textValue(item, ['updated_at', 'updatedAt']),
+    url: textValue(item, ['url'])
+  };
+}
+
+function mapRecording(item: unknown): StudentRecording | null {
+  const status = textValue(item, ['status', 'workshop_status', 'workshopStatus']);
+  const youtubeUrl = textValue(item, ['youtube_video_url', 'youtubeVideoUrl']);
+  const zoomUrl = textValue(item, ['zoom_recording_url', 'zoomRecordingUrl']);
+  const recordingUrl = textValue(item, ['recording_url', 'recordingUrl']) ?? youtubeUrl ?? zoomUrl;
+  const title = textValue(item, ['title']);
+  if (status !== 'Completed' || !recordingUrl || !title) return null;
+
+  return {
+    accessType: textValue(item, ['access_type', 'accessType']) === 'paid' ? 'paid' : 'free',
+    cohortNames: stringArrayValue(item, ['cohort_names', 'cohortNames']),
+    currency: textValue(item, ['currency']),
+    date: textValue(item, ['date']) ?? '',
+    domainKey: textValue(item, ['domain_key', 'domainKey']),
+    durationMinutes: numberValue(item, ['duration_minutes', 'durationMinutes']),
+    hasAccess: booleanValue(item, ['has_access', 'hasAccess'], true),
+    id: textValue(item, ['id', 'workshop_id', 'workshopId']) ?? `${title}-${recordingUrl}`,
+    locked: booleanValue(item, ['locked']),
+    lockReason: textValue(item, ['lock_reason', 'lockReason']),
+    paymentLink: textValue(item, ['payment_link', 'paymentLink']),
+    price: numberValue(item, ['price']),
+    programKey: textValue(item, ['program_key', 'programKey']),
+    recordingPassword: textValue(item, ['recording_password', 'recordingPassword', 'zoom_recording_password', 'zoomRecordingPassword']),
+    recordingUrl,
+    source: youtubeUrl ? 'youtube' : 'zoom',
+    time: textValue(item, ['time']),
+    title,
+    workshopId: textValue(item, ['workshop_id', 'workshopId'])
+  };
+}
+
+function mapScheduleItem(item: unknown): StudentScheduleItem | null {
+  const status = textValue(item, ['status', 'workshop_status', 'workshopStatus']);
+  const scheduleStatus = ['Upcoming', 'Scheduled', 'Live'].includes(status ?? '') ? (status as StudentScheduleStatus) : undefined;
+  const title = textValue(item, ['title']);
+  if (!scheduleStatus || !title) return null;
+
+  return {
+    accessType: textValue(item, ['access_type', 'accessType']) === 'paid' ? 'paid' : 'free',
+    cohortNames: stringArrayValue(item, ['cohort_names', 'cohortNames']),
+    currency: textValue(item, ['currency']),
+    date: textValue(item, ['date']) ?? '',
+    domainKey: textValue(item, ['domain_key', 'domainKey']),
+    durationMinutes: numberValue(item, ['duration_minutes', 'durationMinutes']),
+    hasAccess: booleanValue(item, ['has_access', 'hasAccess'], true),
+    id: textValue(item, ['id', 'workshop_id', 'workshopId']) ?? title,
+    joinUrl: textValue(item, ['join_url', 'joinUrl']),
+    locked: booleanValue(item, ['locked']),
+    lockReason: textValue(item, ['lock_reason', 'lockReason']),
+    paymentLink: textValue(item, ['payment_link', 'paymentLink']),
+    price: numberValue(item, ['price']),
+    programKey: textValue(item, ['program_key', 'programKey']),
+    status: scheduleStatus,
+    time: textValue(item, ['time']),
+    title,
+    workshopId: textValue(item, ['workshop_id', 'workshopId'])
+  };
+}
+
+function takeMapped<TItem>(items: unknown[], mapper: (item: unknown) => TItem | null, limit = 3) {
+  return items.map(mapper).filter((item): item is TItem => Boolean(item)).slice(0, limit);
 }
 
 function formatScheduleTime(item?: StudentScheduleItem) {
@@ -204,33 +385,44 @@ function renderItemList<TItem>({
 }
 
 export function StudentDashboardPage() {
-  const profileQuery = useStudentProfile();
   const dashboardQuery = useStudentDashboard();
-  const announcementsQuery = useStudentAnnouncements({ limit: 3, page: 1, priority: 'all' });
-  const cohortsQuery = useStudentCohorts({ limit: 100, page: 1, status: 'all' });
-  const recordingsQuery = useStudentRecordings({ accessType: 'all', limit: 3, page: 1, source: 'all' });
-  const scheduleQuery = useStudentSchedule({ accessType: 'all', limit: 3, page: 1, status: 'all' });
-  const resourcesQuery = useStudentResources({ accessType: 'all', limit: 3, locked: 'all', page: 1 });
-  const lockedResourcesQuery = useStudentResources({ accessType: 'paid', limit: 3, locked: true, page: 1 });
-  const profile = dashboardQuery.data?.student ?? profileQuery.data;
-  const isLoading = profileQuery.isLoading || dashboardQuery.isLoading;
-  const isError = profileQuery.isError || dashboardQuery.isError;
+  const profile = dashboardQuery.data?.student;
+  const isLoading = dashboardQuery.isLoading;
+  const isError = dashboardQuery.isError;
+  const dashboardItems = pickArray(dashboardQuery.data?.dashboard, ['workshops']);
+  const resourceItemsAll = takeMapped(pickArray(dashboardQuery.data?.resources, ['resources', 'items']), mapResource, 500).sort(
+    (left, right) => dateTimeValue(right, ['updatedAt']) - dateTimeValue(left, ['updatedAt'])
+  );
+  const scheduleItemsAll = takeMapped(dashboardItems, mapScheduleItem, 500).sort((left, right) => {
+    const leftValue = `${left.date ?? ''} ${left.time ?? ''}`;
+    const rightValue = `${right.date ?? ''} ${right.time ?? ''}`;
+    return leftValue.localeCompare(rightValue);
+  });
+  const recordingItemsAll = takeMapped(dashboardItems, mapRecording, 500);
+  const announcementItemsAll = takeMapped(
+    pickArray(dashboardQuery.data?.dashboard, ['announcements']).filter(isVisibleAnnouncementNow).sort((left, right) => dateTimeValue(right, ['updated_at', 'updatedAt']) - dateTimeValue(left, ['updated_at', 'updatedAt'])),
+    mapAnnouncement,
+    500
+  );
   const scopedCounts = {
-    announcements: announcementsQuery.data?.total ?? countFromBundle(dashboardQuery.data?.dashboard, ['announcements']),
+    announcements: announcementItemsAll.length,
     certificates: countFromBundle(dashboardQuery.data?.certificates, ['certificates', 'items']),
     projects: countFromBundle(dashboardQuery.data?.projects, ['projects', 'items']),
-    recordings: recordingsQuery.data?.total ?? 0,
-    resources: resourcesQuery.data?.total ?? 0,
-    schedule: scheduleQuery.data?.total ?? 0
+    recordings: recordingItemsAll.length,
+    resources: resourceItemsAll.length,
+    schedule: scheduleItemsAll.length
   };
   const summaryCards = buildSummaryCards(scopedCounts);
   const trackRoles = asArray(profile?.trackRoleIds).filter((role): role is string => typeof role === 'string');
-  const cohortNames = uniqueNames([...(cohortsQuery.data?.items ?? []).map((cohort) => cohort.name), profile?.cohortName]);
-  const scheduleItems = scheduleQuery.data?.items ?? [];
-  const recordingItems = recordingsQuery.data?.items ?? [];
-  const resourceItems = resourcesQuery.data?.items ?? [];
-  const lockedResourceItems = lockedResourcesQuery.data?.items ?? [];
-  const announcementItems = announcementsQuery.data?.items ?? [];
+  const cohortNames = uniqueNames([
+    ...pickArray(dashboardQuery.data?.dashboard, ['cohorts', 'studentCohorts']).map((cohort) => textValue(cohort, ['name', 'cohort_name', 'cohortName'])),
+    profile?.cohortName
+  ]);
+  const scheduleItems = scheduleItemsAll.slice(0, 3);
+  const recordingItems = recordingItemsAll.slice(0, 3);
+  const resourceItems = resourceItemsAll.slice(0, 3);
+  const lockedResourceItems = resourceItemsAll.filter((resource) => resource.accessType === 'paid' && resource.locked).slice(0, 3);
+  const announcementItems = announcementItemsAll.slice(0, 3);
   const nextSession = scheduleItems[0];
   const sessionAction = getSessionAction(nextSession);
 

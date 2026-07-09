@@ -8,6 +8,8 @@ type AdminStudentPayload = {
   studentIds?: string[];
 };
 
+type AdminRole = 'admin' | 'moderator' | 'super_admin';
+
 const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -33,6 +35,18 @@ function uniqueStrings(values: unknown[]) {
   return Array.from(new Set(values.map((value) => String(value ?? '').trim()).filter(Boolean)));
 }
 
+function hasPermission(role: AdminRole, permission: 'admin.students.invite' | 'admin.students.manage' | 'admin.students.view') {
+  if (role === 'super_admin') return true;
+  if (role === 'admin') return true;
+  return permission === 'admin.students.view';
+}
+
+function requiredPermission(action: AdminStudentAction) {
+  if (action === 'status-summary' || action === 'invite-health') return 'admin.students.view' as const;
+  if (action === 'resend-invite') return 'admin.students.invite' as const;
+  return 'admin.students.manage' as const;
+}
+
 async function getActiveAdmin(supabase: ReturnType<typeof createClient>, authorization: string) {
   const token = authorization.replace(/^Bearer\s+/i, '').trim();
   if (!token) throw new Error('Missing access token.');
@@ -43,7 +57,7 @@ async function getActiveAdmin(supabase: ReturnType<typeof createClient>, authori
   const email = userData.user.email.toLowerCase();
   const { data: admins, error: adminError } = await supabase
     .from('admin_users')
-    .select('id,email,status,auth_user_id')
+    .select('id,email,status,role,auth_user_id')
     .or(`auth_user_id.eq.${userData.user.id},email.eq.${email}`)
     .limit(2);
 
@@ -51,7 +65,7 @@ async function getActiveAdmin(supabase: ReturnType<typeof createClient>, authori
   const admin = (admins ?? []).find((row) => row.auth_user_id === userData.user.id) ?? (admins ?? []).find((row) => String(row.email).toLowerCase() === email);
   if (!admin || admin.status !== 'active') throw new Error('Active admin access is required.');
 
-  return { email, id: userData.user.id };
+  return { email, id: userData.user.id, role: String(admin.role ?? 'admin') as AdminRole };
 }
 
 async function listAuthUsersByStudent(supabase: ReturnType<typeof createClient>, emails: string[], studentIds: string[]) {
@@ -338,6 +352,8 @@ Deno.serve(async (request) => {
     const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
     const admin = await getActiveAdmin(supabase, authorization);
     const payload = (await request.json().catch(() => ({}))) as AdminStudentPayload;
+    const permission = requiredPermission(payload.action);
+    if (!hasPermission(admin.role, permission)) throw new Error('This admin role is not allowed to perform this student action.');
 
     if (payload.action === 'backfill-auth-links') return jsonResponse(await backfillAuthLinks(supabase, admin.email, payload));
     if (payload.action === 'invite-health') return jsonResponse(await getInviteHealth(supabase));

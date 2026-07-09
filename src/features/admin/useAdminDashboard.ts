@@ -1,15 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthProvider';
-import { apiGet } from '../../lib/supabaseApi';
+import { hasAdminPermission, type AdminPermission, type AdminRoleKey } from '../../auth/adminPermissions';
+import { apiGet, ApiClientError } from '../../lib/supabaseApi';
 import { JsonRecord } from '../student/useStudentDashboard';
-
-export type AdminRole = 'owner' | 'admin' | 'operations' | 'mentor' | 'viewer';
 
 export type AdminProfile = {
   email: string;
   fullName?: string;
   id: string;
-  role: AdminRole;
+  permissions?: AdminPermission[];
+  role: AdminRoleKey;
   status: 'active';
 };
 
@@ -40,13 +40,33 @@ export type AdminDashboardDrilldowns = {
   upcomingWorkshops: PaginatedAdminResponse;
 };
 
+const emptyPaginatedAdminResponse: PaginatedAdminResponse = {
+  hasNextPage: false,
+  hasPreviousPage: false,
+  items: [],
+  limit: 5,
+  page: 1,
+  total: 0,
+  totalPages: 1
+};
+
+async function safeAdminDrilldown<T>(request: Promise<PaginatedAdminResponse<T>>) {
+  try {
+    return await request;
+  } catch (error) {
+    if (error instanceof ApiClientError && error.status === 403) return emptyPaginatedAdminResponse as PaginatedAdminResponse<T>;
+    throw error;
+  }
+}
+
 export function useAdminProfile() {
   const { accessToken } = useAuth();
 
   return useQuery({
     enabled: Boolean(accessToken),
     queryFn: () => apiGet<AdminProfile>('/admins/me', { accessToken: accessToken ?? undefined }),
-    queryKey: ['admin-profile', accessToken]
+    queryKey: ['admin-profile', accessToken],
+    staleTime: 5 * 60 * 1000
   });
 }
 
@@ -65,9 +85,12 @@ export function useAdminDashboardDrilldowns() {
   const { accessToken } = useAuth();
   const authOptions = { accessToken: accessToken ?? undefined };
   const compactPage = { limit: 5 };
+  const profileQuery = useAdminProfile();
+  const role = profileQuery.data?.role;
+  const permissions = profileQuery.data?.permissions;
 
   return useQuery({
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken && role),
     queryFn: async (): Promise<AdminDashboardDrilldowns> => {
       const [
         certificateRequests,
@@ -80,15 +103,33 @@ export function useAdminDashboardDrilldowns() {
         supportTickets,
         upcomingWorkshops
       ] = await Promise.all([
-        apiGet<PaginatedAdminResponse>('/admins/certificate-requests', { ...authOptions, query: { ...compactPage, adminStatus: 'pending' } }),
-        apiGet<PaginatedAdminResponse>('/admins/workshops', { ...authOptions, query: { ...compactPage, status: 'Completed' } }),
-        apiGet<PaginatedAdminResponse>('/admins/enrollment-requests', { ...authOptions, query: compactPage }),
-        apiGet<PaginatedAdminResponse>('/admins/payment-orders', { ...authOptions, query: { ...compactPage, status: 'failed' } }),
-        apiGet<PaginatedAdminResponse>('/admins/payment-orders', { ...authOptions, query: compactPage }),
-        apiGet<PaginatedAdminResponse>('/admins/project-submissions', { ...authOptions, query: { ...compactPage, status: 'pending' } }),
-        apiGet<PaginatedAdminResponse>('/admins/recording-candidates', { ...authOptions, query: compactPage }),
-        apiGet<PaginatedAdminResponse>('/admins/support-tickets', { ...authOptions, query: { ...compactPage, status: 'open' } }),
-        apiGet<PaginatedAdminResponse>('/admins/workshops', { ...authOptions, query: { ...compactPage, status: 'Scheduled' } })
+        hasAdminPermission(role, 'admin.certificates.view', permissions)
+          ? safeAdminDrilldown(apiGet<PaginatedAdminResponse>('/admins/certificate-requests', { ...authOptions, query: { ...compactPage, adminStatus: 'pending' } }))
+          : emptyPaginatedAdminResponse,
+        hasAdminPermission(role, 'admin.meetings.view', permissions)
+          ? safeAdminDrilldown(apiGet<PaginatedAdminResponse>('/admins/workshops', { ...authOptions, query: { ...compactPage, status: 'Completed' } }))
+          : emptyPaginatedAdminResponse,
+        hasAdminPermission(role, 'admin.enrollments.view', permissions)
+          ? safeAdminDrilldown(apiGet<PaginatedAdminResponse>('/admins/enrollment-requests', { ...authOptions, query: compactPage }))
+          : emptyPaginatedAdminResponse,
+        hasAdminPermission(role, 'admin.payments.view', permissions)
+          ? safeAdminDrilldown(apiGet<PaginatedAdminResponse>('/admins/payment-orders', { ...authOptions, query: { ...compactPage, status: 'failed' } }))
+          : emptyPaginatedAdminResponse,
+        hasAdminPermission(role, 'admin.payments.view', permissions)
+          ? safeAdminDrilldown(apiGet<PaginatedAdminResponse>('/admins/payment-orders', { ...authOptions, query: compactPage }))
+          : emptyPaginatedAdminResponse,
+        hasAdminPermission(role, 'admin.submissions.view', permissions)
+          ? safeAdminDrilldown(apiGet<PaginatedAdminResponse>('/admins/project-submissions', { ...authOptions, query: { ...compactPage, status: 'pending' } }))
+          : emptyPaginatedAdminResponse,
+        hasAdminPermission(role, 'admin.recordings.view', permissions)
+          ? safeAdminDrilldown(apiGet<PaginatedAdminResponse>('/admins/recording-candidates', { ...authOptions, query: compactPage }))
+          : emptyPaginatedAdminResponse,
+        hasAdminPermission(role, 'admin.support.view', permissions)
+          ? safeAdminDrilldown(apiGet<PaginatedAdminResponse>('/admins/support-tickets', { ...authOptions, query: { ...compactPage, status: 'open' } }))
+          : emptyPaginatedAdminResponse,
+        hasAdminPermission(role, 'admin.meetings.view', permissions)
+          ? safeAdminDrilldown(apiGet<PaginatedAdminResponse>('/admins/workshops', { ...authOptions, query: { ...compactPage, status: 'Scheduled' } }))
+          : emptyPaginatedAdminResponse
       ]);
 
       return {
@@ -103,7 +144,7 @@ export function useAdminDashboardDrilldowns() {
         upcomingWorkshops
       };
     },
-    queryKey: ['admin-dashboard-drilldowns', accessToken],
+    queryKey: ['admin-dashboard-drilldowns', accessToken, role, permissions],
     staleTime: 45_000
   });
 }

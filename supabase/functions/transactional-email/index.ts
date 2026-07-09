@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 type JsonRecord = Record<string, unknown>;
+type AdminPermission = 'admin.email.manage' | 'admin.students.invite';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
 const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
@@ -174,14 +175,18 @@ function normalizePortalUrl(value: unknown) {
   return 'https://login.skilledsapiens.com/login';
 }
 
-function normalizeStudentRedirectUrl(value: unknown) {
+function normalizeStudentRedirectUrl(value: unknown, intent: 'create' | 'forgot' = 'create') {
   const base = normalizePortalUrl(value);
   try {
     const url = new URL(base);
-    url.searchParams.set('reset_role', 'student');
+    url.pathname = '/login';
+    url.searchParams.set('mode', 'recovery');
+    url.searchParams.set('intent', intent);
+    url.searchParams.set('portal', 'student');
+    url.searchParams.delete('reset_role');
     return url.toString();
   } catch (_err) {
-    return 'https://login.skilledsapiens.com/login?reset_role=student';
+    return `https://login.skilledsapiens.com/login?mode=recovery&intent=${intent}&portal=student`;
   }
 }
 
@@ -189,7 +194,13 @@ async function assertPublicCaller(req: Request) {
   if (req.method !== 'POST') throw new Error('POST is required.');
 }
 
-async function assertAdminCaller(req: Request) {
+function adminHasPermission(role: string, permission: AdminPermission) {
+  if (role === 'super_admin') return true;
+  if (role === 'admin') return permission === 'admin.students.invite';
+  return false;
+}
+
+async function assertAdminCaller(req: Request, permission: AdminPermission) {
   const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
   if (!bearer || bearer === anonKey) throw new Error('Admin session is required.');
 
@@ -203,12 +214,13 @@ async function assertAdminCaller(req: Request) {
 
   const { data, error } = await admin
     .from('admin_users')
-    .select('id,email,status,auth_user_id,full_name')
+    .select('id,email,status,role,auth_user_id,full_name')
     .or(`auth_user_id.eq.${userData.user.id},email.eq.${email}`)
     .limit(2);
   if (error) throw new Error(error.message);
   const row = (data || []).find((item) => item.auth_user_id === userData.user?.id) || (data || []).find((item) => normalizeEmail(item.email) === email);
   if (!row || row.status !== 'active') throw new Error('Active admin access is required.');
+  if (!adminHasPermission(text(row.role, 'admin'), permission)) throw new Error('This admin role is not allowed to send this email.');
   return asRecord(row);
 }
 
@@ -265,11 +277,11 @@ async function generateAuthActionLink(type: 'invite' | 'recovery', student: Json
   return { status: 'failed', message: bodyText.slice(0, 300) || `Supabase link generation returned ${response.status}`, type };
 }
 
-async function passwordSetupLink(student: JsonRecord, redirectUrl: string) {
-  let link = await generateAuthActionLink('invite', student, redirectUrl);
+async function passwordSetupLink(student: JsonRecord, createRedirectUrl: string, recoveryRedirectUrl?: string) {
+  let link = await generateAuthActionLink('invite', student, createRedirectUrl);
   let mode = 'invite';
   if (link.status === 'existing') {
-    link = await generateAuthActionLink('recovery', student, redirectUrl);
+    link = await generateAuthActionLink('recovery', student, recoveryRedirectUrl || createRedirectUrl);
     mode = 'recovery';
   }
   if (link.status !== 'generated') {
@@ -761,8 +773,9 @@ async function handlePasswordSetup(payload: JsonRecord) {
   if (!student) throw new Error('No active LMS student found for this email. Contact the administrator.');
   await enforceCooldown(email);
 
-  const redirectUrl = normalizeStudentRedirectUrl(payload.redirect_url || payload.redirectUrl);
-  const { actionLink, mode } = await passwordSetupLink(student, redirectUrl);
+  const redirectUrl = normalizeStudentRedirectUrl(payload.redirect_url || payload.redirectUrl, 'create');
+  const recoveryRedirectUrl = normalizeStudentRedirectUrl(payload.redirect_url || payload.redirectUrl, 'forgot');
+  const { actionLink, mode } = await passwordSetupLink(student, redirectUrl, recoveryRedirectUrl);
   const name = text(student.full_name, 'Student') || 'Student';
   const isRecovery = mode === 'recovery';
   const templateKey = isRecovery ? 'portal_password_reset' : 'portal_invite';
@@ -908,8 +921,10 @@ async function processQueuedStudentEmail(payload: JsonRecord, actor: JsonRecord)
   const linkLabels: Record<string, string> = {};
 
   if (templateKey === 'portal_invite') {
-    const redirectUrl = normalizeStudentRedirectUrl(payload.redirect_url || payload.redirectUrl || params.redirect_url || params.redirectUrl);
-    const { actionLink, mode } = await passwordSetupLink(student, redirectUrl);
+    const rawRedirectUrl = payload.redirect_url || payload.redirectUrl || params.redirect_url || params.redirectUrl;
+    const redirectUrl = normalizeStudentRedirectUrl(rawRedirectUrl, 'create');
+    const recoveryRedirectUrl = normalizeStudentRedirectUrl(rawRedirectUrl, 'forgot');
+    const { actionLink, mode } = await passwordSetupLink(student, redirectUrl, recoveryRedirectUrl);
     const portalUrl = portalUrlFromRedirect(redirectUrl);
     vars = {
       ...vars,
@@ -1026,15 +1041,15 @@ Deno.serve(async (req) => {
       return json(200, await handlePasswordSetup(payload));
     }
     if (action === 'sendAdminStudentCommunication') {
-      const actor = await assertAdminCaller(req);
+      const actor = await assertAdminCaller(req, 'admin.email.manage');
       return json(200, await handleAdminStudentCommunication(payload, actor));
     }
     if (action === 'processQueuedStudentEmail') {
-      const actor = await assertAdminCaller(req);
+      const actor = await assertAdminCaller(req, 'admin.students.invite');
       return json(200, await processQueuedStudentEmail(payload, actor));
     }
     if (action === 'resolveAdminStudentCommunication') {
-      await assertAdminCaller(req);
+      await assertAdminCaller(req, 'admin.email.manage');
       return json(200, await handleAdminStudentCommunicationPreview(payload));
     }
     throw new Error('Unknown transactional email action: ' + action);

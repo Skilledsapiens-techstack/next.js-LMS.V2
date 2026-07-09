@@ -4,6 +4,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
+import { hasAdminPermission } from '../auth/adminPermissions';
+import { useAdminProfile } from '../features/admin/useAdminDashboard';
 import { AdminCohort, useAdminCohorts } from '../features/admin/useAdminCohorts';
 import {
   AdminCertificate,
@@ -489,6 +491,9 @@ export function AdminCertificatesPage() {
   const [certificateToRevoke, setCertificateToRevoke] = useState<AdminCertificate | null>(null);
   const [certificateMessage, setCertificateMessage] = useState('');
 
+  const adminProfileQuery = useAdminProfile();
+  const adminRole = adminProfileQuery.data?.role;
+  const canIssueCertificates = Boolean(adminRole) && hasAdminPermission(adminRole, 'admin.certificates.issue', adminProfileQuery.data?.permissions);
   const certificatesQuery = useAdminCertificates({ certificateType, generationStatus, page, search, status });
   const requestsQuery = useAdminCertificateRequests({ adminStatus: 'pending', limit: 10, moderatorStatus: 'approved', page: 1 });
   const certificateSettingsQuery = useAdminCertificateProgramSettings();
@@ -499,8 +504,8 @@ export function AdminCertificatesPage() {
   const saveSettingMutation = useSaveCertificateProgramSetting();
   const programsQuery = useAdminPrograms({ limit: 100, page: 1, status: 'active' });
   const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, status: 'all' });
-  const cohortsPageTwoQuery = useAdminCohorts({ limit: 100, page: 2, status: 'all' });
-  const cohortsPageThreeQuery = useAdminCohorts({ limit: 100, page: 3, status: 'all' });
+  const cohortsPageTwoQuery = useAdminCohorts({ enabled: cohortsPageOneQuery.data?.hasNextPage === true, limit: 100, page: 2, status: 'all' });
+  const cohortsPageThreeQuery = useAdminCohorts({ enabled: cohortsPageTwoQuery.data?.hasNextPage === true, limit: 100, page: 3, status: 'all' });
   const studentsQuery = useAdminStudents({ cohortName: selectedCohortName || undefined, limit: 100, page: 1, status: 'active' });
 
   const programs = programsQuery.data?.items ?? [];
@@ -522,6 +527,14 @@ export function AdminCertificatesPage() {
   const eligibleStudents = studentsQuery.data?.items ?? [];
   const certificates = certificatesQuery.data;
   const totalPages = certificates?.totalPages ?? 1;
+  const visibleCertificateTabs = useMemo(
+    () => (canIssueCertificates ? certificateTabs : certificateTabs.filter((tab) => tab.id === 'issued')),
+    [canIssueCertificates]
+  );
+
+  useEffect(() => {
+    if (!canIssueCertificates && activeTab !== 'issued') setActiveTab('issued');
+  }, [activeTab, canIssueCertificates]);
 
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -682,7 +695,7 @@ export function AdminCertificatesPage() {
       />
 
       <nav className="certificate-workspace-tabs" aria-label="Certificate workspace tabs">
-        {certificateTabs.map((tab) => (
+        {visibleCertificateTabs.map((tab) => (
           <button
             aria-selected={activeTab === tab.id}
             className={activeTab === tab.id ? 'certificate-workspace-tab certificate-workspace-tab--active' : 'certificate-workspace-tab'}
@@ -698,7 +711,7 @@ export function AdminCertificatesPage() {
 
       {certificateMessage ? <p className="admin-submission-message">{certificateMessage}</p> : null}
 
-      {activeTab === 'leadership' ? (
+      {activeTab === 'leadership' && canIssueCertificates ? (
         <section className="admin-certificate-workspace-grid">
           <form className="certificate-section" onSubmit={handleIssueLeadershipCertificates}>
             <header className="certificate-section__header">
@@ -823,7 +836,7 @@ export function AdminCertificatesPage() {
         </section>
       ) : null}
 
-      {activeTab === 'live-projects' ? <RequestQueue isLoading={requestsQuery.isLoading} items={requestsQuery.data?.items ?? []} onReview={setSelectedRequest} /> : null}
+      {activeTab === 'live-projects' && canIssueCertificates ? <RequestQueue isLoading={requestsQuery.isLoading} items={requestsQuery.data?.items ?? []} onReview={setSelectedRequest} /> : null}
 
       {activeTab === 'issued' ? (
         <section className="certificate-section">
@@ -902,31 +915,35 @@ export function AdminCertificatesPage() {
                         {lockedButtonLabel('Verify')}
                       </button>
                     )}
-                    <button
-                      className="segmented-button"
-                      disabled={certificate.status === 'revoked' || generateCertificatePdfMutation.isPending}
-                      onClick={() => void handleGenerateCertificatePdf(certificate)}
-                      type="button"
-                    >
-                      {generateCertificatePdfMutation.isPending
-                        ? 'Preparing...'
-                        : certificate.status === 'revoked'
-                          ? lockedButtonLabel('PDF')
-                          : certificate.generationStatus === 'ready'
-                            ? 'Download PDF'
-                            : 'Generate PDF'}
-                    </button>
-                    <button
-                      className="segmented-button"
-                      disabled={certificate.status === 'revoked' || generateCertificatePdfMutation.isPending}
-                      onClick={() => void handleEmailCertificatePdf(certificate)}
-                      type="button"
-                    >
-                      {generateCertificatePdfMutation.isPending ? 'Sending...' : certificate.status === 'revoked' ? lockedButtonLabel('Email') : 'Email PDF'}
-                    </button>
-                    <button className="segmented-button segmented-button--danger" disabled={certificate.status === 'revoked'} onClick={() => setCertificateToRevoke(certificate)} type="button">
-                      {certificate.status === 'revoked' ? 'Revoked' : 'Revoke'}
-                    </button>
+                    {canIssueCertificates ? (
+                      <>
+                        <button
+                          className="segmented-button"
+                          disabled={certificate.status === 'revoked' || generateCertificatePdfMutation.isPending}
+                          onClick={() => void handleGenerateCertificatePdf(certificate)}
+                          type="button"
+                        >
+                          {generateCertificatePdfMutation.isPending
+                            ? 'Preparing...'
+                            : certificate.status === 'revoked'
+                              ? lockedButtonLabel('PDF')
+                              : certificate.generationStatus === 'ready'
+                                ? 'Download PDF'
+                                : 'Generate PDF'}
+                        </button>
+                        <button
+                          className="segmented-button"
+                          disabled={certificate.status === 'revoked' || generateCertificatePdfMutation.isPending}
+                          onClick={() => void handleEmailCertificatePdf(certificate)}
+                          type="button"
+                        >
+                          {generateCertificatePdfMutation.isPending ? 'Sending...' : certificate.status === 'revoked' ? lockedButtonLabel('Email') : 'Email PDF'}
+                        </button>
+                        <button className="segmented-button segmented-button--danger" disabled={certificate.status === 'revoked'} onClick={() => setCertificateToRevoke(certificate)} type="button">
+                          {certificate.status === 'revoked' ? 'Revoked' : 'Revoke'}
+                        </button>
+                      </>
+                    ) : null}
                   </div>
                 </article>
               ))}
@@ -958,7 +975,7 @@ export function AdminCertificatesPage() {
       </section>
       ) : null}
 
-      {selectedRequest ? (
+      {selectedRequest && canIssueCertificates ? (
         <FinalIssuanceModal
           error={issueCertificateMutation.isError ? issueCertificateMutation.error.message : undefined}
           isIssuing={issueCertificateMutation.isPending}
@@ -967,7 +984,7 @@ export function AdminCertificatesPage() {
           request={selectedRequest}
         />
       ) : null}
-      {certificateToRevoke ? (
+      {certificateToRevoke && canIssueCertificates ? (
         <RevokeCertificateModal
           certificate={certificateToRevoke}
           error={revokeCertificateMutation.isError ? revokeCertificateMutation.error.message : undefined}

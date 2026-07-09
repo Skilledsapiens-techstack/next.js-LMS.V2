@@ -5884,6 +5884,201 @@ h1 {
   white-space: nowrap;
 }
 
+.admin-users-grid {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(300px, 0.8fr) minmax(0, 1.4fr);
+}
+
+.admin-users-form {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.admin-users-form > header {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+}
+
+.admin-users-form > header svg {
+  color: var(--color-accent);
+  margin-top: 2px;
+}
+
+.admin-users-form h2 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.admin-users-form p {
+  color: var(--color-text-muted);
+  font-weight: 400;
+  margin: 4px 0 0;
+}
+
+.admin-users-form label {
+  display: grid;
+  gap: 7px;
+}
+
+.admin-users-form label span,
+.admin-users-role-help strong {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-users-form input,
+.admin-users-form select {
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 500;
+  min-height: 46px;
+  padding: 12px 14px;
+}
+
+.admin-users-form input:focus,
+.admin-users-form select:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px rgba(232, 48, 43, 0.12);
+  outline: none;
+}
+
+.admin-users-role-help {
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+}
+
+.admin-users-role-help p {
+  color: var(--color-text-muted);
+  font-size: 14px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.admin-permission-picker {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.admin-permission-picker h3 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.admin-permission-picker p {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.admin-permission-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-permission-option {
+  align-items: flex-start;
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 12px;
+}
+
+.admin-permission-option:has(input:checked) {
+  background: #fff9e5;
+  border-color: var(--color-accent);
+}
+
+.admin-permission-option input {
+  height: 18px;
+  margin: 2px 0 0;
+  min-height: auto;
+  width: 18px;
+}
+
+.admin-permission-option span {
+  color: inherit;
+  display: grid;
+  gap: 4px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.admin-permission-option strong {
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.admin-permission-option small {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.admin-users-form footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.admin-users-list .data-table td:first-child {
+  min-width: 220px;
+}
+
+.admin-users-list .data-table td strong,
+.admin-users-list .data-table td small {
+  display: block;
+}
+
+.admin-users-list .data-table td small {
+  color: var(--color-text-muted);
+  font-weight: 400;
+  margin-top: 4px;
+}
+
+.admin-users-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-users-page .feature-control-summary span,
+.admin-users-page .data-table th {
+  font-weight: 600;
+}
+
+.admin-users-page .feature-control-summary strong,
+.admin-users-page .data-table td,
+.admin-users-page .data-table td strong {
+  font-weight: 500;
+}
+
 .whatsapp-contact-widget {
   position: fixed;
   right: 22px;
@@ -8032,6 +8227,13 @@ h1 {
 
 .state-block h2 {
   font-size: 15px;
+}
+
+.state-block-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 .status-badge {
@@ -15699,6 +15901,7 @@ h1 {
 }
 
 @media (max-width: 1120px) {
+  .admin-users-grid,
   .observability-kpi-grid,
   .observability-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -15711,10 +15914,21 @@ h1 {
 }
 
 @media (max-width: 760px) {
+  .admin-users-grid,
   .observability-kpi-grid,
   .observability-grid,
   .observability-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .admin-users-form footer,
+  .admin-users-actions {
+    justify-content: stretch;
+  }
+
+  .admin-users-form footer .segmented-button,
+  .admin-users-actions .segmented-button {
+    flex: 1 1 150px;
   }
 
   .observability-row {

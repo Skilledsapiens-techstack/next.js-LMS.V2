@@ -5,6 +5,8 @@ import type { Sheet, SheetData } from 'write-excel-file/browser';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
+import { hasAdminPermission } from '../auth/adminPermissions';
+import { useAdminProfile } from '../features/admin/useAdminDashboard';
 import {
   AdminStudent,
   AdminStudentAuthStatus,
@@ -1452,6 +1454,7 @@ function ImportPreviewModal({
               {result.slice(0, 100).map((row) => (
                 <p key={`${row.rowNumber}-${row.email ?? 'row'}`}>
                   Row {row.rowNumber}: {row.status === 'success' ? row.action : row.error}
+                  {row.status === 'success' && row.error ? ` (${row.error})` : ''}
                 </p>
               ))}
             </section>
@@ -1595,6 +1598,13 @@ export function AdminStudentsPage() {
   const [isBulkAssignOpen, setIsBulkAssignOpen] = useState(false);
   const [bulkAssignForm, setBulkAssignForm] = useState<BulkAssignForm>({ assignmentMode: 'add', cohortNames: [], programNames: [] });
 
+  const adminProfileQuery = useAdminProfile();
+  const adminRole = adminProfileQuery.data?.role;
+  const adminPermissions = adminProfileQuery.data?.permissions;
+  const canManageStudents = Boolean(adminRole) && hasAdminPermission(adminRole, 'admin.students.manage', adminPermissions);
+  const canImportStudents = Boolean(adminRole) && hasAdminPermission(adminRole, 'admin.students.import', adminPermissions);
+  const canExportStudents = Boolean(adminRole) && hasAdminPermission(adminRole, 'admin.students.export', adminPermissions);
+  const canInviteStudents = Boolean(adminRole) && hasAdminPermission(adminRole, 'admin.students.invite', adminPermissions);
   const studentsQuery = useAdminStudents({ page, programKey, search, status, cohortName, limit, sort, direction });
   const exportStudents = useExportAdminStudents();
   const saveStudent = useSaveAdminStudent();
@@ -1606,8 +1616,8 @@ export function AdminStudentsPage() {
   const resendStudentInvite = useResendAdminStudentInvite();
   const programsQuery = useAdminPrograms({ limit: 100, page: 1, status: 'all' });
   const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, status: 'all' });
-  const cohortsPageTwoQuery = useAdminCohorts({ limit: 100, page: 2, status: 'all' });
-  const cohortsPageThreeQuery = useAdminCohorts({ limit: 100, page: 3, status: 'all' });
+  const cohortsPageTwoQuery = useAdminCohorts({ enabled: cohortsPageOneQuery.data?.hasNextPage === true, limit: 100, page: 2, status: 'all' });
+  const cohortsPageThreeQuery = useAdminCohorts({ enabled: cohortsPageTwoQuery.data?.hasNextPage === true, limit: 100, page: 3, status: 'all' });
   const data = studentsQuery.data;
   const pageStudents = data?.items ?? [];
   const authStatusesQuery = useAdminStudentAuthStatuses(pageStudents.map((student) => ({ email: student.email, id: student.id })));
@@ -2103,22 +2113,30 @@ export function AdminStudentsPage() {
           ))}
         </select>
         <div className="admin-student-actions">
-          <button className="segmented-button" disabled={!data?.items.length || exportStudents.isPending} onClick={() => void handleExportCsv()} type="button">
-            <Download size={16} />
-            {exportStudents.isPending ? 'Exporting...' : 'Export Filtered'}
-          </button>
-          <button className="segmented-button" disabled={importStudents.isPending || isImportParsing} onClick={() => openImportModal('file')} type="button">
-            <FileUp size={16} />
-            Import
-          </button>
-          <button className="segmented-button" disabled={importStudents.isPending || isImportParsing} onClick={() => openImportModal('paste')} type="button">
-            <ClipboardPaste size={16} />
-            Paste Table
-          </button>
-          <button className="segmented-button segmented-button--active" onClick={() => setIsEnrollModalOpen(true)} type="button">
-            <Plus size={16} />
-            Enroll Student
-          </button>
+          {canExportStudents ? (
+            <button className="segmented-button" disabled={!data?.items.length || exportStudents.isPending} onClick={() => void handleExportCsv()} type="button">
+              <Download size={16} />
+              {exportStudents.isPending ? 'Exporting...' : 'Export Filtered'}
+            </button>
+          ) : null}
+          {canImportStudents ? (
+            <>
+              <button className="segmented-button" disabled={importStudents.isPending || isImportParsing} onClick={() => openImportModal('file')} type="button">
+                <FileUp size={16} />
+                Import
+              </button>
+              <button className="segmented-button" disabled={importStudents.isPending || isImportParsing} onClick={() => openImportModal('paste')} type="button">
+                <ClipboardPaste size={16} />
+                Paste Table
+              </button>
+            </>
+          ) : null}
+          {canManageStudents ? (
+            <button className="segmented-button segmented-button--active" onClick={() => setIsEnrollModalOpen(true)} type="button">
+              <Plus size={16} />
+              Enroll Student
+            </button>
+          ) : null}
         </div>
       </section>
 
@@ -2135,29 +2153,37 @@ export function AdminStudentsPage() {
       {selectedCount > 0 ? (
         <section className="admin-student-bulkbar" aria-label="Bulk student actions">
           <strong>{selectedCount} selected</strong>
-          <button className="segmented-button" disabled={bulkUpdateStudents.isPending} onClick={() => void runBulkUpdate({ active: true }, 'Bulk activation finished')} type="button">
-            <UserCheck size={16} />
-            Activate
-          </button>
-          <button className="segmented-button" disabled={bulkUpdateStudents.isPending} onClick={() => void runBulkUpdate({ active: false }, 'Bulk deactivation finished')} type="button">
-            Deactivate
-          </button>
-          <button className="segmented-button" disabled={bulkUpdateStudents.isPending} onClick={() => setIsBulkAssignOpen(true)} type="button">
-            <Users size={16} />
-            Assign
-          </button>
-          <button className="segmented-button" disabled={bulkUpdateStudents.isPending} onClick={() => void runBulkUpdate({ resendInvite: true }, 'Invite resend finished')} type="button">
-            <Mail size={16} />
-            Resend invites
-          </button>
-          <button className="segmented-button" disabled={backfillAuthLinks.isPending} onClick={() => void handleBackfillAuthLinks()} type="button">
-            <Link2 size={16} />
-            Link auth
-          </button>
-          <button className="segmented-button" onClick={handleExportSelectedCsv} type="button">
-            <Download size={16} />
-            Export selected
-          </button>
+          {canManageStudents ? (
+            <>
+              <button className="segmented-button" disabled={bulkUpdateStudents.isPending} onClick={() => void runBulkUpdate({ active: true }, 'Bulk activation finished')} type="button">
+                <UserCheck size={16} />
+                Activate
+              </button>
+              <button className="segmented-button" disabled={bulkUpdateStudents.isPending} onClick={() => void runBulkUpdate({ active: false }, 'Bulk deactivation finished')} type="button">
+                Deactivate
+              </button>
+              <button className="segmented-button" disabled={bulkUpdateStudents.isPending} onClick={() => setIsBulkAssignOpen(true)} type="button">
+                <Users size={16} />
+                Assign
+              </button>
+              <button className="segmented-button" disabled={backfillAuthLinks.isPending} onClick={() => void handleBackfillAuthLinks()} type="button">
+                <Link2 size={16} />
+                Link auth
+              </button>
+            </>
+          ) : null}
+          {canInviteStudents ? (
+            <button className="segmented-button" disabled={bulkUpdateStudents.isPending} onClick={() => void runBulkUpdate({ resendInvite: true }, 'Invite resend finished')} type="button">
+              <Mail size={16} />
+              Resend invites
+            </button>
+          ) : null}
+          {canExportStudents ? (
+            <button className="segmented-button" onClick={handleExportSelectedCsv} type="button">
+              <Download size={16} />
+              Export selected
+            </button>
+          ) : null}
           <button className="segmented-button" onClick={() => setSelectedStudentIds([])} type="button">
             Clear
           </button>
@@ -2256,18 +2282,24 @@ export function AdminStudentsPage() {
                           <Eye size={15} />
                           View
                         </button>
-                        <button className="segmented-button" onClick={() => setEditingStudent(student)} type="button">
-                          Edit
-                        </button>
-                        <button className="segmented-button" disabled={resendStudentInvite.isPending} onClick={() => void handleResendInvite(student)} type="button">
-                          Invite
-                        </button>
-                        <button className="segmented-button" onClick={() => setAttemptStudent(student)} type="button">
-                          LP Attempts
-                        </button>
-                        <button className="segmented-button" disabled={updateStudentStatus.isPending} onClick={() => setPendingStatusChange({ student })} type="button">
-                          {student.active ? 'Deactivate' : 'Reactivate'}
-                        </button>
+                        {canManageStudents ? (
+                          <>
+                            <button className="segmented-button" onClick={() => setEditingStudent(student)} type="button">
+                              Edit
+                            </button>
+                            <button className="segmented-button" onClick={() => setAttemptStudent(student)} type="button">
+                              LP Attempts
+                            </button>
+                            <button className="segmented-button" disabled={updateStudentStatus.isPending} onClick={() => setPendingStatusChange({ student })} type="button">
+                              {student.active ? 'Deactivate' : 'Reactivate'}
+                            </button>
+                          </>
+                        ) : null}
+                        {canInviteStudents ? (
+                          <button className="segmented-button" disabled={resendStudentInvite.isPending} onClick={() => void handleResendInvite(student)} type="button">
+                            Invite
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>
@@ -2312,7 +2344,7 @@ export function AdminStudentsPage() {
       </nav>
 
       {selectedStudent ? <StudentDetailsModal student={selectedStudent} onClose={() => setSelectedStudent(null)} /> : null}
-      {isEnrollModalOpen ? (
+      {isEnrollModalOpen && canManageStudents ? (
         <EnrollStudentModal
           cohortOptions={cohortRecords}
           collegeOptions={collegeOptions}
@@ -2322,7 +2354,7 @@ export function AdminStudentsPage() {
           programOptions={programRecords}
         />
       ) : null}
-      {editingStudent ? (
+      {editingStudent && canManageStudents ? (
         <EnrollStudentModal
           cohortOptions={cohortRecords}
           collegeOptions={collegeOptions}
@@ -2333,8 +2365,8 @@ export function AdminStudentsPage() {
           student={editingStudent}
         />
       ) : null}
-      {attemptStudent ? <LpAttemptsModal student={attemptStudent} onClose={() => setAttemptStudent(null)} /> : null}
-      {isImportModalOpen ? (
+      {attemptStudent && canManageStudents ? <LpAttemptsModal student={attemptStudent} onClose={() => setAttemptStudent(null)} /> : null}
+      {isImportModalOpen && canImportStudents ? (
         <ImportPreviewModal
           cohortOptions={cohortRecords}
           entryMode={importEntryMode}
@@ -2355,7 +2387,7 @@ export function AdminStudentsPage() {
           uploading={isImportParsing}
         />
       ) : null}
-      {isBulkAssignOpen ? (
+      {isBulkAssignOpen && canManageStudents ? (
         <BulkAssignModal
           cohortOptions={cohortRecords}
           form={bulkAssignForm}
@@ -2367,7 +2399,7 @@ export function AdminStudentsPage() {
           submitting={bulkUpdateStudents.isPending}
         />
       ) : null}
-      {pendingStatusChange ? (
+      {pendingStatusChange && canManageStudents ? (
         <div className="student-modal-backdrop" role="presentation">
           <section aria-labelledby="student-status-title" aria-modal="true" className="student-modal" role="dialog">
             <header className="student-modal__header">

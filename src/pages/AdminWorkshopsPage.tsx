@@ -21,6 +21,7 @@ type WorkshopTab = 'upcoming' | 'needs-completion' | 'cancelled';
 type WorkshopForm = {
   agenda: string;
   cohortNames: string[];
+  customJoinUrl: string;
   date: string;
   durationMinutes: string;
   selectedWorkshopId?: string;
@@ -38,6 +39,7 @@ type WorkshopTopicDraft = {
 const emptyWorkshopForm: WorkshopForm = {
   agenda: '',
   cohortNames: [],
+  customJoinUrl: '',
   date: '',
   durationMinutes: '90',
   time: '',
@@ -152,15 +154,17 @@ function isPastPendingCompletion(item: AdminWorkshop, now: number) {
 }
 
 function workshopToForm(item: AdminWorkshop): WorkshopForm {
+  const zoomAccount = item.zoomAccount ?? 'Zoom Account 1';
   return {
     agenda: '',
     cohortNames: item.cohortNames,
+    customJoinUrl: zoomAccount === 'Custom Link' ? item.joinUrl ?? '' : '',
     date: toDateInput(item.date),
     durationMinutes: item.durationMinutes ? String(item.durationMinutes) : '90',
     selectedWorkshopId: item.id,
     time: item.time ?? '',
     title: item.title,
-    zoomAccount: item.zoomAccount ?? 'Zoom Account 1'
+    zoomAccount
   };
 }
 
@@ -174,6 +178,19 @@ function dedupeCohorts(pages: Array<AdminCohort[] | undefined>) {
 
 function readableError(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function isCustomLinkSource(value: string) {
+  return value === 'Custom Link';
+}
+
+function isValidHttpUrl(value: string) {
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 export function AdminWorkshopsPage() {
@@ -300,7 +317,7 @@ export function AdminWorkshopsPage() {
           ? String(result.workshop.zoom_cancellation_warning ?? '').trim()
           : '';
       setPendingCancelWorkshop(null);
-      setActionMessage(warning ? `Meeting cancelled in LMS. Zoom warning: ${warning}` : 'Meeting cancelled in Zoom and archived in LMS.');
+      setActionMessage(warning ? `Meeting cancelled in LMS. Zoom warning: ${warning}` : 'Meeting cancelled and archived in LMS.');
     } catch (error) {
       setActionMessage(readableError(error, 'Meeting could not be cancelled.'));
     }
@@ -339,9 +356,14 @@ export function AdminWorkshopsPage() {
       setFormError('Select at least one cohort.');
       return;
     }
+    if (isCustomLinkSource(form.zoomAccount) && !isValidHttpUrl(form.customJoinUrl)) {
+      setFormError('Add a valid custom meeting link starting with http:// or https://.');
+      return;
+    }
 
     const payload = {
       cohortNames: form.cohortNames,
+      customJoinUrl: isCustomLinkSource(form.zoomAccount) ? form.customJoinUrl.trim() : undefined,
       date: form.date,
       durationMinutes: durationMinutes || undefined,
       time: form.time || undefined,
@@ -525,13 +547,38 @@ export function AdminWorkshopsPage() {
             </label>
             <label className="announcement-field">
               <span>
-                Zoom Account <b>*</b>
+                Meeting Link Source <b>*</b>
               </span>
-              <select value={form.zoomAccount} onChange={(event) => updateForm('zoomAccount', event.target.value)}>
+              <select
+                value={form.zoomAccount}
+                onChange={(event) => {
+                  const nextSource = event.target.value;
+                  setForm((current) => ({
+                    ...current,
+                    customJoinUrl: isCustomLinkSource(nextSource) ? current.customJoinUrl : '',
+                    zoomAccount: nextSource
+                  }));
+                }}
+              >
                 <option>Zoom Account 1</option>
                 <option>Zoom Account 2</option>
+                <option>Custom Link</option>
               </select>
             </label>
+            {isCustomLinkSource(form.zoomAccount) ? (
+              <label className="announcement-field announcement-field--wide">
+                <span>
+                  Custom Meeting Link <b>*</b>
+                </span>
+                <input
+                  value={form.customJoinUrl}
+                  onChange={(event) => updateForm('customJoinUrl', event.target.value)}
+                  placeholder="https://meet.google.com/... or https://zoom.us/j/..."
+                  type="url"
+                />
+                <small>This link will be shown to students exactly like a Zoom join link.</small>
+              </label>
+            ) : null}
 
             <div className="announcement-field announcement-field--wide">
               <span>
@@ -760,7 +807,7 @@ export function AdminWorkshopsPage() {
             <div className="student-modal__body workshop-confirm-modal__body">
               <strong>{pendingCancelWorkshop.title}</strong>
               <span>{formatDateTime(pendingCancelWorkshop)}</span>
-              <p>This will cancel the Zoom meeting, remove the student join link, and move the workshop out of active schedule views.</p>
+              <p>This will cancel the meeting where possible, remove the student join link, and move the workshop out of active schedule views.</p>
             </div>
             <footer className="student-modal__footer">
               <button className="segmented-button" disabled={cancelWorkshopMutation.isPending} onClick={() => setPendingCancelWorkshop(null)} type="button">
