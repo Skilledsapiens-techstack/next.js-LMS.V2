@@ -5,17 +5,20 @@ import { PaginatedResponse } from './useStudentAnnouncements';
 
 export type StudentProjectTask = {
   description?: string;
+  sectionType?: string;
   title: string;
 };
 
 export type StudentProjectDocument = {
   description?: string;
   link?: string;
+  label?: string;
   title: string;
   type?: string;
 };
 
 export type StudentProjectDeliverable = {
+  description?: string;
   format?: string;
   note?: string;
   title: string;
@@ -35,7 +38,6 @@ export type StudentProject = {
   programName?: string;
   projectRole?: string;
   roleId?: string;
-  submissionLink?: string;
   tasks: StudentProjectTask[];
   title: string;
   updatedAt?: string;

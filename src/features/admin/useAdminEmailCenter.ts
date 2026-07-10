@@ -83,7 +83,7 @@ export type AdminEmailSendPayload = {
   directEmails?: string;
   googleGroupEmail?: string;
   params?: Record<string, unknown>;
-  sendMode: 'direct' | 'cohort_students' | 'cohort_google_group';
+  sendMode: 'direct' | 'cohort_students' | 'cohort_google_group' | 'all_active_students';
   subject: string;
   templateKey?: string;
   testMode?: boolean;

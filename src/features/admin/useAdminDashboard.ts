@@ -59,6 +59,43 @@ async function safeAdminDrilldown<T>(request: Promise<PaginatedAdminResponse<T>>
   }
 }
 
+function stringFromItem(item: JsonRecord, key: string) {
+  const value = item[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function scheduledWorkshopTime(item: JsonRecord) {
+  const date = stringFromItem(item, 'date');
+  const time = stringFromItem(item, 'time');
+  const dateMatch = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const timeMatch = time.match(/^(\d{1,2}):(\d{2})/);
+
+  if (dateMatch) {
+    const [, year, month, day] = dateMatch;
+    const hour = timeMatch ? Number(timeMatch[1]) : 0;
+    const minute = timeMatch ? Number(timeMatch[2]) : 0;
+    const scheduledAt = new Date(Number(year), Number(month) - 1, Number(day), hour, minute).getTime();
+    return Number.isFinite(scheduledAt) ? scheduledAt : Number.POSITIVE_INFINITY;
+  }
+
+  const parsed = date ? new Date(date).getTime() : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+}
+
+function compactUpcomingWorkshops(response: PaginatedAdminResponse): PaginatedAdminResponse {
+  return {
+    ...response,
+    items: [...response.items]
+      .sort((left, right) => {
+        const scheduledDiff = scheduledWorkshopTime(left) - scheduledWorkshopTime(right);
+        if (scheduledDiff !== 0) return scheduledDiff;
+        return stringFromItem(left, 'title').localeCompare(stringFromItem(right, 'title'));
+      })
+      .slice(0, 5),
+    limit: 5
+  };
+}
+
 export function useAdminProfile() {
   const { accessToken } = useAuth();
 
@@ -88,6 +125,7 @@ export function useAdminDashboardDrilldowns() {
   const profileQuery = useAdminProfile();
   const role = profileQuery.data?.role;
   const permissions = profileQuery.data?.permissions;
+  const upcomingWorkshopPage = { limit: 50 };
 
   return useQuery({
     enabled: Boolean(accessToken && role),
@@ -128,7 +166,7 @@ export function useAdminDashboardDrilldowns() {
           ? safeAdminDrilldown(apiGet<PaginatedAdminResponse>('/admins/support-tickets', { ...authOptions, query: { ...compactPage, status: 'open' } }))
           : emptyPaginatedAdminResponse,
         hasAdminPermission(role, 'admin.meetings.view', permissions)
-          ? safeAdminDrilldown(apiGet<PaginatedAdminResponse>('/admins/workshops', { ...authOptions, query: { ...compactPage, status: 'Scheduled' } }))
+          ? safeAdminDrilldown(apiGet<PaginatedAdminResponse>('/admins/workshops', { ...authOptions, query: { ...upcomingWorkshopPage, status: 'Scheduled' } }))
           : emptyPaginatedAdminResponse
       ]);
 
@@ -141,7 +179,7 @@ export function useAdminDashboardDrilldowns() {
         projectSubmissions,
         recordingCandidates,
         supportTickets,
-        upcomingWorkshops
+        upcomingWorkshops: compactUpcomingWorkshops(upcomingWorkshops)
       };
     },
     queryKey: ['admin-dashboard-drilldowns', accessToken, role, permissions],

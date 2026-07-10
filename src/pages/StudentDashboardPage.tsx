@@ -414,6 +414,7 @@ export function StudentDashboardPage() {
   };
   const summaryCards = buildSummaryCards(scopedCounts);
   const trackRoles = asArray(profile?.trackRoleIds).filter((role): role is string => typeof role === 'string');
+  const liveProjectRoles = uniqueNames(asArray(profile?.liveProjectRoles).filter((role): role is string => typeof role === 'string'));
   const cohortNames = uniqueNames([
     ...pickArray(dashboardQuery.data?.dashboard, ['cohorts', 'studentCohorts']).map((cohort) => textValue(cohort, ['name', 'cohort_name', 'cohortName'])),
     profile?.cohortName
@@ -468,6 +469,16 @@ export function StudentDashboardPage() {
               <StatusBadge key={role}>{role}</StatusBadge>
             ))}
           </div>
+          {liveProjectRoles.length > 0 ? (
+            <div className="student-live-project-roles" aria-label="Assigned live project roles">
+              <span>Live Project Role</span>
+              <div>
+                {liveProjectRoles.map((role) => (
+                  <StatusBadge key={role}>{role}</StatusBadge>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
         <div className="student-home-actions">
           <Link className="student-action student-action--primary" to="/student/schedule">

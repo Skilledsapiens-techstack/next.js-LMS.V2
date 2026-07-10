@@ -11,6 +11,8 @@ export type StudentProfile = {
   email: string;
   fullName: string;
   id: string;
+  liveProjectRoleIds?: string[];
+  liveProjectRoles?: string[];
   programName?: string;
   studentId?: string;
   trackRoleIds: string[];

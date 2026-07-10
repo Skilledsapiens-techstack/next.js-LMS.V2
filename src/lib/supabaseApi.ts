@@ -127,6 +127,7 @@ const STUDENT_WRITE_COLUMNS = new Set([
   'duration',
   'email',
   'full_name',
+  'live_project_role_ids',
   'onboarding_mail_status',
   'personalmentor',
   'phone',
@@ -227,7 +228,6 @@ const PROJECT_WRITE_COLUMNS = new Set([
   'resources',
   'role_id',
   'status',
-  'submission_link',
   'title'
 ]);
 
@@ -663,6 +663,22 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
   throw new ApiClientError(`Unsupported Supabase write route: ${cleanPath}`, 404);
 }
 
+export async function apiDelete<TResponse>(path: string, options: ApiClientOptions = {}): Promise<TResponse> {
+  if (!webEnv.writeActionsEnabled) {
+    throw new ApiClientError('Write actions are disabled in this environment.', 403);
+  }
+
+  const context = await createContext(options.accessToken);
+  const cleanPath = stripQuery(path);
+  const writePermission = getAdminWritePermission(cleanPath, 'delete');
+  if (writePermission) await requireAdminPermission(context, writePermission);
+
+  const adminSupportFaqDelete = cleanPath.match(/^\/admins\/support-faqs\/([^/]+)$/);
+  if (adminSupportFaqDelete) return deleteSupportFaq(context, decodeURIComponent(adminSupportFaqDelete[1])) as Promise<TResponse>;
+
+  throw new ApiClientError(`Unsupported Supabase delete route: ${cleanPath}`, 404);
+}
+
 export async function apiPost<TResponse, TBody = unknown>(path: string, options: ApiMutationOptions<TBody> = {}): Promise<TResponse> {
   if (!webEnv.writeActionsEnabled) {
     throw new ApiClientError('Write actions are disabled in this environment.', 403);
@@ -753,7 +769,7 @@ function getAdminReadPermission(path: string): AdminPermission | undefined {
   return ADMIN_READ_PERMISSIONS_BY_PATH[path];
 }
 
-function getAdminWritePermission(path: string, method: 'patch' | 'post'): AdminPermission | undefined {
+function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'post'): AdminPermission | undefined {
   if (!path.startsWith('/admins/')) return undefined;
 
   if (path === '/admins/students/import' || path === '/admins/students/bulk') return 'admin.students.import';
@@ -857,7 +873,24 @@ async function getStudentProfile(context: Awaited<ReturnType<typeof createContex
       .is('auth_user_id', null)
       .then(() => undefined);
   }
-  return camelize(row);
+
+  const liveProjectRoleIds = asStringArray(row.live_project_role_ids);
+  const liveProjectRoleNameById = new Map<string, string>();
+  if (liveProjectRoleIds.length > 0) {
+    const { data: roleRows, error: roleError } = await context.supabase.from('role_master').select('role_id,role_name').in('role_id', liveProjectRoleIds).limit(500);
+    if (roleError) throw new ApiClientError(roleError.message, 503);
+    (roleRows ?? []).forEach((role) => {
+      const roleId = String(role.role_id ?? '').trim();
+      const roleName = String(role.role_name ?? roleId).trim();
+      if (roleId) liveProjectRoleNameById.set(roleId, roleName || roleId);
+    });
+  }
+
+  return camelize({
+    ...row,
+    live_project_role_ids: liveProjectRoleIds,
+    live_project_roles: uniqueStrings(liveProjectRoleIds.map((roleId) => liveProjectRoleNameById.get(roleId) ?? roleId))
+  });
 }
 
 async function updateStudentPresence(context: Awaited<ReturnType<typeof createContext>>) {
@@ -1359,6 +1392,17 @@ async function enrichAdminStudents(context: Awaited<ReturnType<typeof createCont
 
   const cohortsByStudent = groupByStudentId(cohortsResult.data ?? []);
   const programsByStudent = groupByStudentId(programsResult.data ?? []);
+  const liveProjectRoleIds = uniqueStrings(rows.flatMap((row) => asStringArray(row.live_project_role_ids)));
+  const liveProjectRoleNameById = new Map<string, string>();
+  if (liveProjectRoleIds.length > 0) {
+    const { data: roleRows, error: roleError } = await context.supabase.from('role_master').select('role_id,role_name').in('role_id', liveProjectRoleIds).limit(1000);
+    if (roleError) throw new ApiClientError(roleError.message, 503);
+    (roleRows ?? []).forEach((role) => {
+      const roleId = String(role.role_id ?? '').trim();
+      const roleName = String(role.role_name ?? roleId).trim();
+      if (roleId) liveProjectRoleNameById.set(roleId, roleName || roleId);
+    });
+  }
 
   return rows.map((row) => {
     const studentId = String(row.id);
@@ -1378,6 +1422,8 @@ async function enrichAdminStudents(context: Awaited<ReturnType<typeof createCont
         .split(',')
         .map((value) => value.trim())
     ]);
+    const studentLiveProjectRoleIds = asStringArray(row.live_project_role_ids);
+    const liveProjectRoles = uniqueStrings(studentLiveProjectRoleIds.map((roleId) => liveProjectRoleNameById.get(roleId) ?? roleId));
 
     return camelize(
       enrichRow({
@@ -1387,6 +1433,8 @@ async function enrichAdminStudents(context: Awaited<ReturnType<typeof createCont
           cohort_id: cohort.cohort_id,
           cohort_name: cohort.cohort_name
         })),
+        live_project_role_ids: studentLiveProjectRoleIds,
+        live_project_roles: liveProjectRoles,
         program_keys: studentProgramKeys,
         programs: programNames
       })
@@ -1677,6 +1725,13 @@ async function updateSupportFaq(context: Awaited<ReturnType<typeof createContext
   const { data, error } = await context.supabase.from('support_faqs').update(payload).eq('id', faqId).select('*').single();
   if (error) throw mutationError(error, 'support_faqs');
   return { faq: camelize(data), message: 'Support FAQ updated.' };
+}
+
+async function deleteSupportFaq(context: Awaited<ReturnType<typeof createContext>>, faqId: string) {
+  await getAdminProfile(context);
+  const { error } = await context.supabase.from('support_faqs').delete().eq('id', faqId).select('id').single();
+  if (error) throw mutationError(error, 'support_faqs');
+  return { faqId, message: 'Support FAQ deleted.' };
 }
 
 async function updateSupportTicket(context: Awaited<ReturnType<typeof createContext>>, ticketId: string, body: unknown) {
@@ -3065,6 +3120,17 @@ function normalizeProjectList(value: unknown, kind: 'deliverable' | 'document' |
   if (value === null || value === undefined || value === '') return [];
 
   if (typeof value === 'string') {
+    const trimmedValue = value.trim();
+    if (trimmedValue.startsWith('[') || trimmedValue.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmedValue);
+        const parsedItems = Array.isArray(parsed) ? parsed : isRecord(parsed) && Array.isArray(parsed.items) ? parsed.items : [];
+        return parsedItems.map((item) => normalizeProjectListItem(item, kind)).filter(Boolean);
+      } catch {
+        // Fall back to the legacy line parser below.
+      }
+    }
+
     return value
       .split(/\r?\n/)
       .map((entry) => entry.trim())
@@ -3324,6 +3390,7 @@ function normalizeStudentWriteBody(payload: Record<string, unknown>) {
   const cohortNames = asStringArray(payload.cohort_names);
   const programNames = asStringArray(payload.program_names);
   const programKeys = asStringArray(payload.program_keys);
+  const liveProjectRoleIds = payload.live_project_role_ids === undefined ? undefined : asStringArray(payload.live_project_role_ids);
 
   return {
     ...payload,
@@ -3332,6 +3399,7 @@ function normalizeStudentWriteBody(payload: Record<string, unknown>) {
     duration: payload.duration ?? payload.live_project_duration,
     email: payload.email ? normalizeEmail(payload.email) : payload.email,
     alt_email: payload.alt_email ? normalizeEmail(payload.alt_email) : payload.alt_email,
+    live_project_role_ids: liveProjectRoleIds,
     onboarding_mail_status: typeof payload.onboarding_mail_status === 'string' ? payload.onboarding_mail_status.toLowerCase() : payload.onboarding_mail_status,
     personalmentor: payload.personalmentor ?? payload.personal_mentor,
     program_name: programNames.join(', ') || programKeys.join(', ') || payload.program_name,
@@ -3343,6 +3411,7 @@ function normalizeStudentWriteBody(payload: Record<string, unknown>) {
     cohort_names: undefined,
     education_year: undefined,
     live_project_duration: undefined,
+    live_project_roles: undefined,
     onboarding_date: undefined,
     personal_mentor: undefined,
     program_keys: undefined,
@@ -3446,7 +3515,6 @@ function normalizeProjectWriteBody(payload: Record<string, unknown>) {
       ? undefined
       : uniqueStrings(asStringArray(payload.program_keys).map((key) => key.trim().toLowerCase()).filter(Boolean));
   const primaryProgramKey = programKeys?.[0] ?? (typeof payload.program_key === 'string' ? payload.program_key.trim().toLowerCase() : payload.program_key);
-  const submissionLink = payload.submission_link === '' ? null : payload.submission_link;
   const deadline = payload.deadline === '' ? null : payload.deadline;
 
   return {
@@ -3465,7 +3533,6 @@ function normalizeProjectWriteBody(payload: Record<string, unknown>) {
     resources: typeof payload.resources === 'string' ? payload.resources.trim() : payload.resources,
     role_id: typeof payload.role_id === 'string' ? payload.role_id.trim() : payload.role_id,
     status: typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
-    submission_link: submissionLink,
     title: typeof payload.title === 'string' ? payload.title.trim() : payload.title
   };
 }
@@ -3636,7 +3703,6 @@ function validateProjectWriteBody(payload: Record<string, unknown>, inserting: b
   const status = typeof payload.status === 'string' ? payload.status : undefined;
   const programKeys = payload.program_keys;
   const programKey = typeof payload.program_key === 'string' ? payload.program_key.trim() : '';
-  const submissionLink = typeof payload.submission_link === 'string' ? payload.submission_link.trim() : '';
   const deadline = typeof payload.deadline === 'string' ? payload.deadline.trim() : '';
   const requiresProgramMapping = inserting || 'program_keys' in payload || 'program_key' in payload || 'title' in payload || 'role_id' in payload;
 
@@ -3645,7 +3711,6 @@ function validateProjectWriteBody(payload: Record<string, unknown>, inserting: b
   if (status && !['active', 'inactive'].includes(status)) throw new ApiClientError('Project status is invalid.', 400);
   if (programKeys !== undefined && !Array.isArray(programKeys)) throw new ApiClientError('Project programs must be a list.', 400);
   if (requiresProgramMapping && (!Array.isArray(programKeys) || programKeys.length === 0 || !programKey)) throw new ApiClientError('Select at least one program.', 400);
-  if (submissionLink && !isHttpUrl(submissionLink)) throw new ApiClientError('Submission link must start with http:// or https://.', 400);
   if (deadline && Number.isNaN(new Date(`${deadline}T00:00:00.000Z`).getTime())) throw new ApiClientError('Project deadline is invalid.', 400);
 }
 
@@ -3800,6 +3865,7 @@ function validateStudentWriteBody(payload: Record<string, unknown>, inserting: b
   const onboardingDate = typeof payload.project_start_date === 'string' ? payload.project_start_date.trim() : '';
   const personalMentor = typeof payload.personalmentor === 'string' ? payload.personalmentor.trim() : '';
   const trackRoleIds = payload.track_role_ids;
+  const liveProjectRoleIds = payload.live_project_role_ids;
 
   if (inserting && !fullName) throw new ApiClientError('Student full name is required.', 400);
   if (inserting && !email) throw new ApiClientError('Student email is required.', 400);
@@ -3822,6 +3888,9 @@ function validateStudentWriteBody(payload: Record<string, unknown>, inserting: b
   }
   if (trackRoleIds !== undefined && !Array.isArray(trackRoleIds)) {
     throw new ApiClientError('Student program role IDs must be a list.', 400);
+  }
+  if (liveProjectRoleIds !== undefined && !Array.isArray(liveProjectRoleIds)) {
+    throw new ApiClientError('Student live project roles must be a list.', 400);
   }
 }
 

@@ -43,6 +43,7 @@ const phaseOptions: PhaseOption[] = [
 
 const sendModes = [
   { label: 'Direct student email(s)', value: 'direct' },
+  { label: 'All active LMS students', value: 'all_active_students' },
   { label: 'All students in selected cohort', value: 'cohort_students' },
   { label: 'Cohort Google Group', value: 'cohort_google_group' }
 ] as const;
@@ -413,8 +414,19 @@ export function AdminEmailCenterPage() {
   const filteredCohorts = cohorts.filter((cohort) => cohort.name.toLowerCase().includes(cohortSearch.toLowerCase()) || (cohort.cohortId ?? '').toLowerCase().includes(cohortSearch.toLowerCase()));
   const selectedCohortRows = selectedCohorts.map((name) => cohorts.find((cohort) => cohort.name === name)).filter((cohort): cohort is AdminCohort => Boolean(cohort));
   const variables = useAvailableVariables(phase, selectedTemplate);
-  const estimatedRecipientCount = sendMode === 'direct' ? splitEmails(directEmails).length : sendMode === 'cohort_google_group' ? selectedCohortRows.filter((cohort) => googleGroupEmail || cohort.googleGroup).length : selectedCohorts.length;
+  const estimatedRecipientCount = sendMode === 'direct'
+    ? splitEmails(directEmails).length
+    : sendMode === 'cohort_google_group'
+      ? selectedCohortRows.filter((cohort) => googleGroupEmail || cohort.googleGroup).length
+      : sendMode === 'all_active_students'
+        ? (resolvedSummary?.recipients ?? 0)
+        : selectedCohorts.length;
   const recipientCount = resolvedSummary?.recipients ?? estimatedRecipientCount;
+  const selectedTargetLabel = sendMode === 'all_active_students'
+    ? 'All active LMS students'
+    : selectedCohorts.length
+      ? selectedCohorts.join(', ')
+      : 'Not selected';
   const lastRefresh = [templatesQuery.dataUpdatedAt, queueQuery.dataUpdatedAt, cohortsQuery.dataUpdatedAt].filter(Boolean).sort((a, b) => b - a)[0];
 
   useEffect(() => {
@@ -777,6 +789,10 @@ export function AdminEmailCenterPage() {
                 <textarea onChange={(event) => setDirectEmails(event.target.value)} placeholder="student1@email.com, student2@email.com, ..." value={directEmails} />
                 <small>Enter one or more emails separated by commas.</small>
               </label>
+            ) : sendMode === 'all_active_students' ? (
+              <div className="admin-email-wide auth-alert auth-alert--success">
+                Sends to active LMS students only. Preview calculates the exact deduped recipient count before any batch is sent.
+              </div>
             ) : (
               <div className="admin-email-wide">
                 <span className="admin-email-label">Select Cohort(s) *</span>
@@ -896,9 +912,13 @@ export function AdminEmailCenterPage() {
               </article>
               <article>
                 <span>Cohort</span>
-                <strong>{selectedCohorts.length ? selectedCohorts.join(', ') : 'Not selected'}</strong>
+                <strong>{selectedTargetLabel}</strong>
               </article>
-              {recipientCount === 0 ? <div className="auth-alert auth-alert--error">Add at least one email recipient.</div> : null}
+              {recipientCount === 0 ? (
+                <div className="auth-alert auth-alert--error">
+                  {sendMode === 'all_active_students' ? 'Refresh preview to resolve active LMS student recipients.' : 'Add at least one email recipient.'}
+                </div>
+              ) : null}
               {resolvedSummary?.previewRecipients?.length ? (
                 <div className="admin-email-recipient-preview">
                   <span>First recipients</span>

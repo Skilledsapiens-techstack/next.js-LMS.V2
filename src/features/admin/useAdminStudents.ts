@@ -22,6 +22,8 @@ export type AdminStudent = {
   id: string;
   liveProjectDomains?: string[];
   liveProjectDuration?: string;
+  liveProjectRoleIds?: string[];
+  liveProjectRoles?: string[];
   latestInviteError?: string;
   latestInviteStatus?: string;
   onboardingMailStatus?: string;
@@ -62,6 +64,7 @@ export type AdminStudentWritePayload = {
   email: string;
   fullName: string;
   liveProjectDuration?: string;
+  liveProjectRoleIds?: string[];
   onboardingMailStatus?: 'pending' | 'sent' | 'failed' | 'skipped' | 'dry-run';
   onboardingDate?: string;
   personalMentor?: string;

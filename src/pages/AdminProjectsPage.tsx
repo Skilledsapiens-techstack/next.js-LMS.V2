@@ -1,12 +1,12 @@
-import { CheckCircle2, Edit3, Eye, Plus, RefreshCw, Search } from 'lucide-react';
+import { ArrowDown, ArrowUp, Bold, CheckCircle2, Copy, Edit3, Eye, Italic, Link2, List, ListOrdered, Plus, RefreshCw, RemoveFormatting, Search, Trash2, Underline } from 'lucide-react';
 import type { FormEvent } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
+import { sanitizeProjectHtml } from '../components/ProjectRichText';
 import { StatusBadge } from '../components/StatusBadge';
 import {
   AdminProject,
-  AdminProjectDocument,
   AdminProjectRole,
   AdminProjectRoleStatus,
   AdminProjectRoleWritePayload,
@@ -32,19 +32,31 @@ type RoleFormState = {
 };
 
 type ProjectFormState = {
-  actionItems: string;
   brief: string;
   companyName: string;
+  customSections: ProjectContentSection[];
   deadline: string;
   deliverables: string;
+  importantLinks: ProjectImportantLink[];
+  introduction: string;
   objectives: string;
   programKeys: string[];
   projectId: string;
-  resources: string;
   roleId: string;
   status: AdminProjectStatus;
-  submissionLink: string;
   title: string;
+};
+
+type ProjectContentSection = {
+  body: string;
+  id: string;
+  title: string;
+};
+
+type ProjectImportantLink = {
+  id: string;
+  label: string;
+  url: string;
 };
 
 type ProjectFilters = {
@@ -56,18 +68,6 @@ type ProjectFilters = {
 
 function normalizeKey(value: string) {
   return value.trim().toLowerCase().replace(/[\s-]+/g, '_').replace(/[^a-z0-9_]/g, '');
-}
-
-function asTextareaRows(items: Array<{ description?: string; format?: string; link?: string; note?: string; title: string; type?: string }>) {
-  return items
-    .map((item) => [item.title, item.link ?? item.format ?? item.description ?? item.note ?? item.type].filter(Boolean).join('|'))
-    .join('\n');
-}
-
-function asDocumentRows(items: AdminProjectDocument[]) {
-  return items
-    .map((item) => [item.title, item.type, item.link ?? item.description].filter(Boolean).join('|'))
-    .join('\n');
 }
 
 function roleKey(role: AdminProjectRole) {
@@ -92,23 +92,125 @@ function newProjectId() {
   return `PRJ-${Date.now()}`;
 }
 
-function formFromProject(project?: AdminProject | null): ProjectFormState {
-  const programKeys = project ? (project.programKeys.length > 0 ? project.programKeys : [project.programKey].filter((value): value is string => Boolean(value))) : [];
+function createDraftId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function richTextFromValue(value: string | undefined) {
+  return sanitizeProjectHtml(value);
+}
+
+function richTextFromDeliverables(project?: AdminProject | null) {
+  if (!project || project.deliverables.length === 0) return '';
+  if (project.deliverables.length === 1) {
+    const deliverable = project.deliverables[0];
+    return richTextFromValue(deliverable.note ?? deliverable.description ?? deliverable.title);
+  }
+
+  const items = project.deliverables
+    .map((deliverable) => {
+      const meta = [deliverable.format, deliverable.note].filter(Boolean).join(' - ');
+      return `<li><strong>${deliverable.title}</strong>${meta ? `: ${meta}` : ''}</li>`;
+    })
+    .join('');
+  return sanitizeProjectHtml(`<ul>${items}</ul>`);
+}
+
+function contentSectionsFromProject(project?: AdminProject | null) {
+  const sections = project?.tasks ?? [];
+  const introduction = sections.find((section) => section.sectionType === 'introduction' || section.title.trim().toLowerCase() === 'introduction');
+  const customSections = sections
+    .filter((section) => section !== introduction)
+    .map((section) => ({
+      body: richTextFromValue(section.description ?? ''),
+      id: createDraftId('section'),
+      title: section.title
+    }));
 
   return {
-    actionItems: project ? asTextareaRows(project.tasks) : '',
-    brief: project?.brief ?? '',
+    customSections,
+    introduction: richTextFromValue(introduction?.description ?? '')
+  };
+}
+
+function importantLinksFromProject(project?: AdminProject | null) {
+  return (project?.documents ?? [])
+    .filter((document) => document.link || document.title)
+    .map((document) => ({
+      id: createDraftId('link'),
+      label: document.label ?? document.title,
+      url: document.link ?? ''
+    }));
+}
+
+function serializeContentSections(introduction: string, customSections: ProjectContentSection[]) {
+  const sections = [
+    introduction.trim()
+      ? {
+        description: sanitizeProjectHtml(introduction),
+        sectionType: 'introduction',
+        title: 'Introduction'
+      }
+      : null,
+    ...customSections
+      .map((section) => ({
+        description: sanitizeProjectHtml(section.body),
+        sectionType: 'custom',
+        title: section.title.trim()
+      }))
+      .filter((section) => section.title || section.description)
+  ].filter(Boolean);
+
+  return JSON.stringify(sections);
+}
+
+function serializeDeliverables(value: string) {
+  const cleanValue = sanitizeProjectHtml(value);
+  return cleanValue ? JSON.stringify([{ format: 'Rich text', note: cleanValue, title: 'Project Deliverables' }]) : '';
+}
+
+function serializeImportantLinks(links: ProjectImportantLink[]) {
+  const cleanedLinks = links
+    .map((link) => ({
+      label: link.label.trim(),
+      link: link.url.trim(),
+      title: link.label.trim(),
+      type: 'Link'
+    }))
+    .filter((link) => link.title || link.link);
+
+  return cleanedLinks.length ? JSON.stringify(cleanedLinks) : '';
+}
+
+function formFromProject(project?: AdminProject | null): ProjectFormState {
+  const programKeys = project ? (project.programKeys.length > 0 ? project.programKeys : [project.programKey].filter((value): value is string => Boolean(value))) : [];
+  const sections = contentSectionsFromProject(project);
+
+  return {
+    brief: richTextFromValue(project?.brief ?? ''),
     companyName: project?.companyName ?? '',
+    customSections: sections.customSections,
     deadline: project?.deadline?.slice(0, 10) ?? '',
-    deliverables: project ? asTextareaRows(project.deliverables) : '',
-    objectives: project?.objectives ?? '',
+    deliverables: richTextFromDeliverables(project),
+    importantLinks: importantLinksFromProject(project),
+    introduction: sections.introduction,
+    objectives: richTextFromValue(project?.objectives ?? ''),
     programKeys,
     projectId: project?.projectId ?? newProjectId(),
-    resources: project ? asDocumentRows(project.documents) : '',
     roleId: project?.roleId ?? '',
     status: project?.status ?? 'active',
-    submissionLink: project?.submissionLink ?? '',
     title: project?.title ?? ''
+  };
+}
+
+function duplicateProjectDraft(project: AdminProject): AdminProject {
+  return {
+    ...project,
+    id: '',
+    projectId: newProjectId(),
+    status: 'inactive',
+    title: project.title ? `Copy of ${project.title}` : 'Copy of project',
+    updatedAt: undefined
   };
 }
 
@@ -119,6 +221,69 @@ function selectedPrograms(programs: AdminProgram[], keys: string[]) {
 
 function readableError(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+function ProjectRichTextEditor({
+  label,
+  onChange,
+  placeholder,
+  value
+}: {
+  label: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  value: string;
+}) {
+  const editorRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (editorRef.current && editorRef.current.innerHTML !== value) {
+      editorRef.current.innerHTML = value;
+    }
+  }, [value]);
+
+  function emitChange() {
+    onChange(sanitizeProjectHtml(editorRef.current?.innerHTML ?? ''));
+  }
+
+  function runCommand(command: string, commandValue?: string) {
+    editorRef.current?.focus();
+    document.execCommand(command, false, commandValue);
+    emitChange();
+  }
+
+  function addLink() {
+    const url = window.prompt('Paste link URL');
+    if (!url) return;
+    runCommand('createLink', url.trim());
+  }
+
+  return (
+    <div className="admin-project-rte">
+      <span>{label}</span>
+      <div className="admin-project-rte__box">
+        <div className="admin-project-rte__toolbar" aria-label={`${label} formatting tools`}>
+          <button aria-label="Bold" onClick={() => runCommand('bold')} title="Bold" type="button"><Bold size={15} /></button>
+          <button aria-label="Italic" onClick={() => runCommand('italic')} title="Italic" type="button"><Italic size={15} /></button>
+          <button aria-label="Underline" onClick={() => runCommand('underline')} title="Underline" type="button"><Underline size={15} /></button>
+          <button aria-label="Bullet list" onClick={() => runCommand('insertUnorderedList')} title="Bullet list" type="button"><List size={15} /></button>
+          <button aria-label="Numbered list" onClick={() => runCommand('insertOrderedList')} title="Numbered list" type="button"><ListOrdered size={15} /></button>
+          <button aria-label="Add link" onClick={addLink} title="Add link" type="button"><Link2 size={15} /></button>
+          <button aria-label="Clear formatting" onClick={() => runCommand('removeFormat')} title="Clear formatting" type="button"><RemoveFormatting size={15} /></button>
+        </div>
+        <div
+          className="admin-project-rte__editor"
+          contentEditable
+          data-placeholder={placeholder}
+          onBlur={emitChange}
+          onInput={emitChange}
+          ref={editorRef}
+          role="textbox"
+          suppressContentEditableWarning
+        />
+      </div>
+    </div>
+  );
 }
 
 function RoleEditor({
@@ -273,26 +438,79 @@ function ProjectEditor({
     });
   }
 
+  function addCustomSection() {
+    setForm((current) => ({
+      ...current,
+      customSections: [...current.customSections, { body: '', id: createDraftId('section'), title: '' }]
+    }));
+  }
+
+  function updateCustomSection(sectionId: string, patch: Partial<ProjectContentSection>) {
+    setForm((current) => ({
+      ...current,
+      customSections: current.customSections.map((section) => (section.id === sectionId ? { ...section, ...patch } : section))
+    }));
+  }
+
+  function removeCustomSection(sectionId: string) {
+    setForm((current) => ({
+      ...current,
+      customSections: current.customSections.filter((section) => section.id !== sectionId)
+    }));
+  }
+
+  function moveCustomSection(sectionId: string, direction: -1 | 1) {
+    setForm((current) => {
+      const index = current.customSections.findIndex((section) => section.id === sectionId);
+      const targetIndex = index + direction;
+      if (index < 0 || targetIndex < 0 || targetIndex >= current.customSections.length) return current;
+      const nextSections = [...current.customSections];
+      const [section] = nextSections.splice(index, 1);
+      nextSections.splice(targetIndex, 0, section);
+      return { ...current, customSections: nextSections };
+    });
+  }
+
+  function addImportantLink() {
+    setForm((current) => ({
+      ...current,
+      importantLinks: [...current.importantLinks, { id: createDraftId('link'), label: '', url: '' }]
+    }));
+  }
+
+  function updateImportantLink(linkId: string, patch: Partial<ProjectImportantLink>) {
+    setForm((current) => ({
+      ...current,
+      importantLinks: current.importantLinks.map((link) => (link.id === linkId ? { ...link, ...patch } : link))
+    }));
+  }
+
+  function removeImportantLink(linkId: string) {
+    setForm((current) => ({
+      ...current,
+      importantLinks: current.importantLinks.filter((link) => link.id !== linkId)
+    }));
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
 
     const payload: AdminProjectWritePayload = {
-      actionItems: form.actionItems,
-      brief: form.brief,
+      actionItems: serializeContentSections(form.introduction, form.customSections),
+      brief: sanitizeProjectHtml(form.brief),
       companyName: form.companyName,
       deadline: form.deadline || null,
-      deliverables: form.deliverables,
-      objectives: form.objectives,
+      deliverables: serializeDeliverables(form.deliverables),
+      objectives: sanitizeProjectHtml(form.objectives),
       programKey: form.programKeys[0],
       programKeys: form.programKeys,
       programName: mappedPrograms.map((program) => program.name).join(', '),
       projectId: form.projectId.trim(),
       projectRole: selectedRole?.name ?? '',
-      resources: form.resources,
+      resources: serializeImportantLinks(form.importantLinks),
       roleId: form.roleId || undefined,
       status: form.status,
-      submissionLink: form.submissionLink.trim() || null,
       title: form.title.trim()
     };
 
@@ -306,6 +524,16 @@ function ProjectEditor({
     }
     if (payload.programKeys.length === 0) {
       setError('Select at least one active program.');
+      return;
+    }
+    const incompleteLink = form.importantLinks.find((link) => (link.label.trim() && !link.url.trim()) || (!link.label.trim() && link.url.trim()));
+    if (incompleteLink) {
+      setError('Each important link needs both a label and a URL.');
+      return;
+    }
+    const invalidLink = form.importantLinks.find((link) => link.url.trim() && !/^https?:\/\//i.test(link.url.trim()));
+    if (invalidLink) {
+      setError('Important links must start with http:// or https://.');
       return;
     }
 
@@ -325,7 +553,6 @@ function ProjectEditor({
           resources: payload.resources,
           roleId: payload.roleId,
           status: payload.status,
-          submissionLink: payload.submissionLink,
           title: payload.title
         };
         await updateProject.mutateAsync({ body: updatePayload, projectId: project.id });
@@ -392,30 +619,117 @@ function ProjectEditor({
           ))}
         </div>
       </fieldset>
-      <label className="admin-project-form__wide">
-        <span>Brief</span>
-        <textarea value={form.brief} onChange={(event) => updateField('brief', event.target.value)} placeholder="Project brief or problem statement" rows={4} />
-      </label>
-      <label className="admin-project-form__wide">
-        <span>Objectives</span>
-        <textarea value={form.objectives} onChange={(event) => updateField('objectives', event.target.value)} placeholder="Project objectives and expected learning outcomes" rows={4} />
-      </label>
-      <label className="admin-project-form__wide">
-        <span>Action items</span>
-        <textarea value={form.actionItems} onChange={(event) => updateField('actionItems', event.target.value)} placeholder="One task per line, or Title|Description" rows={4} />
-      </label>
-      <label className="admin-project-form__wide">
-        <span>Deliverables</span>
-        <textarea value={form.deliverables} onChange={(event) => updateField('deliverables', event.target.value)} placeholder="Example: Slide deck|PPTX|Final presentation" rows={4} />
-      </label>
-      <label className="admin-project-form__wide">
-        <span>Resources</span>
-        <textarea value={form.resources} onChange={(event) => updateField('resources', event.target.value)} placeholder="Example: Brief|DOC|https://..." rows={4} />
-      </label>
-      <label>
-        <span>Submission link</span>
-        <input value={form.submissionLink} onChange={(event) => updateField('submissionLink', event.target.value)} placeholder="https://..." />
-      </label>
+      <section className="admin-project-reading-editor admin-project-form__wide" aria-label="Reading page content">
+        <div className="admin-project-reading-editor__header">
+          <div>
+            <span>Reading Page Content</span>
+            <h3>Project Detail Page</h3>
+          </div>
+          <p>These sections appear as a vertical reading page for eligible students.</p>
+        </div>
+        <ProjectRichTextEditor
+          label="Introduction"
+          onChange={(value) => updateField('introduction', value)}
+          placeholder="Set context for the project in a short introductory note."
+          value={form.introduction}
+        />
+        <ProjectRichTextEditor
+          label="Project Objective"
+          onChange={(value) => updateField('objectives', value)}
+          placeholder="Describe the project objective, learning goal, and outcome."
+          value={form.objectives}
+        />
+        <ProjectRichTextEditor
+          label="Project Deliverables"
+          onChange={(value) => updateField('deliverables', value)}
+          placeholder="Describe what students need to submit. Use bullets or numbered lists if helpful."
+          value={form.deliverables}
+        />
+        <ProjectRichTextEditor
+          label="Project Brief"
+          onChange={(value) => updateField('brief', value)}
+          placeholder="Write the detailed project brief, background, instructions, and expectations."
+          value={form.brief}
+        />
+      </section>
+
+      <section className="admin-project-custom-sections admin-project-form__wide" aria-label="Custom project sections">
+        <div className="admin-project-reading-editor__header">
+          <div>
+            <span>Custom Sections</span>
+            <h3>Additional Reading Blocks</h3>
+          </div>
+          <button className="segmented-button" onClick={addCustomSection} type="button">
+            <Plus size={15} />
+            Add Section
+          </button>
+        </div>
+        {form.customSections.length > 0 ? (
+          form.customSections.map((section, index) => (
+            <article className="admin-project-custom-section" key={section.id}>
+              <div className="admin-project-custom-section__head">
+                <label>
+                  <span>Section title</span>
+                  <input value={section.title} onChange={(event) => updateCustomSection(section.id, { title: event.target.value })} placeholder="e.g. Evaluation Criteria" />
+                </label>
+                <div className="admin-project-custom-section__actions">
+                  <button aria-label="Move section up" className="icon-button" disabled={index === 0} onClick={() => moveCustomSection(section.id, -1)} type="button">
+                    <ArrowUp size={16} />
+                  </button>
+                  <button aria-label="Move section down" className="icon-button" disabled={index === form.customSections.length - 1} onClick={() => moveCustomSection(section.id, 1)} type="button">
+                    <ArrowDown size={16} />
+                  </button>
+                  <button aria-label="Delete section" className="icon-button icon-button--danger" onClick={() => removeCustomSection(section.id)} type="button">
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+              <ProjectRichTextEditor
+                label="Section body"
+                onChange={(value) => updateCustomSection(section.id, { body: value })}
+                placeholder="Write this custom section in descriptive text."
+                value={section.body}
+              />
+            </article>
+          ))
+        ) : (
+          <p className="admin-project-empty-note">No custom sections added.</p>
+        )}
+      </section>
+
+      <section className="admin-project-link-editor admin-project-form__wide" aria-label="Important project links">
+        <div className="admin-project-reading-editor__header">
+          <div>
+            <span>Important Links</span>
+            <h3>Compact Link List</h3>
+          </div>
+          <button className="segmented-button" onClick={addImportantLink} type="button">
+            <Plus size={15} />
+            Add Link
+          </button>
+        </div>
+        {form.importantLinks.length > 0 ? (
+          <div className="admin-project-link-list">
+            {form.importantLinks.map((link) => (
+              <div className="admin-project-link-row" key={link.id}>
+                <label>
+                  <span>Label</span>
+                  <input value={link.label} onChange={(event) => updateImportantLink(link.id, { label: event.target.value })} placeholder="SOW document" />
+                </label>
+                <label>
+                  <span>URL</span>
+                  <input value={link.url} onChange={(event) => updateImportantLink(link.id, { url: event.target.value })} placeholder="https://..." />
+                </label>
+                <button aria-label="Delete important link" className="icon-button icon-button--danger" onClick={() => removeImportantLink(link.id)} type="button">
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="admin-project-empty-note">No important links added.</p>
+        )}
+      </section>
       <label>
         <span>Deadline</span>
         <input value={form.deadline} onChange={(event) => updateField('deadline', event.target.value)} type="date" />
@@ -473,6 +787,7 @@ function RoleCard({
 
 function ProjectCard({
   isSelected,
+  onDuplicate,
   onEdit,
   onStatusChange,
   project,
@@ -481,6 +796,7 @@ function ProjectCard({
   statusDisabled
 }: {
   isSelected: boolean;
+  onDuplicate: (project: AdminProject) => void;
   onEdit: (project: AdminProject) => void;
   onStatusChange: (project: AdminProject) => void;
   project: AdminProject;
@@ -517,6 +833,10 @@ function ProjectCard({
       <div className="admin-project-list-card__actions">
         <button className="segmented-button" aria-label={`Edit project ${project.title || project.projectId || project.id}`} onClick={() => onEdit(project)} type="button">
           Edit
+        </button>
+        <button className="segmented-button" aria-label={`Duplicate project ${project.title || project.projectId || project.id}`} onClick={() => onDuplicate(project)} type="button">
+          <Copy size={14} />
+          Duplicate
         </button>
         <button
           aria-label={`${statusAction} project ${project.title || project.projectId || project.id}`}
@@ -563,6 +883,11 @@ export function AdminProjectsPage() {
     setNotice('');
   }
 
+  function duplicateProject(project: AdminProject) {
+    setSelectedProject(duplicateProjectDraft(project));
+    setNotice('Duplicated as a new inactive draft. Review the role, title, and content before saving.');
+  }
+
   async function changeProjectStatus(project: AdminProject) {
     const nextStatus: AdminProjectStatus = project.status === 'active' ? 'inactive' : 'active';
     if (!window.confirm(`${nextStatus === 'inactive' ? 'Deactivate' : 'Reactivate'} this project?`)) return;
@@ -605,7 +930,7 @@ export function AdminProjectsPage() {
 
   return (
     <div className="page-stack admin-projects-page">
-      <PageHeader description="Manage live project roles, project briefs, student visibility, resources, and submission links." eyebrow="Module refresh" title="Projects" />
+      <PageHeader description="Manage live project roles, project briefs, student visibility, resources, and deadlines." eyebrow="Module refresh" title="Projects" />
       {notice ? <div className={/could not|failed|error/i.test(notice) ? 'auth-alert auth-alert--error' : 'auth-alert auth-alert--success'}>{notice}</div> : null}
 
       <div className="admin-projects-page__top-actions">
@@ -702,6 +1027,7 @@ export function AdminProjectsPage() {
                   <ProjectCard
                     isSelected={selectedProject?.id === project.id}
                     key={project.id}
+                    onDuplicate={duplicateProject}
                     onEdit={setSelectedProject}
                     onStatusChange={changeProjectStatus}
                     project={project}
@@ -721,11 +1047,19 @@ export function AdminProjectsPage() {
           <header className="admin-project-section__header">
             <div>
               <span>Editor</span>
-              <h2>{selectedProject ? 'Edit Project' : 'Add Project'}</h2>
+              <h2>{selectedProject?.id ? 'Edit Project' : 'Add Project'}</h2>
             </div>
             <Edit3 size={18} />
           </header>
-          <ProjectEditor activePrograms={activePrograms} onSaved={setNotice} project={selectedProject} roles={roles} />
+          <ProjectEditor
+            activePrograms={activePrograms}
+            onSaved={(message) => {
+              setNotice(message);
+              if (selectedProject && !selectedProject.id) setSelectedProject(null);
+            }}
+            project={selectedProject}
+            roles={roles}
+          />
           <div className="admin-project-editor-footnote">
             <CheckCircle2 size={15} />
             <span>Student visibility requires active status and at least one active program mapping.</span>

@@ -30,6 +30,7 @@ import {
 } from '../features/admin/useAdminStudents';
 import { AdminCohort, useAdminCohorts } from '../features/admin/useAdminCohorts';
 import { AdminProgram, useAdminPrograms } from '../features/admin/useAdminPrograms';
+import { AdminProjectRole, useAdminProjectRoles } from '../features/admin/useAdminProjects';
 
 const statusOptions: Array<{ label: string; value: AdminStudentStatus | 'all' }> = [
   { label: 'All Students', value: 'all' },
@@ -42,7 +43,7 @@ const personalMentorOptions = ['Yes', 'No'] as const;
 const liveProjectDurationOptions = ['2 weeks', '4 weeks', '6 weeks', '8 weeks'] as const;
 const studentRowsPerPageOptions = [25, 50, 75, 100] as const;
 
-const studentImportHeaders = ['studentId', 'fullName', 'email', 'altEmail', 'phone', 'collegeName', 'cohortNames', 'programNames', 'waGroup', 'personalmentor', 'you_are_from', 'project_start_date', 'duration', 'onboardingMailStatus', 'active'];
+const studentImportHeaders = ['studentId', 'fullName', 'email', 'altEmail', 'phone', 'collegeName', 'cohortNames', 'programNames', 'waGroup', 'personalmentor', 'you_are_from', 'project_start_date', 'duration', 'liveProjectRoles', 'onboardingMailStatus', 'active'];
 const studentExportHeaders = ['serialNumber', ...studentImportHeaders];
 const studentSortOptions = ['sequence', 'student', 'access', 'education', 'mentor', 'onboarding', 'duration', 'auth', 'status'] as const;
 
@@ -88,6 +89,10 @@ function formatList(values: Array<string | undefined> | undefined, fallback?: st
   const normalized = values?.map((value) => value?.trim()).filter((value): value is string => Boolean(value)) ?? [];
   if (normalized.length > 0) return normalized.join(', ');
   return formatValue(fallback);
+}
+
+function formatRoleList(student: AdminStudent) {
+  return formatList(student.liveProjectRoles, student.liveProjectRoleIds?.join(', '));
 }
 
 function studentCohortNames(student: AdminStudent) {
@@ -249,6 +254,7 @@ function validateImportPayload(
   payload: AdminStudentWritePayload,
   cohortByName: Map<string, AdminCohort>,
   programByKeyOrName: Map<string, AdminProgram>,
+  roleByIdOrName: Map<string, AdminProjectRole>,
   duplicateEmail: boolean
 ) {
   const errors: string[] = [];
@@ -266,15 +272,35 @@ function validateImportPayload(
   if (missingCohorts.length > 0) errors.push(`Unknown cohorts: ${missingCohorts.join(', ')}`);
   const missingPrograms = (payload.programNames ?? []).filter((name) => !programByKeyOrName.has(name.toLowerCase()));
   if (missingPrograms.length > 0) errors.push(`Unknown programs: ${missingPrograms.join(', ')}`);
+  const missingRoles = (payload.liveProjectRoleIds ?? []).filter((roleId) => !roleByIdOrName.has(roleId.toLowerCase()));
+  if (missingRoles.length > 0) errors.push(`Unknown live project roles: ${missingRoles.join(', ')}`);
   return errors;
 }
 
-function buildImportPayloadFromRow(row: string[], headers: string[], cohortByName: Map<string, AdminCohort>, programByKeyOrName: Map<string, AdminProgram>) {
+function roleMapKey(value: string | undefined) {
+  return (value ?? '').trim().toLowerCase();
+}
+
+function buildRoleLookup(roles: AdminProjectRole[]) {
+  const entries = roles.flatMap((role) => [
+    [roleMapKey(role.id), role],
+    [roleMapKey(role.roleId), role],
+    [roleMapKey(role.name), role]
+  ] as Array<[string, AdminProjectRole]>);
+  return new Map(entries.filter(([key]) => Boolean(key)));
+}
+
+function buildImportPayloadFromRow(row: string[], headers: string[], cohortByName: Map<string, AdminCohort>, programByKeyOrName: Map<string, AdminProgram>, roleByIdOrName: Map<string, AdminProjectRole>) {
   const getValue = makeHeaderReader(headers);
   const cohortNames = splitImportList(getValue(row, ['cohortNames', 'cohortName', 'cohorts']));
   const programValues = splitImportList(getValue(row, ['programNames', 'programName', 'programs', 'programKeys']));
+  const roleValues = splitImportList(getValue(row, ['liveProjectRoles', 'liveProjectRole', 'live project role', 'live project roles', 'projectRoles', 'projectRole', 'roleIds', 'roleId']));
   const selectedCohorts = cohortNames.map((name) => cohortByName.get(name.toLowerCase())).filter((cohort): cohort is AdminCohort => Boolean(cohort));
   const selectedPrograms = programValues.map((name) => programByKeyOrName.get(name.toLowerCase())).filter((program): program is AdminProgram => Boolean(program));
+  const liveProjectRoleIds = roleValues.map((value) => {
+    const role = roleByIdOrName.get(value.toLowerCase());
+    return role?.roleId ?? role?.id ?? value;
+  });
   const activeValue = getValue(row, ['active', 'status']).toLowerCase();
   const derivedSlot = deriveSlotFromSelectedCohorts(selectedCohorts);
 
@@ -288,6 +314,7 @@ function buildImportPayloadFromRow(row: string[], headers: string[], cohortByNam
     educationYear: normalizeOptionValue(getValue(row, ['you_are_from', 'educationYear', 'education year']), educationYearOptions),
     fullName: getValue(row, ['fullName', 'name']),
     liveProjectDuration: normalizeOptionValue(getValue(row, ['duration', 'liveProjectDuration', 'live project duration']), liveProjectDurationOptions),
+    liveProjectRoleIds,
     onboardingMailStatus: normalizeImportStatus(getValue(row, ['onboardingMailStatus'])),
     onboardingDate: normalizeImportDate(getValue(row, ['project_start_date', 'onboardingDate', 'onboarding date'])),
     personalMentor: normalizeYesNo(getValue(row, ['personalmentor', 'personalMentor', 'optedForPersonalMentor', 'opted for personal mentor'])),
@@ -449,6 +476,7 @@ function StudentDetailsModal({ student, onClose }: { student: AdminStudent; onCl
     ['Opted for Personal Mentor', formatValue(student.personalMentor)],
     ['Onboarding Date', formatDate(student.onboardingDate)],
     ['Live Project Duration', formatValue(student.liveProjectDuration)],
+    ['Live Project Role', formatRoleList(student)],
     ['Cohorts', formatList(studentCohortNames(student), student.cohortName)],
     ['Slot', formatValue(student.slot)],
     ['Live Project Domain(s)', formatList(student.liveProjectDomains, student.trackRoleIds.join(', '))],
@@ -513,6 +541,7 @@ type EnrollStudentModalProps = {
   onClose: () => void;
   onSubmit: (payload: AdminStudentWritePayload) => Promise<void>;
   programOptions: AdminProgram[];
+  roleOptions: AdminProjectRole[];
   student?: AdminStudent;
 };
 
@@ -525,6 +554,7 @@ type EnrollStudentForm = {
   email: string;
   fullName: string;
   liveProjectDuration: string;
+  liveProjectRoleIds: string[];
   onboardingMailStatus: 'pending' | 'sent' | 'failed' | 'skipped' | 'dry-run';
   onboardingDate: string;
   personalMentor: string;
@@ -549,6 +579,7 @@ const emptyEnrollStudentForm: EnrollStudentForm = {
   email: '',
   fullName: '',
   liveProjectDuration: '',
+  liveProjectRoleIds: [],
   onboardingMailStatus: 'pending',
   onboardingDate: '',
   personalMentor: '',
@@ -580,6 +611,7 @@ function studentToForm(student: AdminStudent | undefined): EnrollStudentForm {
     email: student.email,
     fullName: student.fullName,
     liveProjectDuration: student.liveProjectDuration ?? '',
+    liveProjectRoleIds: student.liveProjectRoleIds ?? [],
     onboardingMailStatus: (student.onboardingMailStatus as EnrollStudentForm['onboardingMailStatus'] | undefined) ?? 'pending',
     onboardingDate: student.onboardingDate ? student.onboardingDate.slice(0, 10) : '',
     personalMentor: student.personalMentor ?? '',
@@ -601,13 +633,14 @@ function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSubmit, programOptions, student }: EnrollStudentModalProps) {
+function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSubmit, programOptions, roleOptions, student }: EnrollStudentModalProps) {
   const [form, setForm] = useState<EnrollStudentForm>(() => studentToForm(student));
   const [error, setError] = useState<string | null>(null);
 
   const selectedCohorts = cohortOptions.filter((cohort) => form.cohortNames.includes(cohort.name));
   const cohortPickerOptions = useMemo(() => cohortOptions.map((cohort) => ({ id: cohort.id, label: cohort.name, meta: cohort.status.toUpperCase(), value: cohort.name })), [cohortOptions]);
   const programPickerOptions = useMemo(() => programOptions.map((program) => ({ id: program.id, label: program.name, meta: program.programKey, value: program.name })), [programOptions]);
+  const rolePickerOptions = useMemo(() => roleOptions.map((role) => ({ id: role.id, label: role.name, meta: [role.roleId, role.programKey].filter(Boolean).join(' · '), value: role.roleId ?? role.id })), [roleOptions]);
   const selectedCohortSummary =
     selectedCohorts.length > 0
       ? selectedCohorts
@@ -658,6 +691,7 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
       educationYear: form.educationYear || undefined,
       fullName,
       liveProjectDuration: form.liveProjectDuration || undefined,
+      liveProjectRoleIds: form.liveProjectRoleIds,
       onboardingMailStatus: form.onboardingMailStatus,
       onboardingDate: form.onboardingDate || undefined,
       personalMentor: form.personalMentor || undefined,
@@ -768,6 +802,17 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
                 ))}
               </select>
             </label>
+
+            <div className="enroll-multi-field enroll-student-form__wide">
+              <span>Live Project Role (optional)</span>
+              <StudentImportMultiSelect
+                label="live project roles"
+                metaLabel="Role ID"
+                onChange={(liveProjectRoleIds) => updateForm('liveProjectRoleIds', liveProjectRoleIds)}
+                options={rolePickerOptions}
+                selected={form.liveProjectRoleIds}
+              />
+            </div>
 
             <div className="enroll-multi-field enroll-student-form__wide">
               <span>Cohorts (select one or more)</span>
@@ -920,6 +965,7 @@ function ImportPreviewModal({
   result,
   setPreview,
   programOptions,
+  roleOptions,
   uploading
 }: {
   cohortOptions: AdminCohort[];
@@ -937,6 +983,7 @@ function ImportPreviewModal({
   preview: StudentImportPreview | null;
   programOptions: AdminProgram[];
   result: AdminStudentImportRowResult[] | null;
+  roleOptions: AdminProjectRole[];
   setPreview: (updater: (current: StudentImportPreview | null) => StudentImportPreview | null) => void;
   uploading: boolean;
 }) {
@@ -945,6 +992,7 @@ function ImportPreviewModal({
   const [selectedRowNumbers, setSelectedRowNumbers] = useState<number[]>([]);
   const [bulkCohortNames, setBulkCohortNames] = useState<string[]>([]);
   const [bulkProgramNames, setBulkProgramNames] = useState<string[]>([]);
+  const [bulkRoleIds, setBulkRoleIds] = useState<string[]>([]);
   const [editingRowNumber, setEditingRowNumber] = useState<number | null>(null);
   const [pasteText, setPasteText] = useState('');
   const validRows = preview?.rows.filter((row) => row.errors.length === 0) ?? [];
@@ -952,8 +1000,10 @@ function ImportPreviewModal({
   const previewRows = useMemo(() => preview?.rows ?? [], [preview?.rows]);
   const cohortByName = useMemo(() => new Map(cohortOptions.map((cohort) => [cohort.name.toLowerCase(), cohort])), [cohortOptions]);
   const programByName = useMemo(() => new Map(programOptions.flatMap((program) => [[program.name.toLowerCase(), program], [program.programKey.toLowerCase(), program]] as const)), [programOptions]);
+  const roleByIdOrName = useMemo(() => buildRoleLookup(roleOptions), [roleOptions]);
   const cohortPickerOptions = useMemo(() => cohortOptions.map((cohort) => ({ id: cohort.id, label: cohort.name, meta: cohort.status.toUpperCase(), value: cohort.name })), [cohortOptions]);
   const programPickerOptions = useMemo(() => programOptions.map((program) => ({ id: program.id, label: program.name, meta: program.programKey, value: program.name })), [programOptions]);
+  const rolePickerOptions = useMemo(() => roleOptions.map((role) => ({ id: role.id, label: role.name, meta: [role.roleId, role.programKey].filter(Boolean).join(' · '), value: role.roleId ?? role.id })), [roleOptions]);
   const filteredRows = useMemo(
     () =>
       previewRows.filter((row) => {
@@ -995,7 +1045,7 @@ function ImportPreviewModal({
       const existingStudent = existingEmails.has(email);
       return {
         ...row,
-        errors: validateImportPayload(row.payload, cohortByName, programByName, Boolean(email && (emailCounts.get(email) ?? 0) > 1)),
+        errors: validateImportPayload(row.payload, cohortByName, programByName, roleByIdOrName, Boolean(email && (emailCounts.get(email) ?? 0) > 1)),
         existingStudent,
         sendPortalInvite: existingStudent ? false : row.sendPortalInvite
       };
@@ -1048,6 +1098,11 @@ function ImportPreviewModal({
               ? {
                   programKeys: selectedPrograms.map((program) => program.programKey),
                   programNames: bulkProgramNames
+                }
+              : {}),
+            ...(bulkRoleIds.length > 0
+              ? {
+                  liveProjectRoleIds: bulkRoleIds
                 }
               : {})
           }
@@ -1204,11 +1259,12 @@ function ImportPreviewModal({
               <div className="student-import-bulkbar" aria-label="Bulk apply import tags">
                 <div>
                   <strong>{selectedRowNumbers.length} selected</strong>
-                  <span>Select rows, choose cohorts/programs, then apply to those rows.</span>
+                  <span>Select rows, choose cohorts/programs/roles, then apply to those rows.</span>
                 </div>
                 <StudentImportMultiSelect label="bulk cohorts" options={cohortPickerOptions} selected={bulkCohortNames} onChange={setBulkCohortNames} />
                 <StudentImportMultiSelect label="bulk programs" options={programPickerOptions} selected={bulkProgramNames} onChange={setBulkProgramNames} />
-                <button className="segmented-button segmented-button--active" disabled={selectedRowNumbers.length === 0 || (bulkCohortNames.length === 0 && bulkProgramNames.length === 0)} onClick={applyBulkImportAssignments} type="button">
+                <StudentImportMultiSelect label="bulk live project roles" options={rolePickerOptions} selected={bulkRoleIds} onChange={setBulkRoleIds} />
+                <button className="segmented-button segmented-button--active" disabled={selectedRowNumbers.length === 0 || (bulkCohortNames.length === 0 && bulkProgramNames.length === 0 && bulkRoleIds.length === 0)} onClick={applyBulkImportAssignments} type="button">
                   Apply to Selected
                 </button>
               </div>
@@ -1277,6 +1333,7 @@ function ImportPreviewModal({
                           </td>
                           <td>
                             <span className="student-import-readonly-list">{formatList(row.payload.programNames)}</span>
+                            <small>{formatList(row.payload.liveProjectRoleIds)}</small>
                           </td>
                           <td>
                             <button className={`segmented-button student-import-edit-button ${editingRowNumber === row.rowNumber ? 'segmented-button--active' : ''}`} onClick={() => setEditingRowNumber(row.rowNumber)} type="button">
@@ -1409,6 +1466,16 @@ function ImportPreviewModal({
                               const selectedPrograms = programOptions.filter((program) => programNames.includes(program.name));
                               updatePayload(editingRow.rowNumber, { programKeys: selectedPrograms.map((program) => program.programKey), programNames });
                             }}
+                          />
+                        </label>
+                        <label className="student-import-editor-picker">
+                          <span>Live Project Role</span>
+                          <StudentImportMultiSelect
+                            label="live project roles"
+                            metaLabel="Role ID"
+                            options={rolePickerOptions}
+                            selected={editingRow.payload.liveProjectRoleIds ?? []}
+                            onChange={(liveProjectRoleIds) => updatePayload(editingRow.rowNumber, { liveProjectRoleIds })}
                           />
                         </label>
                       </div>
@@ -1615,6 +1682,7 @@ export function AdminStudentsPage() {
   const backfillAuthLinks = useBackfillAdminStudentAuthLinks();
   const resendStudentInvite = useResendAdminStudentInvite();
   const programsQuery = useAdminPrograms({ limit: 100, page: 1, status: 'all' });
+  const rolesQuery = useAdminProjectRoles({ limit: 500, page: 1, status: 'active' });
   const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, status: 'all' });
   const cohortsPageTwoQuery = useAdminCohorts({ enabled: cohortsPageOneQuery.data?.hasNextPage === true, limit: 100, page: 2, status: 'all' });
   const cohortsPageThreeQuery = useAdminCohorts({ enabled: cohortsPageTwoQuery.data?.hasNextPage === true, limit: 100, page: 3, status: 'all' });
@@ -1645,6 +1713,7 @@ export function AdminStudentsPage() {
     return Array.from(values.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [cohortsPageOneQuery.data, cohortsPageTwoQuery.data, cohortsPageThreeQuery.data]);
   const programRecords = useMemo(() => programsQuery.data?.items ?? [], [programsQuery.data?.items]);
+  const roleRecords = useMemo(() => rolesQuery.data?.items ?? [], [rolesQuery.data?.items]);
   const collegeOptions = useMemo(() => uniqueSorted(data?.items.map((student) => student.collegeName) ?? []), [data?.items]);
   const selectedStudents = useMemo(() => pageStudents.filter((student) => selectedStudentIds.includes(student.id)), [pageStudents, selectedStudentIds]);
   const selectedCount = selectedStudentIds.length;
@@ -1767,6 +1836,7 @@ export function AdminStudentsPage() {
           student.educationYear,
           student.onboardingDate ? student.onboardingDate.slice(0, 10) : '',
           student.liveProjectDuration,
+          formatRoleList(student),
           student.onboardingMailStatus,
           student.active
         ]
@@ -1788,17 +1858,19 @@ export function AdminStudentsPage() {
       const { default: writeXlsxFile } = await import('write-excel-file/browser');
       const studentRows: SheetData = [
         studentImportHeaders,
-        ['STU-1001', 'Example Student', 'student@example.com', '', '+91 90000 00000', 'Example College', 'Cohort A|Cohort B', 'Program A|Program B', 'WA Group Name', 'Yes', 'Graduate', '2026-07-05', '4 weeks', 'pending', 'true']
+        ['STU-1001', 'Example Student', 'student@example.com', '', '+91 90000 00000', 'Example College', 'Cohort A|Cohort B', 'Program A|Program B', 'WA Group Name', 'Yes', 'Graduate', '2026-07-05', '4 weeks', 'Business Analyst|hr_intern', 'pending', 'true']
       ];
       const cohortRows: SheetData = [
         ['Cohort Name', 'Cohort ID', 'Start Date', 'Derived Slot', 'Status'],
         ...cohortRecords.map((cohort) => [cohort.name, cohort.id, cohort.startDate ?? '', deriveSlotFromCohortStartDate(cohort), cohort.status])
       ];
       const programRows: SheetData = [['Program Name', 'Program Key', 'Status'], ...programRecords.map((program) => [program.name, program.programKey, program.status])];
+      const roleRows: SheetData = [['Role Name', 'Role ID', 'Program Key', 'Status'], ...roleRecords.map((role) => [role.name, role.roleId ?? '', role.programKey ?? '', role.status])];
       const sheets: Array<Sheet<Blob>> = [
         { data: studentRows, sheet: 'Students' },
         { data: cohortRows, sheet: 'Cohorts' },
-        { data: programRows, sheet: 'Programs' }
+        { data: programRows, sheet: 'Programs' },
+        { data: roleRows, sheet: 'Live Project Roles' }
       ];
       const blob = await writeXlsxFile(sheets, { fontFamily: 'Arial', fontSize: 12 }).toBlob();
       const url = URL.createObjectURL(blob);
@@ -1864,23 +1936,24 @@ export function AdminStudentsPage() {
 
     const cohortByName = new Map(cohortRecords.map((cohort) => [cohort.name.toLowerCase(), cohort]));
     const programByKeyOrName = new Map(programRecords.flatMap((program) => [[program.name.toLowerCase(), program], [program.programKey.toLowerCase(), program]] as const));
+    const roleByIdOrName = buildRoleLookup(roleRecords);
     const existingResult = await exportStudents.mutateAsync({ status: 'all' });
     const existingEmails = new Set(existingResult.items.map((student) => student.email.trim().toLowerCase()).filter(Boolean));
     setImportExistingEmails(existingEmails);
 
     const emailCounts = bodyRows.reduce<Map<string, number>>((counts, row) => {
-      const email = buildImportPayloadFromRow(row, headers, cohortByName, programByKeyOrName).email.trim().toLowerCase();
+      const email = buildImportPayloadFromRow(row, headers, cohortByName, programByKeyOrName, roleByIdOrName).email.trim().toLowerCase();
       if (email) counts.set(email, (counts.get(email) ?? 0) + 1);
       return counts;
     }, new Map());
 
     const rowNumberOffset = firstRow && looksLikeImportHeader(firstRow) ? 2 : 1;
     const previewRows = bodyRows.map((row, index) => {
-      const payload = buildImportPayloadFromRow(row, headers, cohortByName, programByKeyOrName);
+      const payload = buildImportPayloadFromRow(row, headers, cohortByName, programByKeyOrName, roleByIdOrName);
       const email = payload.email.trim().toLowerCase();
       const existingStudent = existingEmails.has(email);
       return {
-        errors: validateImportPayload(payload, cohortByName, programByKeyOrName, Boolean(email && (emailCounts.get(email) ?? 0) > 1)),
+        errors: validateImportPayload(payload, cohortByName, programByKeyOrName, roleByIdOrName, Boolean(email && (emailCounts.get(email) ?? 0) > 1)),
         existingStudent,
         payload,
         rowNumber: index + rowNumberOffset,
@@ -2203,6 +2276,7 @@ export function AdminStudentsPage() {
                 <col className="admin-student-col--mentor" />
                 <col className="admin-student-col--onboarding" />
                 <col className="admin-student-col--duration" />
+                <col className="admin-student-col--role" />
                 <col className="admin-student-col--auth" />
                 <col className="admin-student-col--status" />
                 <col className="admin-student-col--actions" />
@@ -2221,6 +2295,7 @@ export function AdminStudentsPage() {
                   <th scope="col">{renderSortHeader('Personal Mentor', 'mentor')}</th>
                   <th scope="col">{renderSortHeader('Onboarding Date', 'onboarding')}</th>
                   <th scope="col">{renderSortHeader('Live Project Duration', 'duration')}</th>
+                  <th scope="col">Live Project Role</th>
                   <th scope="col">{renderSortHeader('Auth & Invite', 'auth')}</th>
                   <th scope="col">{renderSortHeader('Status', 'status')}</th>
                   <th scope="col">Actions</th>
@@ -2266,6 +2341,9 @@ export function AdminStudentsPage() {
                     </td>
                     <td>
                       <span className="admin-student-table-value">{formatValue(student.liveProjectDuration)}</span>
+                    </td>
+                    <td>
+                      <span className="admin-student-role-list">{formatRoleList(student)}</span>
                     </td>
                     <td>
                       <div className="admin-student-auth-cell">
@@ -2352,6 +2430,7 @@ export function AdminStudentsPage() {
           onClose={() => setIsEnrollModalOpen(false)}
           onSubmit={handleCreateStudent}
           programOptions={programRecords}
+          roleOptions={roleRecords}
         />
       ) : null}
       {editingStudent && canManageStudents ? (
@@ -2362,6 +2441,7 @@ export function AdminStudentsPage() {
           onClose={() => setEditingStudent(null)}
           onSubmit={handleEditStudent}
           programOptions={programRecords}
+          roleOptions={roleRecords}
           student={editingStudent}
         />
       ) : null}
@@ -2382,6 +2462,7 @@ export function AdminStudentsPage() {
           onPasteRows={handleImportPaste}
           preview={importPreview}
           programOptions={programRecords}
+          roleOptions={roleRecords}
           result={importResultRows}
           setPreview={setImportPreview}
           uploading={isImportParsing}

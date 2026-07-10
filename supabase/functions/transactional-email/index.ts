@@ -336,6 +336,16 @@ async function studentsForCohorts(cohortNames: string[]) {
   return enrichStudentsWithCohortDetails((students || []).map(asRecord));
 }
 
+async function activeLmsStudents() {
+  const { data, error } = await admin
+    .from('students')
+    .select('id,student_id,email,full_name,active,cohort_name,program_name,track_role_ids')
+    .eq('active', true)
+    .limit(10000);
+  if (error) throw new Error(error.message);
+  return enrichStudentsWithCohortDetails((data || []).map(asRecord));
+}
+
 async function cohortsByNames(cohortNames: string[]) {
   if (cohortNames.length === 0) return [];
   const { data, error } = await admin
@@ -549,6 +559,14 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
         return { email, name: text(student.full_name, email), relatedId: text(student.id, email), relatedType: 'student', vars: studentVars(student, email, params) };
       })
       .filter((item) => item.email);
+  } else if (sendMode === 'all_active_students') {
+    const students = await activeLmsStudents();
+    recipients = students
+      .map((student) => {
+        const email = normalizeEmail(student.email);
+        return { email, name: text(student.full_name, email), relatedId: text(student.id, email), relatedType: 'student', vars: studentVars(student, email, params) };
+      })
+      .filter((item) => item.email);
   } else if (sendMode === 'cohort_google_group') {
     if (cohortNames.length === 0) throw new Error('Select one cohort with a Google Group email.');
     const cohorts = await cohortsByNames(cohortNames);
@@ -567,7 +585,8 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
     });
   }
 
-  recipients = Array.from(new Map(recipients.map((recipient) => [recipient.email, recipient])).values()).slice(0, 1000);
+  const recipientLimit = sendMode === 'all_active_students' ? 10000 : 1000;
+  recipients = Array.from(new Map(recipients.map((recipient) => [recipient.email, recipient])).values()).slice(0, recipientLimit);
   if (recipients.length === 0) throw new Error('No deliverable recipients found.');
 
   const alreadySentEmails = testMode ? new Set<string>() : await sentEmailsToday(templateUsedKey, category);

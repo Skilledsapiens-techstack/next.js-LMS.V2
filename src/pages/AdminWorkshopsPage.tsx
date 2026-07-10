@@ -141,6 +141,27 @@ function getScheduledAt(item: AdminWorkshop) {
   return Number.isNaN(scheduledAt.getTime()) ? null : scheduledAt;
 }
 
+function scheduledAtTime(item: AdminWorkshop, fallback = Number.POSITIVE_INFINITY) {
+  const scheduledAt = getScheduledAt(item);
+  const timestamp = scheduledAt ? scheduledAt.getTime() : Number.NaN;
+  return Number.isFinite(timestamp) ? timestamp : fallback;
+}
+
+function updatedAtTime(item: AdminWorkshop, fallback = 0) {
+  const updatedAt = item.updatedAt ? new Date(item.updatedAt).getTime() : Number.NaN;
+  return Number.isFinite(updatedAt) ? updatedAt : fallback;
+}
+
+function compareWorkshopsByScheduleAsc(left: AdminWorkshop, right: AdminWorkshop) {
+  const scheduledDiff = scheduledAtTime(left) - scheduledAtTime(right);
+  if (scheduledDiff !== 0) return scheduledDiff;
+
+  const updatedDiff = updatedAtTime(right) - updatedAtTime(left);
+  if (updatedDiff !== 0) return updatedDiff;
+
+  return left.title.localeCompare(right.title);
+}
+
 function isFutureScheduled(item: AdminWorkshop, now: number) {
   if (isCompleted(item) || isArchived(item)) return false;
   const scheduledAt = getScheduledAt(item);
@@ -194,7 +215,7 @@ function isValidHttpUrl(value: string) {
 }
 
 export function AdminWorkshopsPage() {
-  const workshopsQuery = useAdminWorkshops({ limit: 100, page: 1, status: 'all' });
+  const workshopsQuery = useAdminWorkshops({ limit: 500, page: 1, status: 'all' });
   const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, sort: 'name', status: 'all' });
   const cohortsPageTwoQuery = useAdminCohorts({ enabled: (cohortsPageOneQuery.data?.totalPages ?? 1) >= 2, limit: 100, page: 2, sort: 'name', status: 'all' });
   const cohortsPageThreeQuery = useAdminCohorts({ enabled: (cohortsPageOneQuery.data?.totalPages ?? 1) >= 3, limit: 100, page: 3, sort: 'name', status: 'all' });
@@ -240,8 +261,8 @@ export function AdminWorkshopsPage() {
 
   const now = Date.now();
   const cancelledWorkshops = useMemo(() => workshops.filter(isArchived), [workshops]);
-  const upcomingWorkshops = useMemo(() => workshops.filter((item) => isFutureScheduled(item, now)), [now, workshops]);
-  const pastWorkshops = useMemo(() => workshops.filter((item) => isPastPendingCompletion(item, now)), [now, workshops]);
+  const upcomingWorkshops = useMemo(() => workshops.filter((item) => isFutureScheduled(item, now)).sort(compareWorkshopsByScheduleAsc), [now, workshops]);
+  const pastWorkshops = useMemo(() => workshops.filter((item) => isPastPendingCompletion(item, now)).sort(compareWorkshopsByScheduleAsc), [now, workshops]);
   const visibleWorkshops = activeTab === 'needs-completion' ? pastWorkshops : activeTab === 'cancelled' ? cancelledWorkshops : upcomingWorkshops;
   const total = workshopsQuery.data?.total ?? workshops.length;
   const pendingWithLink = useMemo(() => pastWorkshops.filter((item) => Boolean(item.joinUrl)).length, [pastWorkshops]);
