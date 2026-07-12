@@ -201,6 +201,20 @@ export function useAdminStudents(query: AdminStudentsQuery) {
   });
 }
 
+export function useAdminStudentCollegeOptions() {
+  const { accessToken } = useAuth();
+
+  return useQuery({
+    enabled: Boolean(accessToken),
+    queryFn: () =>
+      apiGet<{ items: string[] }>('/admins/students/college-options', {
+        accessToken: accessToken ?? undefined
+      }),
+    queryKey: ['admin-student-college-options', accessToken],
+    staleTime: 5 * 60_000
+  });
+}
+
 export function useExportAdminStudents() {
   const { accessToken } = useAuth();
 

@@ -75,12 +75,14 @@ const ADMIN_READ_PERMISSIONS_BY_PATH: Record<string, AdminPermission> = {
   '/admins/payment-orders': 'admin.payments.view',
   '/admins/programs': 'admin.programs.view',
   '/admins/project-roles': 'admin.projects.view',
+  '/admins/project-toolkit': 'admin.projects.view',
   '/admins/project-submissions': 'admin.submissions.view',
   '/admins/projects': 'admin.projects.view',
   '/admins/recording-candidates': 'admin.recordings.view',
   '/admins/resources': 'admin.resources.view',
   '/admins/student-audit-logs': 'admin.observability.view',
   '/admins/students': 'admin.students.view',
+  '/admins/students/college-options': 'admin.students.view',
   '/admins/support-categories': 'admin.support.view',
   '/admins/support-faqs': 'admin.support.view',
   '/admins/support-tickets': 'admin.support.view',
@@ -231,6 +233,19 @@ const PROJECT_WRITE_COLUMNS = new Set([
   'title'
 ]);
 
+const PROJECT_TOOLKIT_WRITE_COLUMNS = new Set([
+  'content',
+  'item_type',
+  'link_label',
+  'link_url',
+  'program_keys',
+  'sort_order',
+  'status',
+  'summary',
+  'title',
+  'toolkit_id'
+]);
+
 const ANNOUNCEMENT_WRITE_COLUMNS = new Set([
   'announcement_id',
   'audience',
@@ -357,6 +372,15 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/payment-orders': { table: 'payment_orders', searchColumns: ['student_email', 'item_id', 'item_type', 'razorpay_order_id'] },
   '/admins/programs': { table: 'programs', filterColumns: { domain: 'domain_label' }, searchColumns: ['program_key', 'name', 'short_name', 'domain_label'] },
   '/admins/project-roles': { table: 'role_master', filterColumns: { category: 'role_category' }, searchColumns: ['role_name', 'program_key', 'role_category'] },
+  '/admins/project-toolkit': {
+    table: 'project_toolkit_items',
+    filterColumns: { type: 'item_type' },
+    searchColumns: ['toolkit_id', 'item_type', 'title', 'summary'],
+    sortColumns: {
+      order: { column: 'sort_order', ascending: true },
+      updated: { column: 'updated_at', ascending: false }
+    }
+  },
   '/admins/project-submissions': {
     table: 'project_submission_requests',
     filterValues: { status: (value) => (value === 'pending' ? 'submitted' : value === 'duplicates' ? undefined : value) },
@@ -449,6 +473,12 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     table: 'role_master',
     validateBody: validateProjectRoleWriteBody
   },
+  project_toolkit_items: {
+    columns: PROJECT_TOOLKIT_WRITE_COLUMNS,
+    normalizeBody: normalizeProjectToolkitWriteBody,
+    table: 'project_toolkit_items',
+    validateBody: validateProjectToolkitWriteBody
+  },
   announcements: {
     columns: ANNOUNCEMENT_WRITE_COLUMNS,
     normalizeBody: normalizeAnnouncementWriteBody,
@@ -511,7 +541,11 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
     return getStudentRecordingsList(context, options.query) as Promise<TResponse>;
   }
 
+  if (cleanPath === '/students/me/project-toolkit') return getStudentProjectToolkit(context, options.query) as Promise<TResponse>;
+
   if (cleanPath === '/students/me/resources') return getStudentResourcesList(context, options.query) as Promise<TResponse>;
+
+  if (cleanPath === '/admins/students/college-options') return getAdminStudentCollegeOptions(context) as Promise<TResponse>;
 
   if (cleanPath === '/admins/students') return getAdminStudentsList(context, options.query) as Promise<TResponse>;
 
@@ -639,6 +673,12 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
   const projectRoleUpdate = cleanPath.match(/^\/admins\/project-roles\/([^/]+)$/);
   if (projectRoleUpdate) return updateById(context, 'role_master', decodeURIComponent(projectRoleUpdate[1]), options.body, 'updated') as Promise<TResponse>;
 
+  const projectToolkitStatus = cleanPath.match(/^\/admins\/project-toolkit\/([^/]+)\/status$/);
+  if (projectToolkitStatus) return updateById(context, 'project_toolkit_items', decodeURIComponent(projectToolkitStatus[1]), options.body, 'status_changed') as Promise<TResponse>;
+
+  const projectToolkitUpdate = cleanPath.match(/^\/admins\/project-toolkit\/([^/]+)$/);
+  if (projectToolkitUpdate) return updateById(context, 'project_toolkit_items', decodeURIComponent(projectToolkitUpdate[1]), options.body, 'updated') as Promise<TResponse>;
+
   const projectStatus = cleanPath.match(/^\/admins\/projects\/([^/]+)\/status$/);
   if (projectStatus) return updateById(context, 'projects', decodeURIComponent(projectStatus[1]), options.body, 'status_changed') as Promise<TResponse>;
 
@@ -712,6 +752,7 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/email-templates') return insertRow(context, 'email_templates', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/programs') return insertRow(context, 'programs', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/project-roles') return insertRow(context, 'role_master', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/project-toolkit') return insertRow(context, 'project_toolkit_items', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/projects') return insertRow(context, 'projects', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/certificate-program-settings') return saveCertificateProgramSetting(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/certificates/leadership') return issueLeadershipCertificates(context, options.body) as Promise<TResponse>;
@@ -780,7 +821,14 @@ function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'pos
 
   if (path === '/admins/cohorts' || path.match(/^\/admins\/cohorts\/[^/]+/)) return 'admin.cohorts.manage';
   if (path === '/admins/programs' || path.match(/^\/admins\/programs\/[^/]+/)) return 'admin.programs.manage';
-  if (path === '/admins/projects' || path === '/admins/project-roles' || path.match(/^\/admins\/projects\/[^/]+/) || path.match(/^\/admins\/project-roles\/[^/]+/)) {
+  if (
+    path === '/admins/projects' ||
+    path === '/admins/project-roles' ||
+    path === '/admins/project-toolkit' ||
+    path.match(/^\/admins\/projects\/[^/]+/) ||
+    path.match(/^\/admins\/project-roles\/[^/]+/) ||
+    path.match(/^\/admins\/project-toolkit\/[^/]+/)
+  ) {
     return 'admin.projects.manage';
   }
   if (path.match(/^\/admins\/project-submissions\/[^/]+\/(approve|reject|changes-requested)$/)) return 'admin.submissions.review';
@@ -939,6 +987,50 @@ async function getStudentDashboard(context: Awaited<ReturnType<typeof createCont
   ]);
 
   return { certificates, dashboard, projects, resources, student };
+}
+
+async function getStudentProjectToolkit(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const student = await getStudentProfile(context);
+  const studentId = String((student as Record<string, unknown>).id ?? '');
+  const directProgramValues = [
+    ...asStringArray((student as Record<string, unknown>).trackRoleIds),
+    ...String((student as Record<string, unknown>).programName ?? '').split(',')
+  ];
+  const { data: programRows, error: programError } = studentId
+    ? await context.supabase
+      .from('student_programs')
+      .select('program_key')
+      .eq('student_id', studentId)
+      .limit(500)
+    : { data: [], error: null };
+  if (programError) throw new ApiClientError(`Project toolkit program lookup failed: ${programError.message}`, 503);
+
+  const studentProgramKeys = new Set(
+    uniqueStrings([
+      ...directProgramValues,
+      ...(programRows ?? []).map((row) => String(row.program_key ?? ''))
+    ].map((key) => key.trim().toLowerCase()).filter(Boolean))
+  );
+
+  const { data, error } = await context.supabase
+    .from('project_toolkit_items')
+    .select('*')
+    .eq('status', 'active')
+    .order('sort_order', { ascending: true })
+    .order('title', { ascending: true })
+    .limit(500);
+  if (error) throw new ApiClientError(`Project toolkit could not be loaded: ${error.message}`, 503);
+
+  const items = (data ?? [])
+    .map(enrichRow)
+    .map(camelize)
+    .filter((item) => {
+      if (!isRecord(item)) return false;
+      const itemProgramKeys = asStringArray(item.programKeys).map((key) => key.trim().toLowerCase()).filter(Boolean);
+      return itemProgramKeys.length === 0 || itemProgramKeys.some((key) => studentProgramKeys.has(key));
+    });
+
+  return paginate(items, query);
 }
 
 async function getAdminDashboard(context: Awaited<ReturnType<typeof createContext>>) {
@@ -1320,6 +1412,21 @@ async function getAdminStudentsList(context: Awaited<ReturnType<typeof createCon
 
   const enriched = await enrichAdminStudents(context, data ?? []);
   return createPaginatedResponse(enriched, count ?? 0, page, limit);
+}
+
+async function getAdminStudentCollegeOptions(context: Awaited<ReturnType<typeof createContext>>) {
+  const { data, error } = await context.supabase.from('students').select('college_name').not('college_name', 'is', null).limit(10000);
+  if (error) throw new ApiClientError(error.message, 503);
+
+  const collegeByNormalizedName = new Map<string, string>();
+  (data ?? []).forEach((row) => {
+    const collegeName = String(row.college_name ?? '').trim();
+    if (!collegeName) return;
+    const normalizedName = collegeName.toLowerCase();
+    if (!collegeByNormalizedName.has(normalizedName)) collegeByNormalizedName.set(normalizedName, collegeName);
+  });
+  const items = Array.from(collegeByNormalizedName.values()).sort((a, b) => a.localeCompare(b));
+  return { items };
 }
 
 async function getAnnouncementRecipientCount(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
@@ -3537,6 +3644,28 @@ function normalizeProjectWriteBody(payload: Record<string, unknown>) {
   };
 }
 
+function normalizeProjectToolkitWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  const programKeys = has('program_keys')
+    ? uniqueStrings(asStringArray(payload.program_keys).map((key) => key.trim().toLowerCase()).filter(Boolean))
+    : undefined;
+  const sortOrder = has('sort_order') && payload.sort_order !== '' && payload.sort_order !== null ? Number(payload.sort_order) : payload.sort_order;
+
+  return {
+    ...payload,
+    content: has('content') && typeof payload.content === 'string' ? payload.content.trim() : payload.content,
+    item_type: has('item_type') && typeof payload.item_type === 'string' ? payload.item_type.trim().toLowerCase() : payload.item_type,
+    link_label: has('link_label') ? String(payload.link_label ?? '').trim() || null : payload.link_label,
+    link_url: has('link_url') ? String(payload.link_url ?? '').trim() || null : payload.link_url,
+    program_keys: programKeys,
+    sort_order: sortOrder,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    summary: has('summary') && typeof payload.summary === 'string' ? payload.summary.trim() : payload.summary,
+    title: has('title') && typeof payload.title === 'string' ? payload.title.trim() : payload.title,
+    toolkit_id: has('toolkit_id') && typeof payload.toolkit_id === 'string' ? payload.toolkit_id.trim().toLowerCase().replace(/[\s-]+/g, '_') : payload.toolkit_id
+  };
+}
+
 function normalizeAnnouncementWriteBody(payload: Record<string, unknown>) {
   const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
   const normalizeOptionalText = (key: string) => {
@@ -3712,6 +3841,27 @@ function validateProjectWriteBody(payload: Record<string, unknown>, inserting: b
   if (programKeys !== undefined && !Array.isArray(programKeys)) throw new ApiClientError('Project programs must be a list.', 400);
   if (requiresProgramMapping && (!Array.isArray(programKeys) || programKeys.length === 0 || !programKey)) throw new ApiClientError('Select at least one program.', 400);
   if (deadline && Number.isNaN(new Date(`${deadline}T00:00:00.000Z`).getTime())) throw new ApiClientError('Project deadline is invalid.', 400);
+}
+
+function validateProjectToolkitWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const toolkitId = typeof payload.toolkit_id === 'string' ? payload.toolkit_id.trim() : '';
+  const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+  const itemType = typeof payload.item_type === 'string' ? payload.item_type.trim() : undefined;
+  const status = typeof payload.status === 'string' ? payload.status.trim() : undefined;
+  const linkUrl = typeof payload.link_url === 'string' ? payload.link_url.trim() : '';
+  const programKeys = payload.program_keys;
+  const sortOrder = payload.sort_order;
+
+  if (inserting && !toolkitId) throw new ApiClientError('Toolkit ID is required.', 400);
+  if (inserting && !title) throw new ApiClientError('Toolkit title is required.', 400);
+  if (inserting && !itemType) throw new ApiClientError('Toolkit type is required.', 400);
+  if ('toolkit_id' in payload && (!toolkitId || !/^[a-z0-9_]+$/.test(toolkitId))) throw new ApiClientError('Toolkit ID can use lowercase letters, numbers, and underscores only.', 400);
+  if ('title' in payload && !title) throw new ApiClientError('Toolkit title is required.', 400);
+  if (itemType && !['guidelines', 'sow_link', 'framework', 'custom'].includes(itemType)) throw new ApiClientError('Toolkit type is invalid.', 400);
+  if (status && !['active', 'inactive'].includes(status)) throw new ApiClientError('Toolkit status is invalid.', 400);
+  if (programKeys !== undefined && !Array.isArray(programKeys)) throw new ApiClientError('Toolkit programs must be a list.', 400);
+  if (linkUrl && !isHttpUrl(linkUrl)) throw new ApiClientError('Toolkit link must start with http:// or https://.', 400);
+  if (sortOrder !== undefined && sortOrder !== null && sortOrder !== '' && !Number.isFinite(Number(sortOrder))) throw new ApiClientError('Toolkit sort order is invalid.', 400);
 }
 
 function validateAnnouncementWriteBody(payload: Record<string, unknown>, inserting: boolean) {
@@ -3909,6 +4059,7 @@ async function writeAuditLog(
     table !== 'resources' &&
     table !== 'programs' &&
     table !== 'projects' &&
+    table !== 'project_toolkit_items' &&
     table !== 'role_master' &&
     table !== 'certificates' &&
     table !== 'feature_controls' &&
@@ -3925,15 +4076,17 @@ async function writeAuditLog(
             ? 'program'
             : table === 'projects'
               ? 'project'
-              : table === 'role_master'
-                ? 'project_role'
-                : table === 'certificates'
-                  ? 'certificate'
-                  : table === 'feature_controls'
-                    ? 'feature_control'
-                    : table === 'email_templates'
-                      ? 'email_template'
-                      : 'student';
+              : table === 'project_toolkit_items'
+                ? 'project_toolkit_item'
+                : table === 'role_master'
+                  ? 'project_role'
+                  : table === 'certificates'
+                    ? 'certificate'
+                    : table === 'feature_controls'
+                      ? 'feature_control'
+                      : table === 'email_templates'
+                        ? 'email_template'
+                        : 'student';
 
   const auditRow = {
     action: `admin_${entityType}_${action}`,
@@ -3948,7 +4101,7 @@ async function writeAuditLog(
   const { error } = await context.supabase.from('audit_logs').insert(auditRow);
   if (error) {
     throw new ApiClientError(
-      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : entityType === 'feature_control' ? 'Feature control' : entityType === 'email_template' ? 'Email template' : 'Student'} was saved, but audit logging failed: ${error.message}`,
+      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_toolkit_item' ? 'Project toolkit item' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : entityType === 'feature_control' ? 'Feature control' : entityType === 'email_template' ? 'Email template' : 'Student'} was saved, but audit logging failed: ${error.message}`,
       503
     );
   }
@@ -4003,6 +4156,15 @@ function buildAuditDetails(table: string, row: Record<string, unknown>, payload:
       projectId: row.project_id,
       status: row.status,
       title: row.title
+    };
+  }
+
+  if (table === 'project_toolkit_items') {
+    return {
+      ...base,
+      status: row.status,
+      title: row.title,
+      toolkitId: row.toolkit_id
     };
   }
 

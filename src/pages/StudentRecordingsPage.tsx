@@ -241,7 +241,7 @@ export function StudentRecordingsPage() {
   if (recordingsQuery.isLoading || cohortsQuery.isLoading) {
     return (
       <div className="page-stack">
-        <PageHeader description="Loading recordings visible to your student profile." eyebrow="Student recordings" title="Recordings" />
+        <PageHeader description="Loading watch recordings visible to your student profile." eyebrow="Watch recordings" title="Watch Recordings" />
         <LoadingState />
       </div>
     );
@@ -250,7 +250,7 @@ export function StudentRecordingsPage() {
   if (recordingsQuery.isError) {
     return (
       <div className="page-stack">
-        <PageHeader description="Recordings could not be loaded right now." eyebrow="Student recordings" title="Recordings unavailable" />
+        <PageHeader description="Watch recordings could not be loaded right now." eyebrow="Watch recordings" title="Watch Recordings unavailable" />
         <ErrorState />
       </div>
     );
@@ -260,8 +260,8 @@ export function StudentRecordingsPage() {
     <div className="page-stack student-recordings-page">
       <PageHeader
         description="Watch completed workshop recordings that are visible to your profile while locked recordings stay protected."
-        eyebrow="Student recordings"
-        title="Recordings"
+        eyebrow="Watch recordings"
+        title="Watch Recordings"
       />
 
       <div className="student-recording-summary">

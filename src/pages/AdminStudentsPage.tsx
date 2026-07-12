@@ -15,6 +15,7 @@ import {
   AdminStudentWritePayload,
   AdminStudentsBulkPayload,
   useAdminStudentAuthStatuses,
+  useAdminStudentCollegeOptions,
   useAdminStudentAttemptLimit,
   useAdminStudentAccessPreview,
   useAdminStudents,
@@ -1673,6 +1674,7 @@ export function AdminStudentsPage() {
   const canExportStudents = Boolean(adminRole) && hasAdminPermission(adminRole, 'admin.students.export', adminPermissions);
   const canInviteStudents = Boolean(adminRole) && hasAdminPermission(adminRole, 'admin.students.invite', adminPermissions);
   const studentsQuery = useAdminStudents({ page, programKey, search, status, cohortName, limit, sort, direction });
+  const studentCollegeOptionsQuery = useAdminStudentCollegeOptions();
   const exportStudents = useExportAdminStudents();
   const saveStudent = useSaveAdminStudent();
   const updateStudent = useUpdateAdminStudent();
@@ -1714,7 +1716,8 @@ export function AdminStudentsPage() {
   }, [cohortsPageOneQuery.data, cohortsPageTwoQuery.data, cohortsPageThreeQuery.data]);
   const programRecords = useMemo(() => programsQuery.data?.items ?? [], [programsQuery.data?.items]);
   const roleRecords = useMemo(() => rolesQuery.data?.items ?? [], [rolesQuery.data?.items]);
-  const collegeOptions = useMemo(() => uniqueSorted(data?.items.map((student) => student.collegeName) ?? []), [data?.items]);
+  const pageCollegeOptions = useMemo(() => uniqueSorted(data?.items.map((student) => student.collegeName) ?? []), [data?.items]);
+  const collegeOptions = studentCollegeOptionsQuery.data?.items.length ? studentCollegeOptionsQuery.data.items : pageCollegeOptions;
   const selectedStudents = useMemo(() => pageStudents.filter((student) => selectedStudentIds.includes(student.id)), [pageStudents, selectedStudentIds]);
   const selectedCount = selectedStudentIds.length;
   const searchParamsKey = searchParams.toString();

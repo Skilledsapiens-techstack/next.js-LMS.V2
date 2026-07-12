@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { sanitizeProjectHtml } from '../components/ProjectRichText';
+import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
 import {
   AdminProject,
@@ -21,6 +22,16 @@ import {
   useUpdateAdminProjectRoleStatus,
   useUpdateAdminProjectStatus
 } from '../features/admin/useAdminProjects';
+import {
+  AdminProjectToolkitItem,
+  AdminProjectToolkitStatus,
+  AdminProjectToolkitType,
+  AdminProjectToolkitWritePayload,
+  useAdminProjectToolkit,
+  useCreateAdminProjectToolkitItem,
+  useUpdateAdminProjectToolkitItem,
+  useUpdateAdminProjectToolkitItemStatus
+} from '../features/admin/useAdminProjectToolkit';
 import { AdminProgram, useAdminPrograms } from '../features/admin/useAdminPrograms';
 
 type RoleFormState = {
@@ -59,6 +70,19 @@ type ProjectImportantLink = {
   url: string;
 };
 
+type ToolkitFormState = {
+  content: string;
+  itemType: AdminProjectToolkitType;
+  linkLabel: string;
+  linkUrl: string;
+  programKeys: string[];
+  sortOrder: string;
+  status: AdminProjectToolkitStatus;
+  summary: string;
+  title: string;
+  toolkitId: string;
+};
+
 type ProjectFilters = {
   programKey: string;
   roleId: string;
@@ -85,6 +109,21 @@ function formFromRole(role?: AdminProjectRole): RoleFormState {
     programKey: role?.programKey ?? '',
     roleId: normalizeKey(role?.roleId ?? ''),
     status: role?.status ?? 'active'
+  };
+}
+
+function formFromToolkitItem(item?: AdminProjectToolkitItem): ToolkitFormState {
+  return {
+    content: richTextFromValue(item?.content ?? ''),
+    itemType: item?.itemType ?? 'custom',
+    linkLabel: item?.linkLabel ?? '',
+    linkUrl: item?.linkUrl ?? '',
+    programKeys: item?.programKeys ?? [],
+    sortOrder: String(item?.sortOrder ?? 100),
+    status: item?.status ?? 'active',
+    summary: item?.summary ?? '',
+    title: item?.title ?? '',
+    toolkitId: normalizeKey(item?.toolkitId ?? '')
   };
 }
 
@@ -751,6 +790,285 @@ function ProjectEditor({
   );
 }
 
+function ToolkitEditor({
+  activePrograms,
+  item,
+  onSaved
+}: {
+  activePrograms: AdminProgram[];
+  item?: AdminProjectToolkitItem;
+  onSaved: (message: string) => void;
+}) {
+  const [form, setForm] = useState<ToolkitFormState>(() => formFromToolkitItem(item));
+  const [error, setError] = useState('');
+  const createItem = useCreateAdminProjectToolkitItem();
+  const updateItem = useUpdateAdminProjectToolkitItem();
+  const isSaving = createItem.isPending || updateItem.isPending;
+  const isEditing = Boolean(item?.id);
+
+  useEffect(() => {
+    setForm(formFromToolkitItem(item));
+    setError('');
+  }, [item]);
+
+  function updateField<KField extends keyof ToolkitFormState>(field: KField, value: ToolkitFormState[KField]) {
+    setForm((current) => ({
+      ...current,
+      [field]: field === 'toolkitId' ? normalizeKey(String(value)) : value
+    }));
+  }
+
+  function toggleProgram(programKey: string) {
+    setForm((current) => {
+      const next = new Set(current.programKeys);
+      next.has(programKey) ? next.delete(programKey) : next.add(programKey);
+      return { ...current, programKeys: Array.from(next) };
+    });
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError('');
+
+    const payload: AdminProjectToolkitWritePayload = {
+      content: sanitizeProjectHtml(form.content),
+      itemType: form.itemType,
+      linkLabel: form.linkLabel.trim() || null,
+      linkUrl: form.linkUrl.trim() || null,
+      programKeys: form.programKeys,
+      sortOrder: Number(form.sortOrder || 100),
+      status: form.status,
+      summary: form.summary.trim(),
+      title: form.title.trim(),
+      toolkitId: form.toolkitId
+    };
+
+    if (!payload.title) {
+      setError('Toolkit title is required.');
+      return;
+    }
+    if (!isEditing && !payload.toolkitId) {
+      setError('Toolkit ID is required.');
+      return;
+    }
+    if (payload.linkUrl && !/^https?:\/\//i.test(payload.linkUrl)) {
+      setError('Toolkit links must start with http:// or https://.');
+      return;
+    }
+
+    try {
+      if (isEditing && item?.id) {
+        const updatePayload: Partial<AdminProjectToolkitWritePayload> = {
+          content: payload.content,
+          itemType: payload.itemType,
+          linkLabel: payload.linkLabel,
+          linkUrl: payload.linkUrl,
+          programKeys: payload.programKeys,
+          sortOrder: payload.sortOrder,
+          status: payload.status,
+          summary: payload.summary,
+          title: payload.title
+        };
+        await updateItem.mutateAsync({ body: updatePayload, itemId: item.id });
+        onSaved('Project toolkit item updated successfully.');
+      } else {
+        await createItem.mutateAsync(payload);
+        onSaved('Project toolkit item created successfully.');
+        setForm(formFromToolkitItem());
+      }
+    } catch (submitError) {
+      setError(readableError(submitError, 'Project toolkit item could not be saved.'));
+    }
+  }
+
+  return (
+    <form className={isSaving ? 'admin-project-form admin-project-form--saving admin-project-toolkit-form' : 'admin-project-form admin-project-toolkit-form'} onSubmit={handleSubmit} aria-busy={isSaving}>
+      <label>
+        <span>Toolkit ID *</span>
+        <input readOnly={isEditing} value={form.toolkitId} onChange={(event) => updateField('toolkitId', event.target.value)} placeholder="live_project_guidelines" />
+      </label>
+      <label>
+        <span>Type</span>
+        <select value={form.itemType} onChange={(event) => updateField('itemType', event.target.value as AdminProjectToolkitType)}>
+          <option value="guidelines">Guidelines</option>
+          <option value="sow_link">SOW Link</option>
+          <option value="framework">Framework</option>
+          <option value="custom">Custom</option>
+        </select>
+      </label>
+      <label>
+        <span>Status</span>
+        <select value={form.status} onChange={(event) => updateField('status', event.target.value as AdminProjectToolkitStatus)}>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </label>
+      <label>
+        <span>Sort order</span>
+        <input min="1" value={form.sortOrder} onChange={(event) => updateField('sortOrder', event.target.value)} type="number" />
+      </label>
+      <label className="admin-project-form__wide">
+        <span>Title *</span>
+        <input value={form.title} onChange={(event) => updateField('title', event.target.value)} placeholder="Live Project Guidelines" />
+      </label>
+      <label className="admin-project-form__wide">
+        <span>Short summary</span>
+        <textarea value={form.summary} onChange={(event) => updateField('summary', event.target.value)} placeholder="One short line shown below the title." rows={2} />
+      </label>
+      <fieldset className="admin-project-program-picker admin-project-form__wide">
+        <legend>Program mapping</legend>
+        <div className="admin-project-program-picker__actions">
+          <button className="segmented-button" onClick={() => updateField('programKeys', activePrograms.map((program) => program.programKey))} type="button">
+            Select All Programs
+          </button>
+          <button className="segmented-button" onClick={() => updateField('programKeys', [])} type="button">
+            Make Global
+          </button>
+        </div>
+        <div className="admin-project-program-list admin-project-program-list--compact">
+          {activePrograms.map((program) => (
+            <label key={program.id}>
+              <input checked={form.programKeys.includes(program.programKey)} onChange={() => toggleProgram(program.programKey)} type="checkbox" />
+              <span>{program.name}</span>
+              <strong>{program.shortName ?? program.programKey}</strong>
+            </label>
+          ))}
+        </div>
+        <p className="admin-project-empty-note">No selected program means visible to all eligible students.</p>
+      </fieldset>
+      <ProjectRichTextEditor
+        label="Toolkit content"
+        onChange={(value) => updateField('content', value)}
+        placeholder="Add formatted guidance, bullets, links, or framework details."
+        value={form.content}
+      />
+      <div className="admin-project-link-row admin-project-form__wide">
+        <label>
+          <span>Link label</span>
+          <input value={form.linkLabel} onChange={(event) => updateField('linkLabel', event.target.value)} placeholder="Open SOW document" />
+        </label>
+        <label>
+          <span>Link URL</span>
+          <input value={form.linkUrl} onChange={(event) => updateField('linkUrl', event.target.value)} placeholder="https://..." />
+        </label>
+      </div>
+      {error ? <p className="admin-project-form-note admin-project-form-note--error">{error}</p> : null}
+      <div className="admin-project-form__actions">
+        <button className="segmented-button" disabled={isSaving} onClick={() => setForm(formFromToolkitItem(item))} type="button">
+          Reset
+        </button>
+        <button className="segmented-button segmented-button--gold" disabled={isSaving} type="submit">
+          {isSaving ? 'Saving...' : isEditing ? 'Update Toolkit' : 'Save Toolkit'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function ToolkitCard({
+  isSelected,
+  item,
+  onEdit,
+  onStatusChange,
+  programs,
+  statusDisabled
+}: {
+  isSelected: boolean;
+  item: AdminProjectToolkitItem;
+  onEdit: (item: AdminProjectToolkitItem) => void;
+  onStatusChange: (item: AdminProjectToolkitItem) => void;
+  programs: AdminProgram[];
+  statusDisabled: boolean;
+}) {
+  const mappedPrograms = selectedPrograms(programs, item.programKeys);
+  const statusAction = item.status === 'active' ? 'Deactivate' : 'Reactivate';
+  const itemClass = ['admin-project-list-card', 'admin-project-list-card--toolkit', isSelected ? 'admin-project-list-card--selected' : ''].filter(Boolean).join(' ');
+
+  return (
+    <article className={itemClass}>
+      <div className="admin-project-list-card__content">
+        <h3>{item.title}</h3>
+        <p>{[item.toolkitId, item.itemType.replace(/_/g, ' '), item.summary].filter(Boolean).join(' · ')}</p>
+        <div className="chip-row">
+          {(mappedPrograms.length > 0 ? mappedPrograms.map((program) => program.shortName ?? program.name) : ['Global']).slice(0, 5).map((program) => (
+            <StatusBadge key={program}>{program}</StatusBadge>
+          ))}
+          {mappedPrograms.length > 5 ? <StatusBadge>{`+${mappedPrograms.length - 5} more`}</StatusBadge> : null}
+          <StatusBadge tone={item.status === 'active' ? 'safe' : 'warning'}>{item.status}</StatusBadge>
+        </div>
+      </div>
+      <div className="admin-project-list-card__actions">
+        <button className="segmented-button" onClick={() => onEdit(item)} type="button">
+          Edit
+        </button>
+        <button className={item.status === 'active' ? 'segmented-button segmented-button--danger' : 'segmented-button'} disabled={statusDisabled} onClick={() => onStatusChange(item)} type="button">
+          {statusDisabled ? 'Updating...' : statusAction}
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function ProjectToolkitManager({ activePrograms, onNotice, programs }: { activePrograms: AdminProgram[]; onNotice: (message: string) => void; programs: AdminProgram[] }) {
+  const [selectedItem, setSelectedItem] = useState<AdminProjectToolkitItem | undefined>();
+  const toolkitQuery = useAdminProjectToolkit({ limit: 100, status: 'all' });
+  const updateStatus = useUpdateAdminProjectToolkitItemStatus();
+  const items = toolkitQuery.data?.items ?? [];
+
+  async function changeStatus(item: AdminProjectToolkitItem) {
+    const nextStatus: AdminProjectToolkitStatus = item.status === 'active' ? 'inactive' : 'active';
+    if (!window.confirm(`${nextStatus === 'inactive' ? 'Deactivate' : 'Reactivate'} this toolkit item?`)) return;
+    try {
+      await updateStatus.mutateAsync({ itemId: item.id, status: nextStatus });
+      onNotice(`Project toolkit item ${nextStatus === 'active' ? 'reactivated' : 'deactivated'} successfully.`);
+    } catch (error) {
+      onNotice(readableError(error, 'Project toolkit status could not be updated.'));
+    }
+  }
+
+  return (
+    <section className="admin-project-section admin-project-toolkit-section">
+      <header className="admin-project-section__header">
+        <div>
+          <span>Student Toolkit</span>
+          <h2>Project Hub Global Sections</h2>
+        </div>
+        <button className="segmented-button segmented-button--gold" onClick={() => setSelectedItem(undefined)} type="button">
+          <Plus size={15} />
+          New Toolkit Item
+        </button>
+      </header>
+      <div className="admin-project-two-column admin-project-toolkit-grid">
+        <div className="admin-project-scroll-list" aria-label="Project toolkit list">
+          {toolkitQuery.isLoading ? (
+            <LoadingState />
+          ) : toolkitQuery.isError ? (
+            <StateBlock title="Toolkit unavailable">Project toolkit settings could not be loaded. Existing Projects functionality is unaffected.</StateBlock>
+          ) : items.length > 0 ? (
+            items.map((item) => (
+              <ToolkitCard
+                isSelected={selectedItem?.id === item.id}
+                item={item}
+                key={item.id}
+                onEdit={setSelectedItem}
+                onStatusChange={changeStatus}
+                programs={programs}
+                statusDisabled={updateStatus.isPending}
+              />
+            ))
+          ) : (
+            <EmptyState />
+          )}
+        </div>
+        <div className="admin-project-editor-panel">
+          <h3>{selectedItem ? 'Edit Toolkit Item' : 'Add Toolkit Item'}</h3>
+          <ToolkitEditor activePrograms={activePrograms} item={selectedItem} onSaved={onNotice} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function RoleCard({
   disabled,
   onEdit,
@@ -977,6 +1295,8 @@ export function AdminProjectsPage() {
           </div>
         </div>
       </section>
+
+      <ProjectToolkitManager activePrograms={activePrograms} onNotice={setNotice} programs={programs} />
 
       <section className="admin-project-workspace-grid">
         <div className="admin-project-section">

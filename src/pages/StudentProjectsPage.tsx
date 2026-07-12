@@ -1,4 +1,4 @@
-import { AlertTriangle, BookOpen, CalendarDays, ExternalLink, FolderKanban, Layers3, Link as LinkIcon, Send, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BookOpen, CalendarDays, ExternalLink, FolderKanban, Layers3, Link as LinkIcon, Send, X } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { ProjectRichText, sanitizeProjectHtml } from '../components/ProjectRichText';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
@@ -12,6 +12,7 @@ import {
   useStudentProjectSubmissions,
   useSubmitStudentProjectSubmission
 } from '../features/student/useStudentProjectSubmissions';
+import { StudentProjectToolkitItem, useStudentProjectToolkit } from '../features/student/useStudentProjectToolkit';
 
 type ProjectRoleOption = {
   label: string;
@@ -361,6 +362,111 @@ function ProjectSubmissionModal({
   );
 }
 
+function ProjectToolkitSection({ items }: { items: StudentProjectToolkitItem[] }) {
+  const [selectedItem, setSelectedItem] = useState<StudentProjectToolkitItem | null>(null);
+
+  useEffect(() => {
+    if (selectedItem && !items.some((item) => item.id === selectedItem.id)) {
+      setSelectedItem(null);
+    }
+  }, [items, selectedItem]);
+
+  useEffect(() => {
+    if (!selectedItem) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setSelectedItem(null);
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedItem]);
+
+  if (items.length === 0) return null;
+
+  return (
+    <>
+      <section className="live-project-toolkit" aria-label="Live project toolkit">
+        <header className="live-project-toolkit__header">
+          <div>
+            <span className="eyebrow">Project toolkit</span>
+            <h2>Start Here</h2>
+          </div>
+          <p>Guidelines, SOW references, and project-start framework shared by the program team.</p>
+        </header>
+        <div className="live-project-toolkit__grid">
+          {items.map((item) => (
+            <article className="live-project-toolkit-card" key={item.id}>
+              <button aria-haspopup="dialog" className="live-project-toolkit-card__button" onClick={() => setSelectedItem(item)} type="button">
+                <span>
+                  <strong>{item.title}</strong>
+                  {item.summary ? <small>{item.summary}</small> : null}
+                  <span className="live-project-toolkit-card__cta">
+                    <span>Open</span>
+                    <ArrowRight size={14} />
+                  </span>
+                </span>
+                <BookOpen size={18} />
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {selectedItem ? <ProjectToolkitReader item={selectedItem} onClose={() => setSelectedItem(null)} /> : null}
+    </>
+  );
+}
+
+function ProjectToolkitReader({ item, onClose }: { item: StudentProjectToolkitItem; onClose: () => void }) {
+  const hasLink = Boolean(item.linkUrl);
+
+  return (
+    <section aria-labelledby="project-toolkit-reader-title" aria-modal="true" className="live-project-toolkit-reader" role="dialog">
+      <div className="live-project-toolkit-reader__shell">
+        <header className="live-project-toolkit-reader__header">
+          <div>
+            <span className="eyebrow">Project toolkit</span>
+            <h2 id="project-toolkit-reader-title">{item.title}</h2>
+            {item.summary ? <p>{item.summary}</p> : null}
+          </div>
+          <button aria-label="Close project toolkit reader" className="student-modal__close live-project-toolkit-reader__close" onClick={onClose} type="button">
+            <X size={22} />
+          </button>
+        </header>
+
+        <div className="live-project-toolkit-reader__body">
+          <article className="live-project-toolkit-reader__page">
+            {item.content ? (
+              <ProjectRichText className="project-rich-text live-project-reading-copy live-project-toolkit-reader__copy" html={item.content} />
+            ) : (
+              <p className="live-project-empty">Content will appear here once the admin team updates this toolkit section.</p>
+            )}
+
+            {hasLink ? (
+              <a className="live-project-toolkit-link live-project-toolkit-reader__link" href={item.linkUrl} rel="noreferrer" target="_blank">
+                <LinkIcon size={16} />
+                <span>{item.linkLabel ?? 'Open link'}</span>
+                <ExternalLink size={15} />
+              </a>
+            ) : item.itemType === 'sow_link' ? (
+              <span className="live-project-toolkit-link live-project-toolkit-link--disabled live-project-toolkit-reader__link">SOW link coming soon</span>
+            ) : null}
+          </article>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function LiveProjectDetail({ allSubmissions, cohorts, project }: { allSubmissions: StudentProjectSubmission[]; cohorts: StudentCohort[]; project: StudentProject }) {
   const submissionsQuery = useStudentProjectSubmissions({ limit: 5, page: 1, projectId: projectStableId(project), status: 'all' });
   const submissions = submissionsQuery.data?.items ?? [];
@@ -495,9 +601,11 @@ export function StudentProjectsPage() {
   const projectsQuery = useStudentProjects({ limit: 100, page: 1 });
   const cohortsQuery = useStudentCohorts({ limit: 100, page: 1, status: 'active' });
   const allSubmissionsQuery = useStudentProjectSubmissions({ limit: 500, page: 1, status: 'all' });
+  const toolkitQuery = useStudentProjectToolkit();
   const projects = useMemo(() => projectsQuery.data?.items ?? [], [projectsQuery.data?.items]);
   const cohorts = useMemo(() => cohortsQuery.data?.items ?? [], [cohortsQuery.data?.items]);
   const allSubmissions = useMemo(() => allSubmissionsQuery.data?.items ?? [], [allSubmissionsQuery.data?.items]);
+  const toolkitItems = useMemo(() => toolkitQuery.data?.items ?? [], [toolkitQuery.data?.items]);
   const roleOptions = useMemo(() => buildRoleOptions(projects), [projects]);
   const [selectedRole, setSelectedRole] = useState('all');
   const [selectedProjectId, setSelectedProjectId] = useState('');
@@ -574,6 +682,8 @@ export function StudentProjectsPage() {
               <strong>{nextDeadlineProject ? formatDate(nextDeadlineProject.deadline) : 'Not set'}</strong>
             </article>
           </section>
+
+          {!toolkitQuery.isError && toolkitItems.length > 0 ? <ProjectToolkitSection items={toolkitItems} /> : null}
 
           <section className="live-project-picker" aria-label="Live project selector">
             <label>

@@ -345,6 +345,61 @@
   box-shadow: inset 3px 0 0 var(--yellow);
 }
 
+.admin-email-recipient-filters {
+  background: #ffffff;
+  border: 1px solid var(--email-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.admin-email-recipient-filters__header {
+  align-items: center;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.admin-email-recipient-filters__header h3 {
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 3px 0 0;
+}
+
+.admin-email-recipient-filters__header .segmented-button {
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.admin-email-filter-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.admin-email-filter-grid label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.admin-email-filter-grid label > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admin-email-filter-grid input,
+.admin-email-filter-grid select {
+  min-width: 0;
+}
+
 .admin-email-variables {
   border: 1px solid var(--email-border);
   border-radius: 8px;
@@ -794,6 +849,7 @@
   }
 
 	  .admin-email-card__header--row,
+	  .admin-email-recipient-filters__header,
 	  .admin-email-template-toolbar,
 	  .admin-email-template-actions {
 	    align-items: stretch;
@@ -805,6 +861,10 @@
 	  }
 
   .admin-email-form {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-email-filter-grid {
     grid-template-columns: 1fr;
   }
 
@@ -5323,6 +5383,251 @@ h1 {
   padding: 14px 16px;
 }
 
+.student-project-hub-page .live-project-toolkit {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  padding: 14px 16px;
+}
+
+.student-project-hub-page .live-project-toolkit__header {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  min-width: 0;
+}
+
+.student-project-hub-page .live-project-toolkit__header h2 {
+  color: var(--color-brand);
+  font-size: 22px;
+  line-height: 1.15;
+  margin: 2px 0 0;
+}
+
+.student-project-hub-page .live-project-toolkit__header p {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.35;
+  margin: 0 0 2px;
+  max-width: 720px;
+}
+
+.student-project-hub-page .live-project-toolkit__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.student-project-hub-page .live-project-toolkit-card {
+  overflow: hidden;
+  min-width: 0;
+  border: 1px solid #d6deeb;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 0 rgb(17 17 17 / 3%);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
+}
+
+.student-project-hub-page .live-project-toolkit-card:hover {
+  border-color: var(--color-gold);
+  box-shadow: 0 10px 22px rgb(17 17 17 / 8%);
+  transform: translateY(-1px);
+}
+
+.student-project-hub-page .live-project-toolkit-card:active {
+  box-shadow: 0 4px 12px rgb(17 17 17 / 7%);
+  transform: translateY(0);
+}
+
+.student-project-hub-page .live-project-toolkit-card__button {
+  align-items: start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  background: linear-gradient(180deg, #ffffff 0%, #fffdf4 100%);
+  color: var(--color-brand);
+  cursor: pointer;
+  font: inherit;
+  min-height: 104px;
+  padding: 12px 14px;
+  text-align: left;
+  transition: background 0.16s ease;
+}
+
+.student-project-hub-page .live-project-toolkit-card__button:hover {
+  background: linear-gradient(180deg, #fff8db 0%, #ffffff 100%);
+}
+
+.student-project-hub-page .live-project-toolkit-card__button strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.22;
+  overflow-wrap: anywhere;
+}
+
+.student-project-hub-page .live-project-toolkit-card__button small {
+  display: block;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.35;
+  margin-top: 4px;
+}
+
+.student-project-hub-page .live-project-toolkit-card__button > svg {
+  color: var(--color-text-muted);
+  margin-top: 1px;
+}
+
+.student-project-hub-page .live-project-toolkit-card__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+  min-height: 28px;
+  border-radius: 999px;
+  background: var(--color-gold);
+  color: var(--color-brand);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1;
+  padding: 7px 10px;
+  text-transform: uppercase;
+  transition: gap 0.16s ease, background 0.16s ease;
+}
+
+.student-project-hub-page .live-project-toolkit-card:hover .live-project-toolkit-card__cta {
+  gap: 8px;
+  background: #ffd84f;
+}
+
+.student-project-hub-page .live-project-toolkit-card__body {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--color-border);
+  padding: 0 14px 14px;
+}
+
+.student-project-hub-page .live-project-toolkit-reader {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  background: rgb(11 18 32 / 78%);
+  backdrop-filter: blur(4px);
+}
+
+.student-project-hub-page .live-project-toolkit-reader__shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100vh;
+  min-width: 0;
+  min-height: 0;
+  background: #eef4fb;
+}
+
+.student-project-hub-page .live-project-toolkit-reader__header {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid var(--color-border);
+  background: #ffffff;
+  padding: 20px clamp(18px, 4vw, 56px);
+  box-shadow: 0 1px 0 rgb(17 17 17 / 4%);
+}
+
+.student-project-hub-page .live-project-toolkit-reader__header h2 {
+  color: var(--color-brand);
+  font-size: clamp(24px, 3.4vw, 40px);
+  line-height: 1.12;
+  margin: 4px 0 0;
+}
+
+.student-project-hub-page .live-project-toolkit-reader__header p {
+  max-width: 780px;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  margin: 8px 0 0;
+}
+
+.student-project-hub-page .live-project-toolkit-reader__close {
+  flex: 0 0 auto;
+}
+
+.student-project-hub-page .live-project-toolkit-reader__body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: clamp(18px, 4vw, 42px);
+}
+
+.student-project-hub-page .live-project-toolkit-reader__page {
+  display: grid;
+  gap: 22px;
+  width: min(100%, 980px);
+  min-height: calc(100vh - 190px);
+  margin: 0 auto;
+  border: 1px solid var(--color-border);
+  border-top: 5px solid var(--color-accent);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgb(17 17 17 / 13%);
+  padding: clamp(22px, 4vw, 56px);
+}
+
+.student-project-hub-page .live-project-toolkit-reader__copy {
+  max-width: 78ch;
+}
+
+.student-project-hub-page .live-project-toolkit-reader__link {
+  justify-self: start;
+  margin-top: 4px;
+}
+
+.student-project-hub-page .live-project-toolkit-link {
+  align-items: center;
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, auto) auto;
+  gap: 8px;
+  justify-self: start;
+  min-height: 38px;
+  border: 1px solid var(--color-accent);
+  border-radius: 8px;
+  background: #fff7f6;
+  color: var(--color-accent-strong);
+  font-size: 13px;
+  font-weight: 850;
+  padding: 8px 10px;
+  text-decoration: none;
+  transition: background 0.16s ease, transform 0.12s ease;
+}
+
+.student-project-hub-page .live-project-toolkit-link:hover {
+  background: #ffece9;
+  transform: translateY(-1px);
+}
+
+.student-project-hub-page .live-project-toolkit-link:active {
+  transform: translateY(0);
+}
+
+.student-project-hub-page .live-project-toolkit-link--disabled {
+  border-color: var(--color-border);
+  background: #f3f6fb;
+  color: var(--color-text-muted);
+}
+
 @media (max-width: 900px) {
   .student-project-hub-page .live-project-hero h2 {
     font-size: clamp(22px, 5vw, 28px);
@@ -9434,8 +9739,38 @@ h1 {
   font-weight: 800;
 }
 
+.admin-project-toolkit-section {
+  background: #fbfdff;
+}
+
+.admin-project-toolkit-grid {
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.25fr);
+}
+
+.admin-project-list-card--toolkit h3,
+.admin-project-list-card--toolkit p {
+  white-space: normal;
+}
+
+.admin-project-toolkit-form {
+  align-items: start;
+}
+
+.admin-project-toolkit-form .admin-project-rte,
+.admin-project-toolkit-form .admin-project-link-row {
+  grid-column: 1 / -1;
+}
+
+.admin-project-program-list--compact {
+  max-height: 168px;
+}
+
 @media (max-width: 1280px) {
   .admin-project-workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-project-toolkit-grid {
     grid-template-columns: 1fr;
   }
 
@@ -14642,6 +14977,10 @@ h1 {
     grid-template-columns: 1fr;
   }
 
+  .student-project-hub-page .live-project-toolkit__grid {
+    grid-template-columns: 1fr;
+  }
+
   .admin-live-grid,
   .admin-pipeline-grid,
   .admin-learning-grid,
@@ -14966,6 +15305,48 @@ h1 {
   .student-schedule-summary,
   .student-schedule-row {
     grid-template-columns: 1fr;
+  }
+
+  .student-project-hub-page .live-project-toolkit__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .student-project-hub-page .live-project-toolkit__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .student-project-hub-page .live-project-toolkit-reader__header {
+    align-items: stretch;
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .student-project-hub-page .live-project-toolkit-reader__header h2 {
+    font-size: 24px;
+  }
+
+  .student-project-hub-page .live-project-toolkit-reader__close {
+    position: absolute;
+    right: 14px;
+    top: 14px;
+  }
+
+  .student-project-hub-page .live-project-toolkit-reader__header > div {
+    padding-right: 54px;
+  }
+
+  .student-project-hub-page .live-project-toolkit-reader__body {
+    padding: 12px;
+  }
+
+  .student-project-hub-page .live-project-toolkit-reader__page {
+    min-height: calc(100vh - 150px);
+    padding: 20px;
+  }
+
+  .student-project-hub-page .live-project-toolkit-reader__link {
+    width: 100%;
   }
 
   .student-schedule-hero .student-action,
