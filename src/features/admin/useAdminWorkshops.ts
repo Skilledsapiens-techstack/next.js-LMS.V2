@@ -51,6 +51,9 @@ export type AdminWorkshopWritePayload = {
 };
 
 export type AdminWorkshopRecordingPayload = {
+  cohortNames?: string[];
+  programKey?: string | null;
+  title?: string;
   zoomRecordingPassword?: string | null;
   youtubeVideoUrl?: string | null;
   zoomRecordingUrl?: string | null;
@@ -151,6 +154,23 @@ export function useCreateAdminManualRecordingCandidate() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-workshops'] });
       void queryClient.invalidateQueries({ queryKey: ['admin-recording-candidates'] });
+    }
+  });
+}
+
+export function useEditAdminPublishedRecording() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ body, workshopId }: { body: AdminWorkshopRecordingPayload; workshopId: string }) =>
+      apiInvokeFunction<ZoomMeetingFunctionResponse, { action: string; body: AdminWorkshopRecordingPayload; workshopId: string }>('zoom-meetings', {
+        accessToken: accessToken ?? undefined,
+        body: { action: 'edit-published-recording', body, workshopId }
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-workshops'] });
+      void queryClient.invalidateQueries({ queryKey: ['student-recordings'] });
     }
   });
 }

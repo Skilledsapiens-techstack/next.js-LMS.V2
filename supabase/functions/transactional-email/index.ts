@@ -35,6 +35,18 @@ type EmailRecipient = {
   vars: JsonRecord;
 };
 
+type RecipientFilters = {
+  authInviteStatus: string;
+  cohortName: string;
+  collegeName: string;
+  educationYear: string;
+  liveProjectRoleId: string;
+  onboardingDateFrom: string;
+  onboardingDateTo: string;
+  paidAccessStatus: string;
+  programKey: string;
+};
+
 function json(status: number, body: JsonRecord) {
   return new Response(JSON.stringify(body), { status, headers: corsHeaders });
 }
@@ -307,7 +319,7 @@ async function studentsByEmails(emails: string[]) {
   if (emails.length === 0) return new Map<string, JsonRecord>();
   const { data, error } = await admin
     .from('students')
-    .select('id,student_id,email,full_name,active,cohort_name,program_name,track_role_ids')
+    .select('id,student_id,email,full_name,active,auth_user_id,cohort_name,college_name,duration,live_project_role_ids,onboarding_mail_status,program_name,project_start_date,track_role_ids,you_are_from')
     .in('email', emails)
     .limit(Math.min(emails.length, 1000));
   if (error) throw new Error(error.message);
@@ -328,12 +340,22 @@ async function studentsForCohorts(cohortNames: string[]) {
 
   const { data: students, error: studentError } = await admin
     .from('students')
-    .select('id,student_id,email,full_name,active,cohort_name,program_name,track_role_ids')
+    .select('id,student_id,email,full_name,active,auth_user_id,cohort_name,college_name,duration,live_project_role_ids,onboarding_mail_status,program_name,project_start_date,track_role_ids,you_are_from')
     .eq('active', true)
     .in('id', studentIds)
     .limit(1000);
   if (studentError) throw new Error(studentError.message);
   return enrichStudentsWithCohortDetails((students || []).map(asRecord));
+}
+
+async function activeLmsStudents() {
+  const { data, error } = await admin
+    .from('students')
+    .select('id,student_id,email,full_name,active,auth_user_id,cohort_name,college_name,duration,live_project_role_ids,onboarding_mail_status,program_name,project_start_date,track_role_ids,you_are_from')
+    .eq('active', true)
+    .limit(10000);
+  if (error) throw new Error(error.message);
+  return enrichStudentsWithCohortDetails((data || []).map(asRecord));
 }
 
 async function cohortsByNames(cohortNames: string[]) {
@@ -373,24 +395,50 @@ async function enrichStudentsWithCohortDetails(students: JsonRecord[]) {
     .limit(20000);
   if (linkError) throw new Error(linkError.message);
 
+  const { data: programLinks, error: programLinkError } = await admin
+    .from('student_programs')
+    .select('student_id,program_key')
+    .in('student_id', studentIds)
+    .limit(20000);
+  if (programLinkError) throw new Error(programLinkError.message);
+
   const cohortNames = Array.from(new Set((links || []).map((row) => text(row.cohort_name)).filter(Boolean)));
   const cohorts = await cohortsByNames(cohortNames);
   const cohortByName = new Map(cohorts.map((cohort) => [text(cohort.name), cohort]));
-  const programNameByKey = await programsByKeys(cohorts.map((cohort) => text(cohort.program_key)).filter(Boolean));
+  const programNameByKey = await programsByKeys([
+    ...cohorts.map((cohort) => text(cohort.program_key)).filter(Boolean),
+    ...(programLinks || []).map((link) => text(link.program_key)).filter(Boolean),
+  ]);
   const linksByStudent = new Map<string, JsonRecord[]>();
   (links || []).forEach((link) => {
     const studentId = text(link.student_id);
     if (!studentId) return;
     linksByStudent.set(studentId, [...(linksByStudent.get(studentId) || []), asRecord(link)]);
   });
+  const programsByStudent = new Map<string, JsonRecord[]>();
+  (programLinks || []).forEach((link) => {
+    const studentId = text(link.student_id);
+    if (!studentId) return;
+    programsByStudent.set(studentId, [...(programsByStudent.get(studentId) || []), asRecord(link)]);
+  });
 
   return students.map((student) => {
     const studentLinks = linksByStudent.get(text(student.id)) || [];
+    const studentProgramLinks = programsByStudent.get(text(student.id)) || [];
     const cohortNamesForStudent = Array.from(new Set([
       ...studentLinks.map((link) => text(link.cohort_name)).filter(Boolean),
       text(student.cohort_name),
     ].filter(Boolean)));
+    const programKeys = uniqueText([
+      ...studentProgramLinks.map((link) => text(link.program_key).toLowerCase()).filter(Boolean),
+      ...cohortNamesForStudent.map((name) => text(cohortByName.get(name)?.program_key).toLowerCase()).filter(Boolean),
+      ...splitTextList(student.program_name).map((value) => value.toLowerCase()).filter(Boolean),
+    ]);
     const programNames = cleanProgramNames([
+      ...studentProgramLinks.map((link) => {
+        const programKey = text(link.program_key).toLowerCase();
+        return programNameByKey.get(programKey) || programKey;
+      }).filter(Boolean),
       ...cohortNamesForStudent.map((name) => {
         const programKey = text(cohortByName.get(name)?.program_key).toLowerCase();
         return programNameByKey.get(programKey) || programKey;
@@ -417,6 +465,7 @@ async function enrichStudentsWithCohortDetails(students: JsonRecord[]) {
       cohort_group_details: cohortDetails.join('\n\n'),
       cohort_names: cohortNamesForStudent,
       google_groups: cohortNamesForStudent.map((name) => text(cohortByName.get(name)?.google_group)).filter(Boolean).join('\n'),
+      program_keys: programKeys,
       program_names: programNames,
       whatsapp_groups: cohortNamesForStudent.map((name) => {
         const cohort = cohortByName.get(name) || {};
@@ -436,6 +485,112 @@ function splitEmails(value: unknown) {
 function stringList(value: unknown) {
   if (Array.isArray(value)) return Array.from(new Set(value.map((entry) => text(entry)).filter(Boolean)));
   return String(value || '').split(',').map((entry) => entry.trim()).filter(Boolean);
+}
+
+function normalizeRecipientFilters(value: unknown): RecipientFilters {
+  const record = asRecord(value);
+  return {
+    authInviteStatus: text(record.authInviteStatus || record.auth_invite_status),
+    cohortName: text(record.cohortName || record.cohort_name),
+    collegeName: text(record.collegeName || record.college_name),
+    educationYear: text(record.educationYear || record.education_year),
+    liveProjectRoleId: text(record.liveProjectRoleId || record.live_project_role_id),
+    onboardingDateFrom: text(record.onboardingDateFrom || record.onboarding_date_from),
+    onboardingDateTo: text(record.onboardingDateTo || record.onboarding_date_to),
+    paidAccessStatus: text(record.paidAccessStatus || record.paid_access_status),
+    programKey: text(record.programKey || record.program_key).toLowerCase(),
+  };
+}
+
+function hasAnyRecipientFilter(filters: RecipientFilters) {
+  return Object.values(filters).some((value) => Boolean(value && value !== 'any'));
+}
+
+function dateOnlyTimestamp(value: unknown) {
+  const raw = text(value);
+  if (!raw) return null;
+  const date = new Date(`${raw.slice(0, 10)}T00:00:00.000Z`);
+  const timestamp = date.getTime();
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function studentMatchesBaseFilters(student: JsonRecord, filters: RecipientFilters) {
+  if (filters.programKey) {
+    const programKeys = stringList(student.program_keys).map((key) => key.toLowerCase());
+    if (!programKeys.includes(filters.programKey)) return false;
+  }
+
+  if (filters.cohortName) {
+    const cohortNames = stringList(student.cohort_names).map((name) => name.toLowerCase());
+    if (!cohortNames.includes(filters.cohortName.toLowerCase())) return false;
+  }
+
+  if (filters.collegeName && text(student.college_name).toLowerCase() !== filters.collegeName.toLowerCase()) return false;
+  if (filters.educationYear && text(student.you_are_from).toLowerCase() !== filters.educationYear.toLowerCase()) return false;
+
+  if (filters.liveProjectRoleId) {
+    const roleIds = stringList(student.live_project_role_ids).map((roleId) => roleId.toLowerCase());
+    if (!roleIds.includes(filters.liveProjectRoleId.toLowerCase())) return false;
+  }
+
+  const onboardingTimestamp = dateOnlyTimestamp(student.project_start_date);
+  const fromTimestamp = dateOnlyTimestamp(filters.onboardingDateFrom);
+  const toTimestamp = dateOnlyTimestamp(filters.onboardingDateTo);
+  if (fromTimestamp !== null && (onboardingTimestamp === null || onboardingTimestamp < fromTimestamp)) return false;
+  if (toTimestamp !== null && (onboardingTimestamp === null || onboardingTimestamp > toTimestamp)) return false;
+
+  const authInviteStatus = filters.authInviteStatus;
+  if (authInviteStatus && authInviteStatus !== 'any') {
+    const hasAuth = Boolean(text(student.auth_user_id));
+    const onboardingStatus = text(student.onboarding_mail_status).toLowerCase();
+    if (authInviteStatus === 'auth_linked' && !hasAuth) return false;
+    if (authInviteStatus === 'auth_missing' && hasAuth) return false;
+    if (authInviteStatus === 'invite_pending' && onboardingStatus !== 'pending') return false;
+    if (authInviteStatus === 'invite_sent' && onboardingStatus !== 'sent') return false;
+    if (authInviteStatus === 'invite_failed' && onboardingStatus !== 'failed') return false;
+    if (authInviteStatus === 'invite_skipped' && onboardingStatus !== 'skipped') return false;
+    if (authInviteStatus === 'invite_dry_run' && onboardingStatus !== 'dry-run') return false;
+  }
+
+  return true;
+}
+
+async function activePaidAccessEmailSet(emails: string[]) {
+  if (emails.length === 0) return new Set<string>();
+  const { data, error } = await admin
+    .from('paid_access')
+    .select('student_email,status,expires_at')
+    .eq('status', 'active')
+    .limit(20000);
+  if (error) throw new Error(error.message);
+  const requested = new Set(emails.map(normalizeEmail).filter(Boolean));
+  const now = Date.now();
+  return new Set((data || [])
+    .filter((row) => {
+      const email = normalizeEmail(row.student_email);
+      if (!requested.has(email)) return false;
+      const expiresAt = text(row.expires_at);
+      if (!expiresAt) return true;
+      const timestamp = new Date(expiresAt).getTime();
+      return Number.isNaN(timestamp) || timestamp > now;
+    })
+    .map((row) => normalizeEmail(row.student_email))
+    .filter(Boolean));
+}
+
+async function applyRecipientFilters(students: JsonRecord[], filters: RecipientFilters) {
+  if (!hasAnyRecipientFilter(filters)) return students;
+  let filtered = students.filter((student) => studentMatchesBaseFilters(student, filters));
+
+  if (filters.paidAccessStatus && filters.paidAccessStatus !== 'any') {
+    const paidEmails = await activePaidAccessEmailSet(filtered.map((student) => normalizeEmail(student.email)).filter(Boolean));
+    filtered = filtered.filter((student) => {
+      const hasActivePaidAccess = paidEmails.has(normalizeEmail(student.email));
+      return filters.paidAccessStatus === 'active' ? hasActivePaidAccess : !hasActivePaidAccess;
+    });
+  }
+
+  return filtered;
 }
 
 function studentVars(student: JsonRecord, fallbackEmail = '', extra: JsonRecord = {}) {
@@ -529,6 +684,7 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
   const sendMode = text(payload.sendMode || payload.send_mode, 'direct');
   const cohortNames = stringList(payload.cohortNames || payload.cohort_names);
   const directEmails = splitEmails(payload.directEmails || payload.direct_emails);
+  const recipientFilters = normalizeRecipientFilters(payload.recipientFilters || payload.recipient_filters);
   const params = asRecord(payload.params);
   const templateUsedKey = text(template?.template_key, templateKey || 'custom_blank');
   const category = text(template?.category || template?.phase || payload.category, 'general');
@@ -542,7 +698,15 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
 
   if (sendMode === 'cohort_students') {
     if (cohortNames.length === 0) throw new Error('Select at least one cohort.');
-    const students = await studentsForCohorts(cohortNames);
+    const students = await applyRecipientFilters(await studentsForCohorts(cohortNames), recipientFilters);
+    recipients = students
+      .map((student) => {
+        const email = normalizeEmail(student.email);
+        return { email, name: text(student.full_name, email), relatedId: text(student.id, email), relatedType: 'student', vars: studentVars(student, email, params) };
+      })
+      .filter((item) => item.email);
+  } else if (sendMode === 'all_active_students') {
+    const students = await applyRecipientFilters(await activeLmsStudents(), recipientFilters);
     recipients = students
       .map((student) => {
         const email = normalizeEmail(student.email);
@@ -567,8 +731,8 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
     });
   }
 
-  recipients = Array.from(new Map(recipients.map((recipient) => [recipient.email, recipient])).values()).slice(0, 1000);
-  if (recipients.length === 0) throw new Error('No deliverable recipients found.');
+  const recipientLimit = sendMode === 'all_active_students' ? 10000 : 1000;
+  recipients = Array.from(new Map(recipients.map((recipient) => [recipient.email, recipient])).values()).slice(0, recipientLimit);
 
   const alreadySentEmails = testMode ? new Set<string>() : await sentEmailsToday(templateUsedKey, category);
   const deliverableRecipients = recipients.filter((recipient) => !alreadySentEmails.has(recipient.email));
@@ -590,6 +754,7 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
     recipients,
     remainingAfterBatch,
     remainingToday,
+    recipientFilters,
     sendMode,
     subjectSource,
     bodySource,
@@ -701,6 +866,7 @@ async function handleAdminStudentCommunication(payload: JsonRecord, actor: JsonR
       failed,
       remainingAfterBatch: resolved.remainingAfterBatch,
       remainingToday: resolved.remainingToday,
+      recipientFilters: resolved.recipientFilters,
       recipients: resolved.recipients.length,
       sendMode: resolved.sendMode,
       sent,

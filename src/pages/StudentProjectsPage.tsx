@@ -1,16 +1,18 @@
-import { AlertTriangle, CalendarDays, Download, ExternalLink, FileCheck2, FolderKanban, Layers3, Send, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BookOpen, CalendarDays, ExternalLink, FolderKanban, Layers3, Link as LinkIcon, Send, X } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { ProjectRichText, sanitizeProjectHtml } from '../components/ProjectRichText';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
 import { StudentCohort, useStudentCohorts } from '../features/student/useStudentCohorts';
-import { StudentProject, StudentProjectDeliverable, StudentProjectDocument, StudentProjectTask, useStudentProjects } from '../features/student/useStudentProjects';
+import { StudentProject, StudentProjectTask, useStudentProjects } from '../features/student/useStudentProjects';
 import {
   StudentProjectSubmission,
   useStudentProjectSubmissions,
   useSubmitStudentProjectSubmission
 } from '../features/student/useStudentProjectSubmissions';
+import { StudentProjectToolkitItem, useStudentProjectToolkit } from '../features/student/useStudentProjectToolkit';
 
 type ProjectRoleOption = {
   label: string;
@@ -136,74 +138,33 @@ function eligibleCohorts(project: StudentProject, cohorts: StudentCohort[], subm
   });
 }
 
-function ProjectTaskList({ tasks }: { tasks: StudentProjectTask[] }) {
-  if (tasks.length === 0) {
-    return <p className="live-project-empty">No key tasks listed yet.</p>;
-  }
-
-  return (
-    <div className="live-project-item-list">
-      {tasks.map((task, index) => (
-        <article className="live-project-task" key={`${task.title}-${index}`}>
-          <span>{index + 1}</span>
-          <div>
-            <strong>{task.title}</strong>
-            {task.description ? <p>{task.description}</p> : null}
-          </div>
-        </article>
-      ))}
-    </div>
-  );
+function introductionTask(tasks: StudentProjectTask[]) {
+  return tasks.find((task) => task.sectionType === 'introduction' || task.title.trim().toLowerCase() === 'introduction');
 }
 
-function ProjectDocumentList({ documents }: { documents: StudentProjectDocument[] }) {
-  if (documents.length === 0) {
-    return <p className="live-project-empty">No support documents listed yet.</p>;
-  }
-
-  return (
-    <div className="live-project-item-list">
-      {documents.map((document) => (
-        <article className="live-project-document" key={`${document.title}-${document.link ?? document.type ?? ''}`}>
-          <div className="live-project-document__type">{document.type ?? 'DOC'}</div>
-          <div>
-            <strong>{document.title}</strong>
-            <p>{document.description ?? 'Use this file for your project work.'}</p>
-            {document.type ? <StatusBadge>{document.type}</StatusBadge> : null}
-          </div>
-          {document.link ? (
-            <a className="live-project-document__action" href={document.link} rel="noreferrer" target="_blank" aria-label={`Open ${document.title}`}>
-              <Download size={18} />
-              <span>Open file</span>
-            </a>
-          ) : (
-            <span className="live-project-document__missing">No link added yet</span>
-          )}
-        </article>
-      ))}
-    </div>
-  );
+function customReadingTasks(tasks: StudentProjectTask[]) {
+  const introduction = introductionTask(tasks);
+  return tasks.filter((task) => task !== introduction);
 }
 
-function ProjectDeliverableList({ deliverables }: { deliverables: StudentProjectDeliverable[] }) {
-  if (deliverables.length === 0) {
-    return <p className="live-project-empty">No deliverables listed yet.</p>;
+function deliverablesReadingHtml(project: StudentProject) {
+  if (project.deliverables.length === 0) return '';
+  if (project.deliverables.length === 1) {
+    const deliverable = project.deliverables[0];
+    return sanitizeProjectHtml(deliverable.note ?? deliverable.description ?? deliverable.title);
   }
 
-  return (
-    <div className="live-project-item-list">
-      {deliverables.map((deliverable) => (
-        <article className="live-project-deliverable" key={`${deliverable.title}-${deliverable.format ?? deliverable.note ?? ''}`}>
-          <FileCheck2 size={18} />
-          <div>
-            <strong>{deliverable.title}</strong>
-            {deliverable.note ? <p>{deliverable.note}</p> : null}
-          </div>
-          {deliverable.format ? <StatusBadge>{deliverable.format}</StatusBadge> : null}
-        </article>
-      ))}
-    </div>
-  );
+  const items = project.deliverables
+    .map((deliverable) => {
+      const detail = [deliverable.format, deliverable.note].filter(Boolean).join(' - ');
+      return `<li><strong>${deliverable.title}</strong>${detail ? `: ${detail}` : ''}</li>`;
+    })
+    .join('');
+  return sanitizeProjectHtml(`<ul>${items}</ul>`);
+}
+
+function importantProjectLinks(project: StudentProject) {
+  return project.documents.filter((document) => document.link);
 }
 
 function SubmissionTimeline({ submissions }: { submissions: StudentProjectSubmission[] }) {
@@ -401,6 +362,111 @@ function ProjectSubmissionModal({
   );
 }
 
+function ProjectToolkitSection({ items }: { items: StudentProjectToolkitItem[] }) {
+  const [selectedItem, setSelectedItem] = useState<StudentProjectToolkitItem | null>(null);
+
+  useEffect(() => {
+    if (selectedItem && !items.some((item) => item.id === selectedItem.id)) {
+      setSelectedItem(null);
+    }
+  }, [items, selectedItem]);
+
+  useEffect(() => {
+    if (!selectedItem) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setSelectedItem(null);
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedItem]);
+
+  if (items.length === 0) return null;
+
+  return (
+    <>
+      <section className="live-project-toolkit" aria-label="Live project toolkit">
+        <header className="live-project-toolkit__header">
+          <div>
+            <span className="eyebrow">Project toolkit</span>
+            <h2>Start Here</h2>
+          </div>
+          <p>Guidelines, SOW references, and project-start framework shared by the program team.</p>
+        </header>
+        <div className="live-project-toolkit__grid">
+          {items.map((item) => (
+            <article className="live-project-toolkit-card" key={item.id}>
+              <button aria-haspopup="dialog" className="live-project-toolkit-card__button" onClick={() => setSelectedItem(item)} type="button">
+                <span>
+                  <strong>{item.title}</strong>
+                  {item.summary ? <small>{item.summary}</small> : null}
+                  <span className="live-project-toolkit-card__cta">
+                    <span>Open</span>
+                    <ArrowRight size={14} />
+                  </span>
+                </span>
+                <BookOpen size={18} />
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {selectedItem ? <ProjectToolkitReader item={selectedItem} onClose={() => setSelectedItem(null)} /> : null}
+    </>
+  );
+}
+
+function ProjectToolkitReader({ item, onClose }: { item: StudentProjectToolkitItem; onClose: () => void }) {
+  const hasLink = Boolean(item.linkUrl);
+
+  return (
+    <section aria-labelledby="project-toolkit-reader-title" aria-modal="true" className="live-project-toolkit-reader" role="dialog">
+      <div className="live-project-toolkit-reader__shell">
+        <header className="live-project-toolkit-reader__header">
+          <div>
+            <span className="eyebrow">Project toolkit</span>
+            <h2 id="project-toolkit-reader-title">{item.title}</h2>
+            {item.summary ? <p>{item.summary}</p> : null}
+          </div>
+          <button aria-label="Close project toolkit reader" className="student-modal__close live-project-toolkit-reader__close" onClick={onClose} type="button">
+            <X size={22} />
+          </button>
+        </header>
+
+        <div className="live-project-toolkit-reader__body">
+          <article className="live-project-toolkit-reader__page">
+            {item.content ? (
+              <ProjectRichText className="project-rich-text live-project-reading-copy live-project-toolkit-reader__copy" html={item.content} />
+            ) : (
+              <p className="live-project-empty">Content will appear here once the admin team updates this toolkit section.</p>
+            )}
+
+            {hasLink ? (
+              <a className="live-project-toolkit-link live-project-toolkit-reader__link" href={item.linkUrl} rel="noreferrer" target="_blank">
+                <LinkIcon size={16} />
+                <span>{item.linkLabel ?? 'Open link'}</span>
+                <ExternalLink size={15} />
+              </a>
+            ) : item.itemType === 'sow_link' ? (
+              <span className="live-project-toolkit-link live-project-toolkit-link--disabled live-project-toolkit-reader__link">SOW link coming soon</span>
+            ) : null}
+          </article>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function LiveProjectDetail({ allSubmissions, cohorts, project }: { allSubmissions: StudentProjectSubmission[]; cohorts: StudentCohort[]; project: StudentProject }) {
   const submissionsQuery = useStudentProjectSubmissions({ limit: 5, page: 1, projectId: projectStableId(project), status: 'all' });
   const submissions = submissionsQuery.data?.items ?? [];
@@ -409,6 +475,16 @@ function LiveProjectDetail({ allSubmissions, cohorts, project }: { allSubmission
   const [submitMessage, setSubmitMessage] = useState('');
   const availableCohorts = useMemo(() => eligibleCohorts(project, cohorts, allSubmissions), [allSubmissions, cohorts, project]);
   const deadlinePassed = isPastDeadline(project.deadline);
+  const intro = introductionTask(project.tasks);
+  const customSections = customReadingTasks(project.tasks);
+  const importantLinks = importantProjectLinks(project);
+  const readingSections = [
+    { body: intro?.description ?? '', label: 'Introduction' },
+    { body: project.objectives ?? '', label: 'Project Objective' },
+    { body: deliverablesReadingHtml(project), label: 'Project Deliverables' },
+    { body: project.brief ?? '', label: 'Project Brief' },
+    ...customSections.map((section) => ({ body: section.description ?? '', label: section.title }))
+  ].filter((section) => section.label.trim() && sanitizeProjectHtml(section.body));
 
   async function handleSubmit(input: { cohortId: string; declarationAccepted: boolean; declarationConfirmations: string[]; remarks?: string; studentFeedback: string; submissionLink: string }) {
     setSubmitMessage('');
@@ -430,34 +506,54 @@ function LiveProjectDetail({ allSubmissions, cohorts, project }: { allSubmission
           {project.companyName ? <StatusBadge>{project.companyName}</StatusBadge> : null}
           {project.deadline ? <StatusBadge tone={deadlinePassed ? 'warning' : 'neutral'}>{deadlinePassed ? `Late after ${formatDate(project.deadline)}` : formatDate(project.deadline)}</StatusBadge> : null}
         </div>
-        {project.brief || project.objectives ? <p>{project.brief ?? project.objectives}</p> : null}
+        <p>A complete project brief with objectives, deliverables, supporting sections, and submission status.</p>
       </div>
 
-      <div className="live-project-section-grid">
-        <article className="live-project-panel">
-          <div className="live-project-panel__header">
-            <span className="eyebrow">What to do</span>
-            <h3>Key Tasks</h3>
-          </div>
-          <ProjectTaskList tasks={project.tasks} />
-        </article>
-
-        <article className="live-project-panel">
-          <div className="live-project-panel__header">
-            <span className="eyebrow">Support documents</span>
-            <h3>Download Files</h3>
-          </div>
-          <ProjectDocumentList documents={project.documents} />
-        </article>
-      </div>
-
-      <article className="live-project-panel live-project-panel--wide">
-        <div className="live-project-panel__header">
-          <span className="eyebrow">What to submit</span>
-          <h3>Deliverables</h3>
+      <div className={importantLinks.length > 0 ? 'live-project-reader' : 'live-project-reader live-project-reader--full'}>
+        <div className="live-project-reader__content">
+          {readingSections.length > 0 ? (
+            readingSections.map((section) => (
+              <article className="live-project-reading-section" key={section.label}>
+                <div className="live-project-reading-section__icon">
+                  <BookOpen size={18} />
+                </div>
+                <div>
+                  <h3>{section.label}</h3>
+                  <ProjectRichText className="project-rich-text live-project-reading-copy" html={section.body} />
+                </div>
+              </article>
+            ))
+          ) : (
+            <article className="live-project-reading-section">
+              <div className="live-project-reading-section__icon">
+                <BookOpen size={18} />
+              </div>
+              <div>
+                <h3>Project Brief</h3>
+                <p className="live-project-empty">Project details will appear here once the admin team updates the brief.</p>
+              </div>
+            </article>
+          )}
         </div>
-        <ProjectDeliverableList deliverables={project.deliverables} />
-      </article>
+
+        {importantLinks.length > 0 ? (
+          <aside className="live-project-important-links" aria-label="Important project links">
+            <div>
+              <span className="eyebrow">References</span>
+              <h3>Important Links</h3>
+            </div>
+            <div>
+              {importantLinks.map((document) => (
+                <a className="live-project-important-link" href={document.link} key={`${document.title}-${document.link}`} rel="noreferrer" target="_blank">
+                  <LinkIcon size={16} />
+                  <span>{document.label ?? document.title}</span>
+                  <ExternalLink size={15} />
+                </a>
+              ))}
+            </div>
+          </aside>
+        ) : null}
+      </div>
 
       <article className="live-project-submission">
         <div>
@@ -505,9 +601,11 @@ export function StudentProjectsPage() {
   const projectsQuery = useStudentProjects({ limit: 100, page: 1 });
   const cohortsQuery = useStudentCohorts({ limit: 100, page: 1, status: 'active' });
   const allSubmissionsQuery = useStudentProjectSubmissions({ limit: 500, page: 1, status: 'all' });
+  const toolkitQuery = useStudentProjectToolkit();
   const projects = useMemo(() => projectsQuery.data?.items ?? [], [projectsQuery.data?.items]);
   const cohorts = useMemo(() => cohortsQuery.data?.items ?? [], [cohortsQuery.data?.items]);
   const allSubmissions = useMemo(() => allSubmissionsQuery.data?.items ?? [], [allSubmissionsQuery.data?.items]);
+  const toolkitItems = useMemo(() => toolkitQuery.data?.items ?? [], [toolkitQuery.data?.items]);
   const roleOptions = useMemo(() => buildRoleOptions(projects), [projects]);
   const [selectedRole, setSelectedRole] = useState('all');
   const [selectedProjectId, setSelectedProjectId] = useState('');
@@ -560,7 +658,7 @@ export function StudentProjectsPage() {
   return (
     <div className="page-stack student-project-hub-page">
       <PageHeader
-        description="Project briefs, key tasks, support documents, deliverables, and submission links in one place."
+        description="Project briefs, key tasks, support documents, deliverables, and submission status in one place."
         eyebrow="Live project hub"
         title="Your Active Projects"
       />
@@ -584,6 +682,8 @@ export function StudentProjectsPage() {
               <strong>{nextDeadlineProject ? formatDate(nextDeadlineProject.deadline) : 'Not set'}</strong>
             </article>
           </section>
+
+          {!toolkitQuery.isError && toolkitItems.length > 0 ? <ProjectToolkitSection items={toolkitItems} /> : null}
 
           <section className="live-project-picker" aria-label="Live project selector">
             <label>

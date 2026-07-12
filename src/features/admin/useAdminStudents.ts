@@ -22,6 +22,8 @@ export type AdminStudent = {
   id: string;
   liveProjectDomains?: string[];
   liveProjectDuration?: string;
+  liveProjectRoleIds?: string[];
+  liveProjectRoles?: string[];
   latestInviteError?: string;
   latestInviteStatus?: string;
   onboardingMailStatus?: string;
@@ -62,6 +64,7 @@ export type AdminStudentWritePayload = {
   email: string;
   fullName: string;
   liveProjectDuration?: string;
+  liveProjectRoleIds?: string[];
   onboardingMailStatus?: 'pending' | 'sent' | 'failed' | 'skipped' | 'dry-run';
   onboardingDate?: string;
   personalMentor?: string;
@@ -195,6 +198,20 @@ export function useAdminStudents(query: AdminStudentsQuery) {
       }),
     queryKey: ['admin-students', accessToken, page, limit, status, search, cohortName, programKey, sort, direction],
     staleTime: 60_000
+  });
+}
+
+export function useAdminStudentCollegeOptions() {
+  const { accessToken } = useAuth();
+
+  return useQuery({
+    enabled: Boolean(accessToken),
+    queryFn: () =>
+      apiGet<{ items: string[] }>('/admins/students/college-options', {
+        accessToken: accessToken ?? undefined
+      }),
+    queryKey: ['admin-student-college-options', accessToken],
+    staleTime: 5 * 60_000
   });
 }
 

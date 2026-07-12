@@ -34,9 +34,9 @@ export type NavItem = {
 export const studentNavItems: NavItem[] = [
   { label: 'Dashboard', path: '/student', moduleId: 'dashboard', icon: LayoutDashboard, mode: 'read-only' },
   { label: 'My Programs', path: '/student/cohorts', moduleId: 'cohorts', icon: GraduationCap, mode: 'read-only' },
-  { label: 'Recordings', path: '/student/recordings', moduleId: 'recordings', icon: Video, mode: 'read-only' },
-  { label: 'Schedule', path: '/student/schedule', moduleId: 'schedule', icon: CalendarDays, mode: 'read-only' },
-  { label: 'Resources', path: '/student/resources', moduleId: 'resources', icon: Library, mode: 'read-only' },
+  { label: 'Watch Recordings', path: '/student/recordings', moduleId: 'recordings', icon: Video, mode: 'read-only' },
+  { label: 'Upcoming Workshops', path: '/student/schedule', moduleId: 'schedule', icon: CalendarDays, mode: 'read-only' },
+  { label: 'Resource Library', path: '/student/resources', moduleId: 'resources', icon: Library, mode: 'read-only' },
   { label: 'Live Project Hub', path: '/student/projects', moduleId: 'projects', icon: BookOpen, mode: 'read-only' },
   { label: 'My Submissions', path: '/student/project-submissions', moduleId: 'project-submissions', icon: ClipboardCheck, mode: 'read-only' },
   { label: 'Certificates', path: '/student/certificates', moduleId: 'certificates', icon: FileCheck2, mode: 'read-only' },

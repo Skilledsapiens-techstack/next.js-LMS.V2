@@ -8,6 +8,7 @@ import { AdminRecordingCandidate, useAdminRecordingCandidates } from '../feature
 import {
   AdminWorkshop,
   useCreateAdminManualRecordingCandidate,
+  useEditAdminPublishedRecording,
   useAdminWorkshops,
   useFetchAdminWorkshopRecordings,
   usePublishAdminWorkshopRecording,
@@ -19,7 +20,10 @@ type ProgramFilter = 'all' | string;
 type CohortFilter = 'all' | string;
 type RecordingEditForm = {
   alternateUrl: string;
+  cohortNames: string[];
   passcode: string;
+  programKey: string;
+  title: string;
   workshopId: string;
   youtubeUrl: string;
 };
@@ -116,8 +120,59 @@ function hasOpenRecordingReviewHistory(candidates: AdminRecordingCandidate[], wo
   return candidates.some((candidate) => candidate.workshopId === workshopKey && (candidate.status === 'draft' || candidate.status === 'rejected'));
 }
 
+function timeValue(value: string | undefined, fallback = 0) {
+  const timestamp = value ? new Date(value).getTime() : Number.NaN;
+  return Number.isFinite(timestamp) ? timestamp : fallback;
+}
+
+function workshopScheduledTime(workshop: AdminWorkshop, fallback = Number.POSITIVE_INFINITY) {
+  const dateMatch = workshop.date.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const timeMatch = workshop.time?.match(/^(\d{1,2}):(\d{2})/);
+
+  if (dateMatch) {
+    const [, year, month, day] = dateMatch;
+    const hour = timeMatch ? Number(timeMatch[1]) : 0;
+    const minute = timeMatch ? Number(timeMatch[2]) : 0;
+    const scheduledAt = new Date(Number(year), Number(month) - 1, Number(day), hour, minute).getTime();
+    return Number.isFinite(scheduledAt) ? scheduledAt : fallback;
+  }
+
+  return timeValue(workshop.date, fallback);
+}
+
+function workshopUpdatedTime(workshop: AdminWorkshop) {
+  return timeValue(workshop.updatedAt);
+}
+
 function latestTimestamp(candidate: AdminRecordingCandidate) {
-  return new Date(candidate.reviewedAt ?? candidate.updatedAt ?? candidate.detectedAt ?? 0).getTime();
+  return timeValue(candidate.reviewedAt ?? candidate.updatedAt ?? candidate.detectedAt);
+}
+
+function compareCandidatesByLatestDesc(left: AdminRecordingCandidate, right: AdminRecordingCandidate) {
+  const latestDiff = latestTimestamp(right) - latestTimestamp(left);
+  if (latestDiff !== 0) return latestDiff;
+
+  return String(left.workshopId ?? left.id).localeCompare(String(right.workshopId ?? right.id));
+}
+
+function compareWorkshopsByScheduleAsc(left: AdminWorkshop, right: AdminWorkshop) {
+  const scheduledDiff = workshopScheduledTime(left) - workshopScheduledTime(right);
+  if (scheduledDiff !== 0) return scheduledDiff;
+
+  const updatedDiff = workshopUpdatedTime(right) - workshopUpdatedTime(left);
+  if (updatedDiff !== 0) return updatedDiff;
+
+  return left.title.localeCompare(right.title);
+}
+
+function compareWorkshopsByUpdatedDesc(left: AdminWorkshop, right: AdminWorkshop) {
+  const updatedDiff = workshopUpdatedTime(right) - workshopUpdatedTime(left);
+  if (updatedDiff !== 0) return updatedDiff;
+
+  const scheduledDiff = workshopScheduledTime(right, 0) - workshopScheduledTime(left, 0);
+  if (scheduledDiff !== 0) return scheduledDiff;
+
+  return left.title.localeCompare(right.title);
 }
 
 function dedupeRejectedCandidates(candidates: AdminRecordingCandidate[]) {
@@ -129,7 +184,7 @@ function dedupeRejectedCandidates(candidates: AdminRecordingCandidate[]) {
       byWorkshopAndUrl.set(key, candidate);
     }
   });
-  return Array.from(byWorkshopAndUrl.values()).sort((left, right) => latestTimestamp(right) - latestTimestamp(left));
+  return Array.from(byWorkshopAndUrl.values()).sort(compareCandidatesByLatestDesc);
 }
 
 function visibilityText(workshop: AdminWorkshop) {
@@ -164,6 +219,7 @@ export function AdminRecordingCandidatesPage() {
   const publishRecordingMutation = usePublishAdminWorkshopRecording();
   const rejectRecordingMutation = useRejectAdminWorkshopRecording();
   const createManualCandidateMutation = useCreateAdminManualRecordingCandidate();
+  const editPublishedRecordingMutation = useEditAdminPublishedRecording();
   const workshops = workshopsQuery.data?.items ?? [];
   const candidates = (candidatesQuery.data?.items ?? []).filter(isReviewableCandidate);
   const programs = programsQuery.data?.items ?? [];
@@ -207,12 +263,12 @@ export function AdminRecordingCandidatesPage() {
           (programFilter === 'all' || workshop?.programKey === programFilter) &&
           (cohortFilter === 'all' || Boolean(workshop?.cohortNames.includes(cohortFilter)))
         );
-      }),
+      }).sort(compareCandidatesByLatestDesc),
     [candidates, cohortFilter, normalizedSearch, programFilter, workshopsByKey]
   );
 
   const publishedWorkshops = useMemo(
-    () => workshops.filter((workshop) => hasRecordingLink(workshop) && workshopMatches(workshop, normalizedSearch, programFilter, cohortFilter)),
+    () => workshops.filter((workshop) => hasRecordingLink(workshop) && workshopMatches(workshop, normalizedSearch, programFilter, cohortFilter)).sort(compareWorkshopsByUpdatedDesc),
     [cohortFilter, normalizedSearch, programFilter, workshops]
   );
 
@@ -223,7 +279,7 @@ export function AdminRecordingCandidatesPage() {
           !hasRecordingLink(workshop) &&
           !hasOpenRecordingReviewHistory(candidates, workshop) &&
           workshopMatches(workshop, normalizedSearch, programFilter, cohortFilter)
-      ),
+      ).sort(compareWorkshopsByScheduleAsc),
     [candidates, cohortFilter, normalizedSearch, programFilter, workshops]
   );
 
@@ -267,12 +323,26 @@ export function AdminRecordingCandidatesPage() {
     setRecordingEditForm(null);
   }
 
-  function startEditingRecording(workshop: AdminWorkshop) {
-    setRecordingEditForm({
+  function buildRecordingEditForm(workshop: AdminWorkshop): RecordingEditForm {
+    return {
       alternateUrl: workshop.zoomRecordingUrl ?? '',
+      cohortNames: workshop.cohortNames,
       passcode: workshop.zoomRecordingPassword ?? '',
+      programKey: workshop.programKey ?? '',
+      title: workshop.title,
       workshopId: workshop.id,
       youtubeUrl: workshop.youtubeVideoUrl ?? ''
+    };
+  }
+
+  function startEditingRecording(workshop: AdminWorkshop) {
+    setRecordingEditForm(buildRecordingEditForm(workshop));
+  }
+
+  function startEditingPublishedRecording(workshop: AdminWorkshop) {
+    setRecordingEditForm({
+      ...buildRecordingEditForm(workshop),
+      alternateUrl: workshop.zoomRecordingUrl ?? (workshop.youtubeVideoUrl ? '' : recordingUrlFor(workshop))
     });
   }
 
@@ -318,6 +388,50 @@ export function AdminRecordingCandidatesPage() {
     }
   }
 
+  async function savePublishedRecording(workshop: AdminWorkshop) {
+    if (!recordingEditForm) return;
+    const title = recordingEditForm.title.trim();
+    const youtubeUrl = recordingEditForm.youtubeUrl.trim();
+    const alternateUrl = recordingEditForm.alternateUrl.trim();
+
+    setActionMessage(null);
+    if (!title) {
+      setActionMessage('Published recording title is required.');
+      return;
+    }
+    if (!youtubeUrl && !alternateUrl) {
+      setActionMessage('Published recordings must keep at least one recording link.');
+      return;
+    }
+    if (youtubeUrl && !isHttpUrl(youtubeUrl)) {
+      setActionMessage('YouTube URL must start with http:// or https://.');
+      return;
+    }
+    if (alternateUrl && !isHttpUrl(alternateUrl)) {
+      setActionMessage('Zoom/manual URL must start with http:// or https://.');
+      return;
+    }
+
+    try {
+      await editPublishedRecordingMutation.mutateAsync({
+        body: {
+          cohortNames: recordingEditForm.cohortNames,
+          programKey: recordingEditForm.programKey || null,
+          title,
+          youtubeVideoUrl: youtubeUrl || null,
+          zoomRecordingPassword: recordingEditForm.passcode.trim() || null,
+          zoomRecordingUrl: alternateUrl || null
+        },
+        workshopId: workshop.id
+      });
+      await refetchRecordingData();
+      setRecordingEditForm(null);
+      setActionMessage('Published recording updated. Student visibility rules are unchanged.');
+    } catch (error) {
+      setActionMessage(readableError(error, 'Published recording could not be updated.'));
+    }
+  }
+
   async function publishCandidate(candidateId: string) {
     setActionMessage(null);
     try {
@@ -352,11 +466,47 @@ export function AdminRecordingCandidatesPage() {
     }
   }
 
-  function renderRecordingEditForm(workshop: AdminWorkshop) {
+  function toggleEditCohort(cohortName: string) {
+    setRecordingEditForm((current) => {
+      if (!current) return current;
+      const selected = new Set(current.cohortNames);
+      if (selected.has(cohortName)) selected.delete(cohortName);
+      else selected.add(cohortName);
+      return { ...current, cohortNames: Array.from(selected) };
+    });
+  }
+
+  function renderRecordingEditForm(workshop: AdminWorkshop, mode: 'draft' | 'published' = 'draft') {
     if (recordingEditForm?.workshopId !== workshop.id) return null;
+    const isPublishedEdit = mode === 'published';
+    const cohortEditOptions = Array.from(new Set([...workshop.cohortNames, ...activeCohorts.map((cohort) => cohort.name)])).filter(Boolean).sort((left, right) => left.localeCompare(right));
+    const isBusy = isPublishedEdit ? editPublishedRecordingMutation.isPending : createManualCandidateMutation.isPending;
 
     return (
-      <div className="admin-recording-edit-form">
+      <div className={isPublishedEdit ? 'admin-recording-edit-form admin-recording-edit-form--published' : 'admin-recording-edit-form'}>
+        {isPublishedEdit ? (
+          <>
+            <label className="admin-recording-edit-form__wide">
+              <span>Title</span>
+              <input
+                value={recordingEditForm.title}
+                onChange={(event) => setRecordingEditForm((current) => (current ? { ...current, title: event.target.value } : current))}
+                placeholder="Recording title"
+              />
+            </label>
+            <label>
+              <span>Program</span>
+              <select value={recordingEditForm.programKey} onChange={(event) => setRecordingEditForm((current) => (current ? { ...current, programKey: event.target.value } : current))}>
+                <option value="">General / no program tag</option>
+                {programKeys.map((programKey) => (
+                  <option key={programKey} value={programKey}>
+                    {programLabelFor(programs, programKey)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : null}
         <label>
           <span>YouTube URL</span>
           <input
@@ -381,12 +531,29 @@ export function AdminRecordingCandidatesPage() {
             placeholder="Optional passcode"
           />
         </label>
+        {isPublishedEdit ? (
+          <fieldset className="admin-recording-edit-form__cohorts">
+            <legend>Cohort tags</legend>
+            <div>
+              {cohortEditOptions.length > 0 ? (
+                cohortEditOptions.map((cohortName) => (
+                  <label key={cohortName}>
+                    <input checked={recordingEditForm.cohortNames.includes(cohortName)} onChange={() => toggleEditCohort(cohortName)} type="checkbox" />
+                    <span>{cohortName}</span>
+                  </label>
+                ))
+              ) : (
+                <p>No active cohorts available.</p>
+              )}
+            </div>
+          </fieldset>
+        ) : null}
         <div className="admin-recording-edit-form__actions">
-          <button className="admin-recording-action admin-recording-action--primary" disabled={createManualCandidateMutation.isPending} onClick={() => void saveRecordingLinks()} type="button">
-            {createManualCandidateMutation.isPending ? <Loader2 className="admin-spin" size={14} /> : <Save size={14} />}
-            Save for review
+          <button className="admin-recording-action admin-recording-action--primary" disabled={isBusy} onClick={() => void (isPublishedEdit ? savePublishedRecording(workshop) : saveRecordingLinks())} type="button">
+            {isBusy ? <Loader2 className="admin-spin" size={14} /> : <Save size={14} />}
+            {isPublishedEdit ? 'Save published changes' : 'Save for review'}
           </button>
-          <button className="admin-recording-action" disabled={createManualCandidateMutation.isPending} onClick={cancelEditingRecording} type="button">
+          <button className="admin-recording-action" disabled={isBusy} onClick={cancelEditingRecording} type="button">
             Cancel
           </button>
         </div>
@@ -608,8 +775,13 @@ export function AdminRecordingCandidatesPage() {
                       {workshop.zoomRecordingPassword ? <span>Passcode saved</span> : null}
                       <span>{visibilityText(workshop)}</span>
                     </div>
+                    {renderRecordingEditForm(workshop, 'published')}
                   </div>
                   <div className="admin-recording-row__actions">
+                    <button className="admin-recording-action" onClick={() => startEditingPublishedRecording(workshop)} type="button">
+                      <Edit3 size={14} />
+                      Edit
+                    </button>
                     <a className="admin-recording-action admin-recording-action--primary" href={recordingUrlFor(workshop)} rel="noreferrer" target="_blank">
                       <ExternalLink size={14} />
                       Open

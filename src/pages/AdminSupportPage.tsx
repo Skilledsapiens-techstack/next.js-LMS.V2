@@ -1,4 +1,4 @@
-import { Info, RefreshCw } from 'lucide-react';
+import { ChevronDown, Edit3, Info, Loader2, RefreshCw, Save, Trash2, X } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
@@ -13,6 +13,7 @@ import {
   useCreateAdminSupportCategory,
   useCreateAdminSupportFaq,
   useCreateAdminSupportTicketReply,
+  useDeleteAdminSupportFaq,
   useAdminSupportCategories,
   useAdminSupportFaqs,
   useAdminSupportTicketDetail,
@@ -25,6 +26,18 @@ import {
 
 const statusOptions: Array<AdminSupportTicketStatus | 'all'> = ['all', 'open', 'in_review', 'waiting_for_student', 'resolved', 'closed'];
 const priorityOptions: Array<AdminSupportTicketPriority | 'all'> = ['all', 'low', 'normal', 'high', 'urgent'];
+const faqStatusOptions: Array<AdminSupportFaq['status'] | 'all'> = ['all', 'draft', 'published', 'archived'];
+
+type FaqFormState = {
+  answer: string;
+  categoryName: string;
+  cohortNames: string;
+  featured: boolean;
+  programKeys: string;
+  question: string;
+  sortOrder: number;
+  status: AdminSupportFaq['status'];
+};
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
@@ -605,7 +618,8 @@ function SupportEmailSettings() {
 function FaqManager({ categories, faqs, isLoading }: { categories: AdminSupportCategory[]; faqs: AdminSupportFaq[]; isLoading: boolean }) {
   const createMutation = useCreateAdminSupportFaq();
   const updateMutation = useUpdateAdminSupportFaq();
-  const [draft, setDraft] = useState({
+  const deleteMutation = useDeleteAdminSupportFaq();
+  const [draft, setDraft] = useState<FaqFormState>({
     answer: '',
     categoryName: categories[0]?.categoryName ?? '',
     cohortNames: '',
@@ -615,29 +629,74 @@ function FaqManager({ categories, faqs, isLoading }: { categories: AdminSupportC
     sortOrder: 100,
     status: 'published' as const
   });
+  const [editingFaqId, setEditingFaqId] = useState('');
+  const [expandedFaqId, setExpandedFaqId] = useState('');
+  const [deleteConfirmId, setDeleteConfirmId] = useState('');
+  const [editDraft, setEditDraft] = useState<FaqFormState | null>(null);
+  const [filterCategory, setFilterCategory] = useState('all');
+  const [filterStatus, setFilterStatus] = useState<AdminSupportFaq['status'] | 'all'>('all');
   const [message, setMessage] = useState('');
 
   useEffect(() => {
     if (!draft.categoryName && categories[0]?.categoryName) setDraft((current) => ({ ...current, categoryName: categories[0].categoryName }));
   }, [categories, draft.categoryName]);
 
+  useEffect(() => {
+    if (!expandedFaqId && faqs[0]?.id) setExpandedFaqId(faqs[0].id);
+  }, [expandedFaqId, faqs]);
+
   function parseCsv(value: string) {
     return value.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+
+  function formatCsv(values: string[] | undefined) {
+    return (values ?? []).join(', ');
+  }
+
+  function faqToFormState(faq: AdminSupportFaq): FaqFormState {
+    return {
+      answer: faq.answer,
+      categoryName: faq.categoryName ?? categories[0]?.categoryName ?? '',
+      cohortNames: formatCsv(faq.cohortNames),
+      featured: faq.featured,
+      programKeys: formatCsv(faq.programKeys),
+      question: faq.question,
+      sortOrder: faq.sortOrder,
+      status: faq.status
+    };
+  }
+
+  function buildFaqPayload(state: FaqFormState) {
+    return {
+      answer: state.answer,
+      categoryName: state.categoryName,
+      cohortNames: parseCsv(state.cohortNames),
+      featured: state.featured,
+      programKeys: parseCsv(state.programKeys),
+      question: state.question,
+      sortOrder: state.sortOrder,
+      status: state.status
+    };
+  }
+
+  function startEditingFaq(faq: AdminSupportFaq) {
+    setEditingFaqId(faq.id);
+    setExpandedFaqId(faq.id);
+    setDeleteConfirmId('');
+    setEditDraft(faqToFormState(faq));
+    setMessage('');
+  }
+
+  function cancelEditingFaq() {
+    setEditingFaqId('');
+    setEditDraft(null);
+    setDeleteConfirmId('');
   }
 
   async function handleAddFaq() {
     setMessage('');
     try {
-      await createMutation.mutateAsync({
-        answer: draft.answer,
-        categoryName: draft.categoryName,
-        cohortNames: parseCsv(draft.cohortNames),
-        featured: draft.featured,
-        programKeys: parseCsv(draft.programKeys),
-        question: draft.question,
-        sortOrder: draft.sortOrder,
-        status: draft.status
-      });
+      await createMutation.mutateAsync(buildFaqPayload(draft));
       setDraft((current) => ({ ...current, answer: '', cohortNames: '', featured: false, programKeys: '', question: '' }));
       setMessage('FAQ created.');
     } catch (error) {
@@ -645,15 +704,38 @@ function FaqManager({ categories, faqs, isLoading }: { categories: AdminSupportC
     }
   }
 
-  async function handleUpdateFaq(faq: AdminSupportFaq, patch: Partial<AdminSupportFaq>) {
+  async function handleUpdateFaq(faq: AdminSupportFaq) {
+    if (!editDraft) return;
     setMessage('');
     try {
-      await updateMutation.mutateAsync({ ...faq, ...patch, id: faq.id });
+      await updateMutation.mutateAsync({ ...faq, ...buildFaqPayload(editDraft), id: faq.id });
+      setEditingFaqId('');
+      setEditDraft(null);
       setMessage('FAQ updated.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'FAQ could not be updated.');
     }
   }
+
+  async function handleDeleteFaq(faq: AdminSupportFaq) {
+    setMessage('');
+    try {
+      await deleteMutation.mutateAsync(faq.id);
+      if (expandedFaqId === faq.id) setExpandedFaqId('');
+      if (editingFaqId === faq.id) cancelEditingFaq();
+      setDeleteConfirmId('');
+      setMessage('FAQ deleted permanently.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'FAQ could not be deleted.');
+    }
+  }
+
+  const filteredFaqs = faqs.filter((faq) => {
+    const categoryMatches = filterCategory === 'all' || (faq.categoryName ?? '') === filterCategory;
+    const statusMatches = filterStatus === 'all' || faq.status === filterStatus;
+    return categoryMatches && statusMatches;
+  });
+  const isSaving = createMutation.isPending || updateMutation.isPending || deleteMutation.isPending;
 
   return (
     <section className="admin-support-panel">
@@ -666,14 +748,20 @@ function FaqManager({ categories, faqs, isLoading }: { categories: AdminSupportC
       <div className="admin-support-panel__body">
         {message ? <div className={message.includes('could not') ? 'auth-alert auth-alert--error' : 'auth-alert auth-alert--success'}>{message}</div> : null}
         {isLoading ? <LoadingState /> : null}
-        <article className="admin-support-faq-card">
+        <article className="admin-support-faq-card admin-support-faq-card--composer">
           <label className="admin-support-form-grid__wide">
             <span>New Question</span>
             <input onChange={(event) => setDraft((current) => ({ ...current, question: event.target.value }))} placeholder="Question students will see" value={draft.question} />
           </label>
           <label className="admin-support-form-grid__wide">
             <span>Answer</span>
-            <textarea onChange={(event) => setDraft((current) => ({ ...current, answer: event.target.value }))} placeholder="Clear answer for students" rows={4} value={draft.answer} />
+            <textarea
+              className="admin-support-faq-answer-editor"
+              onChange={(event) => setDraft((current) => ({ ...current, answer: event.target.value }))}
+              placeholder="Use short paragraphs or bullets. Line breaks are preserved in the FAQ preview."
+              rows={7}
+              value={draft.answer}
+            />
           </label>
           <label>
             <span>Category</span>
@@ -693,72 +781,177 @@ function FaqManager({ categories, faqs, isLoading }: { categories: AdminSupportC
             <span>Cohorts</span>
             <input onChange={(event) => setDraft((current) => ({ ...current, cohortNames: event.target.value }))} placeholder="Blank = all, comma separated" value={draft.cohortNames} />
           </label>
+          <label>
+            <span>Status</span>
+            <select onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as AdminSupportFaq['status'] }))} value={draft.status}>
+              <option value="draft">Draft</option>
+              <option value="published">Published</option>
+              <option value="archived">Archived</option>
+            </select>
+          </label>
+          <label>
+            <span>Sort</span>
+            <input onChange={(event) => setDraft((current) => ({ ...current, sortOrder: Number(event.target.value) }))} type="number" value={draft.sortOrder} />
+          </label>
           <label className="admin-support-checkbox">
             <input checked={draft.featured} onChange={(event) => setDraft((current) => ({ ...current, featured: event.target.checked }))} type="checkbox" />
             <span>Featured</span>
           </label>
-          <button className="announcement-primary-button" disabled={createMutation.isPending || !draft.question.trim() || !draft.answer.trim()} onClick={() => void handleAddFaq()} type="button">
-            {createMutation.isPending ? 'Adding...' : '+ Add FAQ'}
+          <button className="announcement-primary-button admin-support-faq-action" disabled={createMutation.isPending || !draft.question.trim() || !draft.answer.trim()} onClick={() => void handleAddFaq()} type="button">
+            {createMutation.isPending ? <Loader2 className="admin-spin" size={14} /> : <Save size={14} />}
+            {createMutation.isPending ? 'Adding...' : 'Add FAQ'}
           </button>
         </article>
 
-        {faqs.map((faq) => (
-          <article className="admin-support-faq-card" key={faq.id}>
-            <label className="admin-support-form-grid__wide">
-              <span>Question</span>
-              <input defaultValue={faq.question} onBlur={(event) => event.target.value !== faq.question && void handleUpdateFaq(faq, { question: event.target.value })} />
-            </label>
-            <label className="admin-support-form-grid__wide">
-              <span>Answer</span>
-              <textarea defaultValue={faq.answer} onBlur={(event) => event.target.value !== faq.answer && void handleUpdateFaq(faq, { answer: event.target.value })} rows={3} />
-            </label>
-            <label>
-              <span>Category</span>
-              <select defaultValue={faq.categoryName ?? ''} onChange={(event) => void handleUpdateFaq(faq, { categoryName: event.target.value })}>
-                {categories.map((category) => (
-                  <option key={category.id} value={category.categoryName}>
-                    {category.categoryName}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Status</span>
-              <select defaultValue={faq.status} onChange={(event) => void handleUpdateFaq(faq, { status: event.target.value as AdminSupportFaq['status'] })}>
-                <option value="draft">Draft</option>
-                <option value="published">Published</option>
-                <option value="archived">Archived</option>
-              </select>
-            </label>
-            <label>
-              <span>Program Keys</span>
-              <input
-                defaultValue={(faq.programKeys ?? []).join(', ')}
-                onBlur={(event) => void handleUpdateFaq(faq, { programKeys: parseCsv(event.target.value) })}
-                placeholder="Blank = all programs"
-              />
-            </label>
-            <label>
-              <span>Cohorts</span>
-              <input
-                defaultValue={(faq.cohortNames ?? []).join(', ')}
-                onBlur={(event) => void handleUpdateFaq(faq, { cohortNames: parseCsv(event.target.value) })}
-                placeholder="Blank = all cohorts"
-              />
-            </label>
-            <label>
-              <span>Sort</span>
-              <input defaultValue={faq.sortOrder} onBlur={(event) => void handleUpdateFaq(faq, { sortOrder: Number(event.target.value) })} type="number" />
-            </label>
-            <label className="admin-support-checkbox">
-              <input checked={faq.featured} onChange={(event) => void handleUpdateFaq(faq, { featured: event.target.checked })} type="checkbox" />
-              <span>Featured</span>
-            </label>
-            <button className="announcement-row-button announcement-row-button--danger" onClick={() => void handleUpdateFaq(faq, { status: 'archived' })} type="button">
-              Archive
-            </button>
-          </article>
-        ))}
+        <div className="admin-support-faq-toolbar">
+          <label>
+            <span>Category</span>
+            <select value={filterCategory} onChange={(event) => setFilterCategory(event.target.value)}>
+              <option value="all">All Categories</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.categoryName}>
+                  {category.categoryName}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Status</span>
+            <select value={filterStatus} onChange={(event) => setFilterStatus(event.target.value as AdminSupportFaq['status'] | 'all')}>
+              {faqStatusOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option === 'all' ? 'All Statuses' : formatOption(option)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="admin-support-faq-count">
+            {filteredFaqs.length} of {faqs.length} FAQs
+          </span>
+        </div>
+
+        <div className="admin-support-faq-list" aria-label="FAQ list">
+          {filteredFaqs.length === 0 ? <EmptyState /> : null}
+          {filteredFaqs.map((faq) => {
+            const isExpanded = expandedFaqId === faq.id;
+            const isEditing = editingFaqId === faq.id && editDraft;
+            const isConfirmingDelete = deleteConfirmId === faq.id;
+            return (
+              <article className={isExpanded ? 'admin-support-faq-accordion admin-support-faq-accordion--open' : 'admin-support-faq-accordion'} key={faq.id}>
+                <button className="admin-support-faq-summary" onClick={() => setExpandedFaqId(isExpanded ? '' : faq.id)} type="button">
+                  <span className="admin-support-faq-summary__main">
+                    <strong>{faq.question}</strong>
+                    <span>
+                      {faq.categoryName || 'No category'} · Sort {faq.sortOrder}
+                    </span>
+                  </span>
+                  <span className="admin-support-faq-summary__badges">
+                    {faq.featured ? <StatusBadge tone="warning">Featured</StatusBadge> : null}
+                    <StatusBadge tone={faq.status === 'published' ? 'safe' : faq.status === 'draft' ? 'neutral' : 'warning'}>{formatOption(faq.status)}</StatusBadge>
+                    <ChevronDown size={16} />
+                  </span>
+                </button>
+
+                {isExpanded ? (
+                  <div className="admin-support-faq-detail">
+                    {isEditing ? (
+                      <div className="admin-support-faq-edit-form">
+                        <label className="admin-support-form-grid__wide">
+                          <span>Question</span>
+                          <input value={editDraft.question} onChange={(event) => setEditDraft((current) => (current ? { ...current, question: event.target.value } : current))} />
+                        </label>
+                        <label className="admin-support-form-grid__wide">
+                          <span>Answer</span>
+                          <textarea
+                            className="admin-support-faq-answer-editor"
+                            onChange={(event) => setEditDraft((current) => (current ? { ...current, answer: event.target.value } : current))}
+                            rows={8}
+                            value={editDraft.answer}
+                          />
+                        </label>
+                        <label>
+                          <span>Category</span>
+                          <select value={editDraft.categoryName} onChange={(event) => setEditDraft((current) => (current ? { ...current, categoryName: event.target.value } : current))}>
+                            {categories.map((category) => (
+                              <option key={category.id} value={category.categoryName}>
+                                {category.categoryName}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Status</span>
+                          <select value={editDraft.status} onChange={(event) => setEditDraft((current) => (current ? { ...current, status: event.target.value as AdminSupportFaq['status'] } : current))}>
+                            <option value="draft">Draft</option>
+                            <option value="published">Published</option>
+                            <option value="archived">Archived</option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>Program Keys</span>
+                          <input value={editDraft.programKeys} onChange={(event) => setEditDraft((current) => (current ? { ...current, programKeys: event.target.value } : current))} placeholder="Blank = all programs" />
+                        </label>
+                        <label>
+                          <span>Cohorts</span>
+                          <input value={editDraft.cohortNames} onChange={(event) => setEditDraft((current) => (current ? { ...current, cohortNames: event.target.value } : current))} placeholder="Blank = all cohorts" />
+                        </label>
+                        <label>
+                          <span>Sort</span>
+                          <input value={editDraft.sortOrder} onChange={(event) => setEditDraft((current) => (current ? { ...current, sortOrder: Number(event.target.value) } : current))} type="number" />
+                        </label>
+                        <label className="admin-support-checkbox">
+                          <input checked={editDraft.featured} onChange={(event) => setEditDraft((current) => (current ? { ...current, featured: event.target.checked } : current))} type="checkbox" />
+                          <span>Featured</span>
+                        </label>
+                        <div className="admin-support-faq-actions">
+                          <button className="announcement-primary-button admin-support-faq-action" disabled={isSaving || !editDraft.question.trim() || !editDraft.answer.trim()} onClick={() => void handleUpdateFaq(faq)} type="button">
+                            {updateMutation.isPending ? <Loader2 className="admin-spin" size={14} /> : <Save size={14} />}
+                            {updateMutation.isPending ? 'Saving...' : 'Save FAQ'}
+                          </button>
+                          <button className="announcement-secondary-button admin-support-faq-action" disabled={isSaving} onClick={cancelEditingFaq} type="button">
+                            <X size={14} />
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="admin-support-faq-answer">{faq.answer}</p>
+                        <div className="admin-support-faq-meta">
+                          <span>Programs: {(faq.programKeys ?? []).length > 0 ? (faq.programKeys ?? []).join(', ') : 'All programs'}</span>
+                          <span>Cohorts: {(faq.cohortNames ?? []).length > 0 ? (faq.cohortNames ?? []).join(', ') : 'All cohorts'}</span>
+                        </div>
+                        {isConfirmingDelete ? (
+                          <div className="admin-support-faq-delete-confirm">
+                            <span>This will permanently delete the FAQ.</span>
+                            <button className="announcement-row-button announcement-row-button--danger admin-support-faq-action" disabled={deleteMutation.isPending} onClick={() => void handleDeleteFaq(faq)} type="button">
+                              {deleteMutation.isPending ? <Loader2 className="admin-spin" size={14} /> : <Trash2 size={14} />}
+                              Delete permanently
+                            </button>
+                            <button className="announcement-secondary-button admin-support-faq-action" disabled={deleteMutation.isPending} onClick={() => setDeleteConfirmId('')} type="button">
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="admin-support-faq-actions">
+                            <button className="announcement-secondary-button admin-support-faq-action" disabled={isSaving} onClick={() => startEditingFaq(faq)} type="button">
+                              <Edit3 size={14} />
+                              Edit
+                            </button>
+                            <button className="announcement-row-button announcement-row-button--danger admin-support-faq-action" disabled={isSaving} onClick={() => setDeleteConfirmId(faq.id)} type="button">
+                              <Trash2 size={14} />
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
       </div>
     </section>
   );

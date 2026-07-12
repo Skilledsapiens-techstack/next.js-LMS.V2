@@ -34,9 +34,9 @@ export const defaultFeatureMessages: Record<string, string> = {
   payments: 'Payments and access details will be available soon.',
   'project-submissions': 'Project submissions will be available soon.',
   projects: 'Live Project Hub will be enabled soon.',
-  recordings: 'Recordings will be available after your sessions are published.',
-  resources: 'Resources will be available after onboarding.',
-  schedule: 'Schedule will be visible once sessions are planned.',
+  recordings: 'Watch Recordings will be available after your sessions are published.',
+  resources: 'Resource Library will be available after onboarding.',
+  schedule: 'Upcoming Workshops will be visible once sessions are planned.',
   support: 'Support will be available soon.',
   'whatsapp-widget': 'Contact Program Coordinator'
 };

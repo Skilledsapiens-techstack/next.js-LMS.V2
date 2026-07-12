@@ -8,17 +8,20 @@ export type AdminProjectRoleStatus = 'active' | 'inactive';
 
 export type AdminProjectTask = {
   description?: string;
+  sectionType?: string;
   title: string;
 };
 
 export type AdminProjectDocument = {
   description?: string;
   link?: string;
+  label?: string;
   title: string;
   type?: string;
 };
 
 export type AdminProjectDeliverable = {
+  description?: string;
   format?: string;
   note?: string;
   title: string;
@@ -39,7 +42,6 @@ export type AdminProject = {
   projectRole?: string;
   roleId?: string;
   status: AdminProjectStatus;
-  submissionLink?: string;
   tasks: AdminProjectTask[];
   title: string;
   updatedAt?: string;
@@ -70,7 +72,6 @@ export type AdminProjectWritePayload = {
   resources?: string;
   roleId?: string;
   status: AdminProjectStatus;
-  submissionLink?: string | null;
   title: string;
 };
 

@@ -335,7 +335,7 @@ export function StudentResourcesPage() {
   if (resourcesQuery.isLoading) {
     return (
       <div className="page-stack">
-        <PageHeader description="Loading resources visible to your student profile." eyebrow="Student resources" title="Resources" />
+        <PageHeader description="Loading resource library items visible to your student profile." eyebrow="Resource library" title="Resource Library" />
         <LoadingState />
       </div>
     );
@@ -344,7 +344,7 @@ export function StudentResourcesPage() {
   if (resourcesQuery.isError) {
     return (
       <div className="page-stack">
-        <PageHeader description="Resources could not be loaded right now." eyebrow="Student resources" title="Resources unavailable" />
+        <PageHeader description="Resource Library could not be loaded right now." eyebrow="Resource library" title="Resource Library unavailable" />
         <ErrorState />
       </div>
     );
@@ -354,8 +354,8 @@ export function StudentResourcesPage() {
     <div className="page-stack">
       <PageHeader
         description="Browse learning resources available to your account, including templates, compendiums, and helpful links."
-        eyebrow="Student resources"
-        title="Resources"
+        eyebrow="Resource library"
+        title="Resource Library"
       />
 
       <div className="metric-grid">
@@ -485,9 +485,9 @@ export function StudentResourcesPage() {
                 ? 'No free resources are available for this filter yet.'
                 : accessType === 'paid'
                   ? 'No paid resources are available for this filter yet.'
-                  : 'Resources mapped to your account will appear here.'
+                  : 'Resource library items mapped to your account will appear here.'
           }
-          title={search || resourceType || accessType !== 'all' ? 'No matching resources' : 'No resources yet'}
+          title={search || resourceType || accessType !== 'all' ? 'No matching resource library items' : 'No resource library items yet'}
         />
       )}
 

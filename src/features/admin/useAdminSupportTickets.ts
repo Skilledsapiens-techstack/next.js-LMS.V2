@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthProvider';
-import { apiGet, apiPatch, apiPost } from '../../lib/supabaseApi';
+import { apiDelete, apiGet, apiPatch, apiPost } from '../../lib/supabaseApi';
 import { PaginatedResponse } from '../student/useStudentAnnouncements';
 
 export type AdminSupportTicketStatus = 'open' | 'in_review' | 'waiting_for_student' | 'resolved' | 'closed';
@@ -196,6 +196,19 @@ export function useUpdateAdminSupportFaq() {
       apiPatch<{ faq: AdminSupportFaq; message: string }, Partial<AdminSupportFaq>>(`/admins/support-faqs/${encodeURIComponent(id)}`, {
         accessToken: accessToken ?? undefined,
         body
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['admin-support-faqs'] })
+  });
+}
+
+export function useDeleteAdminSupportFaq() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiDelete<{ message: string; faqId: string }>(`/admins/support-faqs/${encodeURIComponent(id)}`, {
+        accessToken: accessToken ?? undefined
       }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['admin-support-faqs'] })
   });

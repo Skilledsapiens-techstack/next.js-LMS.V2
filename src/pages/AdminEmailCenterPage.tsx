@@ -5,6 +5,7 @@ import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates
 import { StatusBadge } from '../components/StatusBadge';
 import { AdminCohort, useAdminCohorts } from '../features/admin/useAdminCohorts';
 import {
+  AdminEmailRecipientFilters,
   AdminEmailTemplate,
   AdminEmailTemplatePayload,
   useAdminEmailQueue,
@@ -15,7 +16,10 @@ import {
   useSendAdminEmail,
   useUpdateAdminEmailTemplate
 } from '../features/admin/useAdminEmailCenter';
+import { useAdminPrograms } from '../features/admin/useAdminPrograms';
+import { useAdminProjectRoles } from '../features/admin/useAdminProjects';
 import { AdminResource, useAdminResources } from '../features/admin/useAdminResources';
+import { useAdminStudentCollegeOptions } from '../features/admin/useAdminStudents';
 import { AdminWorkshop, useAdminWorkshops } from '../features/admin/useAdminWorkshops';
 
 type PhaseOption = {
@@ -43,8 +47,26 @@ const phaseOptions: PhaseOption[] = [
 
 const sendModes = [
   { label: 'Direct student email(s)', value: 'direct' },
+  { label: 'All active LMS students', value: 'all_active_students' },
   { label: 'All students in selected cohort', value: 'cohort_students' },
   { label: 'Cohort Google Group', value: 'cohort_google_group' }
+] as const;
+
+const educationYearOptions = ['1st Year', '2nd Year', '3rd Year', '4th Year', 'Graduate', 'Working Professional'] as const;
+const authInviteStatusOptions = [
+  { label: 'Any auth / invite status', value: 'any' },
+  { label: 'Auth linked', value: 'auth_linked' },
+  { label: 'Auth not linked', value: 'auth_missing' },
+  { label: 'Invite pending', value: 'invite_pending' },
+  { label: 'Invite sent', value: 'invite_sent' },
+  { label: 'Invite failed', value: 'invite_failed' },
+  { label: 'Invite skipped', value: 'invite_skipped' },
+  { label: 'Dry run', value: 'invite_dry_run' }
+] as const;
+const paidAccessStatusOptions = [
+  { label: 'Any paid access status', value: 'any' },
+  { label: 'Has active paid access', value: 'active' },
+  { label: 'No active paid access', value: 'none' }
 ] as const;
 
 type EmailCenterTab = 'compose' | 'templates' | 'activity';
@@ -349,6 +371,9 @@ export function AdminEmailCenterPage() {
   const templatesQuery = useAdminEmailTemplates({ sort: 'order', status: 'all' });
   const queueQuery = useAdminEmailQueue({ limit: 20 });
   const cohortsQuery = useAdminCohorts({ limit: 500, page: 1, status: 'all' });
+  const programsQuery = useAdminPrograms({ limit: 500, page: 1, status: 'all' });
+  const rolesQuery = useAdminProjectRoles({ limit: 500, page: 1, status: 'active' });
+  const collegeOptionsQuery = useAdminStudentCollegeOptions();
   const workshopsQuery = useAdminWorkshops({ limit: 300, page: 1, status: 'all' });
   const resourcesQuery = useAdminResources({ limit: 300, page: 1, status: 'active' });
   const createTemplate = useCreateAdminEmailTemplate();
@@ -366,6 +391,7 @@ export function AdminEmailCenterPage() {
   const [selectedCohorts, setSelectedCohorts] = useState<string[]>([]);
   const [cohortSearch, setCohortSearch] = useState('');
   const [googleGroupEmail, setGoogleGroupEmail] = useState('');
+  const [recipientFilters, setRecipientFilters] = useState<AdminEmailRecipientFilters>({});
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [testEmail, setTestEmail] = useState('');
@@ -410,12 +436,27 @@ export function AdminEmailCenterPage() {
     return [];
   }, [relatedKind, resources, workshops]);
   const cohorts = cohortsQuery.data?.items ?? [];
+  const programs = programsQuery.data?.items ?? [];
+  const roleOptions = rolesQuery.data?.items ?? [];
+  const collegeOptions = collegeOptionsQuery.data?.items ?? [];
   const filteredCohorts = cohorts.filter((cohort) => cohort.name.toLowerCase().includes(cohortSearch.toLowerCase()) || (cohort.cohortId ?? '').toLowerCase().includes(cohortSearch.toLowerCase()));
   const selectedCohortRows = selectedCohorts.map((name) => cohorts.find((cohort) => cohort.name === name)).filter((cohort): cohort is AdminCohort => Boolean(cohort));
   const variables = useAvailableVariables(phase, selectedTemplate);
-  const estimatedRecipientCount = sendMode === 'direct' ? splitEmails(directEmails).length : sendMode === 'cohort_google_group' ? selectedCohortRows.filter((cohort) => googleGroupEmail || cohort.googleGroup).length : selectedCohorts.length;
+  const estimatedRecipientCount = sendMode === 'direct'
+    ? splitEmails(directEmails).length
+    : sendMode === 'cohort_google_group'
+      ? selectedCohortRows.filter((cohort) => googleGroupEmail || cohort.googleGroup).length
+      : sendMode === 'all_active_students'
+        ? (resolvedSummary?.recipients ?? 0)
+        : selectedCohorts.length;
   const recipientCount = resolvedSummary?.recipients ?? estimatedRecipientCount;
-  const lastRefresh = [templatesQuery.dataUpdatedAt, queueQuery.dataUpdatedAt, cohortsQuery.dataUpdatedAt].filter(Boolean).sort((a, b) => b - a)[0];
+  const selectedTargetLabel = sendMode === 'all_active_students'
+    ? 'All active LMS students'
+    : selectedCohorts.length
+      ? selectedCohorts.join(', ')
+      : 'Not selected';
+  const activeRecipientFilterCount = Object.values(recipientFilters).filter(Boolean).length;
+  const lastRefresh = [templatesQuery.dataUpdatedAt, queueQuery.dataUpdatedAt, cohortsQuery.dataUpdatedAt, programsQuery.dataUpdatedAt, rolesQuery.dataUpdatedAt, collegeOptionsQuery.dataUpdatedAt].filter(Boolean).sort((a, b) => b - a)[0];
 
   useEffect(() => {
     if (!selectedTemplate) return;
@@ -426,7 +467,7 @@ export function AdminEmailCenterPage() {
   useEffect(() => {
     setResolvedSummary(null);
     setConfirmSend(false);
-  }, [batchSize, body, directEmails, googleGroupEmail, relatedParams, selectedCohorts, sendMode, subject, templateKey]);
+  }, [batchSize, body, directEmails, googleGroupEmail, recipientFilters, relatedParams, selectedCohorts, sendMode, subject, templateKey]);
 
   useEffect(() => {
     if (!message) return undefined;
@@ -480,6 +521,20 @@ export function AdminEmailCenterPage() {
     setSelectedCohorts((current) => (current.includes(name) ? current.filter((item) => item !== name) : [...current, name]));
   }
 
+  function updateRecipientFilter(key: keyof AdminEmailRecipientFilters, value: string) {
+    setRecipientFilters((current) => {
+      const next = { ...current, [key]: value || undefined };
+      Object.keys(next).forEach((filterKey) => {
+        if (!next[filterKey as keyof AdminEmailRecipientFilters]) delete next[filterKey as keyof AdminEmailRecipientFilters];
+      });
+      return next;
+    });
+  }
+
+  function clearRecipientFilters() {
+    setRecipientFilters({});
+  }
+
   function useTemplate(template: AdminEmailTemplate) {
     setActiveTab('compose');
     setPhase(template.phase);
@@ -516,6 +571,7 @@ export function AdminEmailCenterPage() {
       directEmails,
       googleGroupEmail,
       params: relatedParams,
+      recipientFilters,
       sendMode,
       subject,
       templateKey
@@ -670,7 +726,7 @@ export function AdminEmailCenterPage() {
     <div className="page-stack admin-email-center-page">
       <PageHeader
         actions={
-          <button className="segmented-button" onClick={() => void Promise.all([templatesQuery.refetch(), queueQuery.refetch(), cohortsQuery.refetch(), workshopsQuery.refetch(), resourcesQuery.refetch()])} type="button">
+          <button className="segmented-button" onClick={() => void Promise.all([templatesQuery.refetch(), queueQuery.refetch(), cohortsQuery.refetch(), programsQuery.refetch(), rolesQuery.refetch(), collegeOptionsQuery.refetch(), workshopsQuery.refetch(), resourcesQuery.refetch()])} type="button">
             <RefreshCw size={18} />
             Refresh Email
           </button>
@@ -777,6 +833,10 @@ export function AdminEmailCenterPage() {
                 <textarea onChange={(event) => setDirectEmails(event.target.value)} placeholder="student1@email.com, student2@email.com, ..." value={directEmails} />
                 <small>Enter one or more emails separated by commas.</small>
               </label>
+            ) : sendMode === 'all_active_students' ? (
+              <div className="admin-email-wide auth-alert auth-alert--success">
+                Sends to active LMS students only. Preview calculates the exact deduped recipient count before any batch is sent.
+              </div>
             ) : (
               <div className="admin-email-wide">
                 <span className="admin-email-label">Select Cohort(s) *</span>
@@ -810,6 +870,104 @@ export function AdminEmailCenterPage() {
                 <input onChange={(event) => setGoogleGroupEmail(event.target.value)} placeholder={selectedCohortRows[0]?.googleGroup || 'cohort-group@googlegroups.com'} value={googleGroupEmail} />
                 <small>Auto-fills from selected cohort if configured. You can override before sending.</small>
               </label>
+            ) : null}
+
+            {sendMode === 'all_active_students' || sendMode === 'cohort_students' ? (
+              <section className="admin-email-recipient-filters admin-email-wide" aria-label="Email recipient quick filters">
+                <div className="admin-email-recipient-filters__header">
+                  <div>
+                    <span className="eyebrow">Quick filters</span>
+                    <h3>Refine student recipients</h3>
+                  </div>
+                  <button className="segmented-button" onClick={clearRecipientFilters} type="button">
+                    Clear filters
+                  </button>
+                </div>
+                <div className="admin-email-filter-grid">
+                  <label>
+                    <span>Program</span>
+                    <select value={recipientFilters.programKey ?? ''} onChange={(event) => updateRecipientFilter('programKey', event.target.value)}>
+                      <option value="">All programs</option>
+                      {programs.map((program) => (
+                        <option key={program.id} value={program.programKey}>{program.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Cohort</span>
+                    <select value={recipientFilters.cohortName ?? ''} onChange={(event) => updateRecipientFilter('cohortName', event.target.value)}>
+                      <option value="">All cohorts</option>
+                      {cohorts.map((cohort) => (
+                        <option key={cohort.id} value={cohort.name}>{cohort.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>College</span>
+                    <select value={recipientFilters.collegeName ?? ''} onChange={(event) => updateRecipientFilter('collegeName', event.target.value)}>
+                      <option value="">All colleges</option>
+                      {collegeOptions.map((college) => (
+                        <option key={college} value={college}>{college}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Education Year</span>
+                    <select value={recipientFilters.educationYear ?? ''} onChange={(event) => updateRecipientFilter('educationYear', event.target.value)}>
+                      <option value="">All years</option>
+                      {educationYearOptions.map((year) => (
+                        <option key={year} value={year}>{year}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Onboarding From</span>
+                    <input
+                      value={recipientFilters.onboardingDateFrom ?? ''}
+                      onChange={(event) => updateRecipientFilter('onboardingDateFrom', event.target.value)}
+                      onInput={(event) => updateRecipientFilter('onboardingDateFrom', event.currentTarget.value)}
+                      type="date"
+                    />
+                  </label>
+                  <label>
+                    <span>Onboarding To</span>
+                    <input
+                      value={recipientFilters.onboardingDateTo ?? ''}
+                      onChange={(event) => updateRecipientFilter('onboardingDateTo', event.target.value)}
+                      onInput={(event) => updateRecipientFilter('onboardingDateTo', event.currentTarget.value)}
+                      type="date"
+                    />
+                  </label>
+                  <label>
+                    <span>Auth & Invite Status</span>
+                    <select value={recipientFilters.authInviteStatus ?? 'any'} onChange={(event) => updateRecipientFilter('authInviteStatus', event.target.value === 'any' ? '' : event.target.value)}>
+                      {authInviteStatusOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Live Project Role</span>
+                    <select value={recipientFilters.liveProjectRoleId ?? ''} onChange={(event) => updateRecipientFilter('liveProjectRoleId', event.target.value)}>
+                      <option value="">All roles</option>
+                      {roleOptions.map((role) => (
+                        <option key={role.id} value={role.roleId || role.id}>{role.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Paid Access Status</span>
+                    <select value={recipientFilters.paidAccessStatus ?? 'any'} onChange={(event) => updateRecipientFilter('paidAccessStatus', event.target.value === 'any' ? '' : event.target.value)}>
+                      {paidAccessStatusOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <small>
+                  Filters apply to resolved student recipients only. Manual direct emails and Google Group mode stay unchanged.
+                </small>
+              </section>
             ) : null}
 
             <label className="admin-email-wide">
@@ -896,9 +1054,24 @@ export function AdminEmailCenterPage() {
               </article>
               <article>
                 <span>Cohort</span>
-                <strong>{selectedCohorts.length ? selectedCohorts.join(', ') : 'Not selected'}</strong>
+                <strong>{selectedTargetLabel}</strong>
               </article>
-              {recipientCount === 0 ? <div className="auth-alert auth-alert--error">Add at least one email recipient.</div> : null}
+              {(sendMode === 'all_active_students' || sendMode === 'cohort_students') && activeRecipientFilterCount > 0 ? (
+                <article>
+                  <span>Quick Filters</span>
+                  <strong>{activeRecipientFilterCount} active</strong>
+                  <small>Preview refresh will calculate the exact filtered recipient count.</small>
+                </article>
+              ) : null}
+              {recipientCount === 0 ? (
+                <div className="auth-alert auth-alert--error">
+                  {resolvedSummary
+                    ? 'No matching deliverable recipients found for the current audience and filters.'
+                    : sendMode === 'all_active_students'
+                      ? 'Refresh preview to resolve active LMS student recipients.'
+                      : 'Add at least one email recipient.'}
+                </div>
+              ) : null}
               {resolvedSummary?.previewRecipients?.length ? (
                 <div className="admin-email-recipient-preview">
                   <span>First recipients</span>

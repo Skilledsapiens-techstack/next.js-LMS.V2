@@ -321,21 +321,21 @@ function buildSummaryCards(counts: ScopedCounts): SummaryCard[] {
     {
       caption: 'Join-ready live sessions',
       icon: CalendarDays,
-      label: 'Schedule',
+      label: 'Upcoming Workshops',
       path: '/student/schedule',
       value: String(counts.schedule)
     },
     {
       caption: 'Completed sessions to watch',
       icon: Video,
-      label: 'Recordings',
+      label: 'Watch Recordings',
       path: '/student/recordings',
       value: String(counts.recordings)
     },
     {
       caption: 'Templates and useful links',
       icon: Library,
-      label: 'Resources',
+      label: 'Resource Library',
       path: '/student/resources',
       value: String(counts.resources)
     },
@@ -358,14 +358,14 @@ function buildSummaryCards(counts: ScopedCounts): SummaryCard[] {
 
 function getSessionAction(item?: StudentScheduleItem) {
   if (!item) {
-    return { label: 'View schedule', path: '/student/schedule' };
+    return { label: 'View upcoming workshops', path: '/student/schedule' };
   }
 
   if (!item.locked && item.hasAccess !== false && item.joinUrl) {
     return { href: item.joinUrl, label: item.status === 'Live' ? 'Join live class' : 'Open meeting link' };
   }
 
-  return { label: 'View schedule', path: '/student/schedule' };
+  return { label: 'View upcoming workshops', path: '/student/schedule' };
 }
 
 function renderItemList<TItem>({
@@ -414,6 +414,7 @@ export function StudentDashboardPage() {
   };
   const summaryCards = buildSummaryCards(scopedCounts);
   const trackRoles = asArray(profile?.trackRoleIds).filter((role): role is string => typeof role === 'string');
+  const liveProjectRoles = uniqueNames(asArray(profile?.liveProjectRoles).filter((role): role is string => typeof role === 'string'));
   const cohortNames = uniqueNames([
     ...pickArray(dashboardQuery.data?.dashboard, ['cohorts', 'studentCohorts']).map((cohort) => textValue(cohort, ['name', 'cohort_name', 'cohortName'])),
     profile?.cohortName
@@ -468,11 +469,21 @@ export function StudentDashboardPage() {
               <StatusBadge key={role}>{role}</StatusBadge>
             ))}
           </div>
+          {liveProjectRoles.length > 0 ? (
+            <div className="student-live-project-roles" aria-label="Assigned live project roles">
+              <span>Live Project Role</span>
+              <div>
+                {liveProjectRoles.map((role) => (
+                  <StatusBadge key={role}>{role}</StatusBadge>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
         <div className="student-home-actions">
           <Link className="student-action student-action--primary" to="/student/schedule">
             <CalendarDays size={18} />
-            View schedule
+            View upcoming workshops
           </Link>
           <Link className="student-action" to="/student/recordings">
             <PlayCircle size={18} />
@@ -556,7 +567,7 @@ export function StudentDashboardPage() {
             </Link>
           </div>
           {renderItemList<StudentRecording>({
-            emptyText: 'Recordings published for your access will appear here.',
+            emptyText: 'Watch Recordings published for your access will appear here.',
             items: recordingItems,
             renderItem: (recording) => (
               <Link className="student-learning-row" key={recording.id} to="/student/recordings">
@@ -573,7 +584,7 @@ export function StudentDashboardPage() {
         <article className="student-panel">
           <div className="student-panel__header">
             <div>
-              <span className="eyebrow">Resources</span>
+              <span className="eyebrow">Resource Library</span>
               <h2>Recently available</h2>
             </div>
             <Link className="student-panel__link" to="/student/resources">
@@ -581,7 +592,7 @@ export function StudentDashboardPage() {
             </Link>
           </div>
           {renderItemList<StudentResource>({
-            emptyText: 'Resources mapped to your access will appear here.',
+            emptyText: 'Resource Library items mapped to your access will appear here.',
             items: resourceItems,
             renderItem: (resource) => (
               <Link className="student-learning-row" key={resource.id} to="/student/resources">
@@ -624,7 +635,7 @@ export function StudentDashboardPage() {
       <section className="student-shortcut-grid" aria-label="Student dashboard shortcuts">
         <Link className="student-shortcut-card" to="/student/schedule">
           <Clock3 size={18} />
-          <span>Live classes</span>
+          <span>Upcoming Workshops</span>
         </Link>
         <Link className="student-shortcut-card" to="/student/projects">
           <FileCheck2 size={18} />

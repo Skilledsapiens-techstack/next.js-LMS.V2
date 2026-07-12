@@ -157,11 +157,11 @@ function ProgramCard({ cohort, stats }: { cohort: StudentCohort; stats: ProgramS
         </span>
         <span>
           <b>{stats.recordings}</b>
-          Recordings
+          Watch Recordings
         </span>
         <span>
           <b>{stats.resources}</b>
-          Resources
+          Resource Library
         </span>
       </div>
 
@@ -183,15 +183,15 @@ function ProgramCard({ cohort, stats }: { cohort: StudentCohort; stats: ProgramS
       <div className="program-card__actions" aria-label={`${programTitle} shortcuts`}>
         <Link className="student-action" to="/student/schedule">
           <CalendarDays size={16} />
-          Schedule
+          Upcoming Workshops
         </Link>
         <Link className="student-action" to="/student/recordings">
           <PlayCircle size={16} />
-          Recordings
+          Watch Recordings
         </Link>
         <Link className="student-action" to={programLink('/student/resources', cohort)}>
           <Library size={16} />
-          Resources
+          Resource Library
         </Link>
         {whatsappLink ? (
           <a className="student-action" href={whatsappLink} rel="noreferrer" target="_blank" title={whatsappLabel}>

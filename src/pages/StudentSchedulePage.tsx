@@ -181,7 +181,7 @@ export function StudentSchedulePage() {
   if (scheduleQuery.isLoading) {
     return (
       <div className="page-stack">
-        <PageHeader description="Loading workshops visible to your student profile." eyebrow="Student schedule" title="Schedule" />
+        <PageHeader description="Loading workshops visible to your student profile." eyebrow="Upcoming workshops" title="Upcoming Workshops" />
         <LoadingState />
       </div>
     );
@@ -190,7 +190,7 @@ export function StudentSchedulePage() {
   if (scheduleQuery.isError) {
     return (
       <div className="page-stack">
-        <PageHeader description="Schedule could not be loaded right now." eyebrow="Student schedule" title="Schedule unavailable" />
+        <PageHeader description="Upcoming workshops could not be loaded right now." eyebrow="Upcoming workshops" title="Upcoming Workshops unavailable" />
         <ErrorState />
       </div>
     );
@@ -200,8 +200,8 @@ export function StudentSchedulePage() {
     <div className="page-stack student-schedule-page">
       <PageHeader
         description="Track live and scheduled workshops available to your account."
-        eyebrow="Student schedule"
-        title="Schedule"
+        eyebrow="Upcoming workshops"
+        title="Upcoming Workshops"
       />
 
       <section className="student-schedule-hero" aria-label="Next session">
@@ -241,7 +241,7 @@ export function StudentSchedulePage() {
         </article>
       </div>
 
-      <section className="student-schedule-chips" aria-label="Schedule filters">
+      <section className="student-schedule-chips" aria-label="Upcoming workshop filters">
         {accessFilters.map((filter) => (
           <button className={`segmented-button ${accessType === filter.value ? 'segmented-button--active' : ''}`} key={filter.value} onClick={() => updateAccessType(filter.value)} type="button">
             {filter.label}
@@ -259,7 +259,7 @@ export function StudentSchedulePage() {
         <EmptyState />
       )}
 
-      <nav className="pagination-bar" aria-label="Schedule pagination">
+      <nav className="pagination-bar" aria-label="Upcoming workshops pagination">
         {safePage > 1 ? (
           <Link className="pagination-link" to={buildPageLink(safePage - 1, accessType)}>
             Previous page
@@ -281,7 +281,7 @@ export function StudentSchedulePage() {
 
       {lockedCount > 0 ? <LockedState /> : null}
 
-      <StateBlock title="Schedule access">
+      <StateBlock title="Upcoming Workshops access">
         Only sessions mapped to your account are shown here. Join links and paid access stay protected for eligible learners.
       </StateBlock>
     </div>

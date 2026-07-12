@@ -10,6 +10,7 @@ type ZoomMeetingAction =
   | 'cancel-meeting'
   | 'complete-meeting'
   | 'add-manual-recording'
+  | 'edit-published-recording'
   | 'fetch-recordings'
   | 'publish-recording'
   | 'reject-recording';
@@ -23,6 +24,7 @@ type WorkshopPayload = {
     date?: string;
     durationMinutes?: number;
     customJoinUrl?: string | null;
+    programKey?: string | null;
     time?: string;
     title?: string;
     workshopStatus?: string;
@@ -510,6 +512,58 @@ async function addManualRecording(supabase: ReturnType<typeof createClient>, act
   return { candidate, candidateId: candidate.id, count: 1, workshop };
 }
 
+async function editPublishedRecording(supabase: ReturnType<typeof createClient>, actorEmail: string, payload: WorkshopPayload) {
+  const workshopId = requireText(payload.workshopId, 'Workshop row ID is required.');
+  const workshop = await getWorkshopById(supabase, workshopId);
+  if (workshop.workshop_status !== 'Completed') throw new Error('Only completed published workshops can be edited here.');
+
+  const body = payload.body ?? {};
+  const title = requireText(body.title ?? workshop.title, 'Recording title is required.');
+  const youtubeUrl = ensureHttpUrl(body.youtubeVideoUrl);
+  const alternateUrl = ensureHttpUrl(body.zoomRecordingUrl);
+  if (!youtubeUrl && !alternateUrl) throw new Error('Published recordings must keep at least one valid recording URL.');
+
+  const cohortNames = Array.isArray(body.cohortNames)
+    ? Array.from(new Set(body.cohortNames.map((name) => String(name).trim()).filter(Boolean)))
+    : workshop.cohort_names;
+  const previousProgramKey = typeof (workshop as Record<string, unknown>).program_key === 'string' ? String((workshop as Record<string, unknown>).program_key) : null;
+  const programKey =
+    Object.prototype.hasOwnProperty.call(body, 'programKey')
+      ? typeof body.programKey === 'string' && body.programKey.trim()
+        ? body.programKey.trim().toLowerCase()
+        : null
+      : previousProgramKey;
+  const passcode = typeof body.zoomRecordingPassword === 'string' && body.zoomRecordingPassword.trim() ? body.zoomRecordingPassword.trim() : null;
+
+  const updateRow = {
+    cohort_names: cohortNames,
+    program_key: programKey,
+    title,
+    updated_at: new Date().toISOString(),
+    workshop_status: 'Completed',
+    youtube_video_url: youtubeUrl,
+    zoom_recording_password: passcode,
+    zoom_recording_url: alternateUrl
+  };
+
+  const { data, error } = await supabase.from('workshops').update(updateRow).eq('id', workshopId).select('*').single();
+  if (error) throw error;
+
+  await writeAudit(supabase, actorEmail, 'admin_published_recording_updated', data, {
+    changedFields: Object.keys(updateRow).sort(),
+    previous: {
+      cohort_names: workshop.cohort_names,
+      program_key: (workshop as Record<string, unknown>).program_key ?? null,
+      title: workshop.title,
+      youtube_video_url: (workshop as Record<string, unknown>).youtube_video_url ?? null,
+      zoom_recording_password: (workshop as Record<string, unknown>).zoom_recording_password ?? null,
+      zoom_recording_url: (workshop as Record<string, unknown>).zoom_recording_url ?? null
+    }
+  });
+
+  return { workshop: data };
+}
+
 async function cancelMeeting(supabase: ReturnType<typeof createClient>, actorEmail: string, payload: WorkshopPayload) {
   const workshopId = requireText(payload.workshopId, 'Workshop row ID is required.');
   const workshop = await getWorkshopById(supabase, workshopId);
@@ -639,6 +693,7 @@ Deno.serve(async (request) => {
     if (payload.action === 'cancel-meeting') return jsonResponse({ workshop: await cancelMeeting(supabase, admin.email, payload) });
     if (payload.action === 'complete-meeting') return jsonResponse({ workshop: await completeMeeting(supabase, admin.email, payload) });
     if (payload.action === 'add-manual-recording') return jsonResponse(await addManualRecording(supabase, admin.email, payload));
+    if (payload.action === 'edit-published-recording') return jsonResponse(await editPublishedRecording(supabase, admin.email, payload));
     if (payload.action === 'fetch-recordings') return jsonResponse(await fetchRecordings(supabase, admin.email, payload));
     if (payload.action === 'publish-recording') return jsonResponse(await publishRecording(supabase, admin.email, payload));
     if (payload.action === 'reject-recording') return jsonResponse(await rejectRecording(supabase, admin.email, payload));
