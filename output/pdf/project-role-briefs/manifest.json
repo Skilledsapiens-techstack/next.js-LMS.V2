@@ -1,0 +1,100 @@
+{
+  "pdf_count": 6,
+  "project_count": 20,
+  "roles": [
+    {
+      "role_name": "Management Consulting Domain",
+      "project_count": 3,
+      "pdf": "output/pdf/project-role-briefs/skilled-sapiens-scope-of-work-management-consulting-domain.pdf",
+      "included_roles": [
+        {
+          "role_name": "Growth & Strategy Consultant",
+          "project_count": 2
+        },
+        {
+          "role_name": "Business Analyst",
+          "project_count": 1
+        }
+      ]
+    },
+    {
+      "role_name": "Sales & Marketing Manager",
+      "project_count": 7,
+      "pdf": "output/pdf/project-role-briefs/skilled-sapiens-scope-of-work-sales-and-marketing-manager.pdf",
+      "included_roles": [
+        {
+          "role_name": "Sales & Marketing Manager",
+          "project_count": 2
+        },
+        {
+          "role_name": "Digital Marketing Specialist",
+          "project_count": 2
+        },
+        {
+          "role_name": "Product Marketing Manager",
+          "project_count": 1
+        },
+        {
+          "role_name": "Market Research & Analytics",
+          "project_count": 2
+        }
+      ]
+    },
+    {
+      "role_name": "Certified Product Manager | Product & Brand Management Role",
+      "project_count": 4,
+      "pdf": "output/pdf/project-role-briefs/skilled-sapiens-scope-of-work-certified-product-manager-product-and-brand-management-role.pdf",
+      "included_roles": [
+        {
+          "role_name": "Product & Brand Manager",
+          "project_count": 4
+        }
+      ]
+    },
+    {
+      "role_name": "HR Manager | HR Roles",
+      "project_count": 4,
+      "pdf": "output/pdf/project-role-briefs/skilled-sapiens-scope-of-work-hr-manager-hr-roles.pdf",
+      "included_roles": [
+        {
+          "role_name": "Employer Branding Manager",
+          "project_count": 1
+        },
+        {
+          "role_name": "HR Analytics Consultants",
+          "project_count": 1
+        },
+        {
+          "role_name": "Learning & Development Consultants",
+          "project_count": 1
+        },
+        {
+          "role_name": "Talent Acquisition Specialist",
+          "project_count": 1
+        }
+      ]
+    },
+    {
+      "role_name": "Certified Equity Research & Fin Modeling Analyst",
+      "project_count": 1,
+      "pdf": "output/pdf/project-role-briefs/skilled-sapiens-scope-of-work-certified-equity-research-and-fin-modeling-analyst.pdf",
+      "included_roles": [
+        {
+          "role_name": "Equity Research & Financial Modeling Analyst",
+          "project_count": 1
+        }
+      ]
+    },
+    {
+      "role_name": "Certified Private Equity & Venture Capital Analyst",
+      "project_count": 1,
+      "pdf": "output/pdf/project-role-briefs/skilled-sapiens-scope-of-work-certified-private-equity-and-venture-capital-analyst.pdf",
+      "included_roles": [
+        {
+          "role_name": "Private Equity & Venture Capital Analyst",
+          "project_count": 1
+        }
+      ]
+    }
+  ]
+}
