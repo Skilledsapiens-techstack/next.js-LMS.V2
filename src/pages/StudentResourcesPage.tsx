@@ -5,16 +5,8 @@ import { ErrorState, LoadingState, LockedState } from '../components/ScreenState
 import { PageHeader } from '../components/PageHeader';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
-import { StudentResource, StudentResourceAccessType, useStudentResources } from '../features/student/useStudentResources';
+import { StudentResource, useStudentResources } from '../features/student/useStudentResources';
 import { StudentPaymentOrder, useStudentPaymentOrders } from '../features/student/useStudentPaymentOrders';
-
-type AccessFilter = StudentResourceAccessType | 'all';
-
-const accessFilters: Array<{ label: string; value: AccessFilter }> = [
-  { label: 'All', value: 'all' },
-  { label: 'Free', value: 'free' },
-  { label: 'Paid', value: 'paid' }
-];
 
 const resourceTypeOptions = [
   { label: 'All resource types', value: '' },
@@ -32,10 +24,6 @@ const bookmarkStorageKey = 'skilled-sapiens-student-resource-bookmarks';
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
-}
-
-function asAccessType(value: string | null): AccessFilter {
-  return value === 'free' || value === 'paid' ? value : 'all';
 }
 
 function formatDate(value: string | undefined) {
@@ -68,10 +56,9 @@ function formatReadableLabel(value: string | undefined) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function buildPageLink(page: number, accessType: AccessFilter, search: string, resourceType: string, programKey: string) {
+function buildPageLink(page: number, search: string, resourceType: string, programKey: string) {
   const params = new URLSearchParams();
   params.set('page', String(page));
-  if (accessType !== 'all') params.set('accessType', accessType);
   if (search) params.set('search', search);
   if (resourceType) params.set('resourceType', resourceType);
   if (programKey) params.set('programKey', programKey);
@@ -224,7 +211,6 @@ function ResourceCard({
 
 export function StudentResourcesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const accessType = asAccessType(searchParams.get('accessType'));
   const page = asPositiveInteger(searchParams.get('page'), 1);
   const programKey = searchParams.get('programKey')?.trim() ?? '';
   const resourceType = searchParams.get('resourceType')?.trim() ?? '';
@@ -234,7 +220,7 @@ export function StudentResourcesPage() {
   const [isApplyingFilters, setIsApplyingFilters] = useState(false);
   const [isCheckingAccess, setIsCheckingAccess] = useState(false);
   const [bookmarkedResourceIds, setBookmarkedResourceIds] = useState<string[]>([]);
-  const resourcesQuery = useStudentResources({ accessType, locked: 'all', page, programKey, resourceType, search });
+  const resourcesQuery = useStudentResources({ locked: 'all', page, programKey, resourceType, search });
   const paymentOrdersQuery = useStudentPaymentOrders({ itemType: 'resource', limit: 100, page: 1, status: 'all' });
   const data = resourcesQuery.data;
   const paymentOrders = paymentOrdersQuery.data?.items ?? [];
@@ -305,17 +291,6 @@ export function StudentResourcesPage() {
     window.setTimeout(() => setIsApplyingFilters(false), 500);
   }
 
-  function handleAccessType(nextAccessType: AccessFilter) {
-    const next = new URLSearchParams(searchParams);
-    next.set('page', '1');
-    if (nextAccessType === 'all') {
-      next.delete('accessType');
-    } else {
-      next.set('accessType', nextAccessType);
-    }
-    setSearchParams(next);
-  }
-
   function clearProgramScope() {
     const next = new URLSearchParams(searchParams);
     next.set('page', '1');
@@ -382,13 +357,6 @@ export function StudentResourcesPage() {
       </div>
 
       <section className="student-resource-toolbar" aria-label="Resource filters">
-        <div className="filter-bar__controls">
-          {accessFilters.map((filter) => (
-            <button className={`segmented-button ${accessType === filter.value ? 'segmented-button--active' : ''}`} key={filter.value} onClick={() => handleAccessType(filter.value)} type="button">
-              {filter.label}
-            </button>
-          ))}
-        </div>
         <form className="student-resource-search" onSubmit={handleSearch}>
           <div className="filter-search">
             <Search size={16} />
@@ -481,19 +449,15 @@ export function StudentResourcesPage() {
           description={
             search
               ? `No resources match "${search}". Try a shorter search or clear filters.`
-              : accessType === 'free'
-                ? 'No free resources are available for this filter yet.'
-                : accessType === 'paid'
-                  ? 'No paid resources are available for this filter yet.'
-                  : 'Resource library items mapped to your account will appear here.'
+              : 'Resource library items mapped to your account will appear here.'
           }
-          title={search || resourceType || accessType !== 'all' ? 'No matching resource library items' : 'No resource library items yet'}
+          title={search || resourceType || programKey ? 'No matching resource library items' : 'No resource library items yet'}
         />
       )}
 
       <nav className="pagination-bar" aria-label="Resource pagination">
         {data?.hasPreviousPage ? (
-          <Link className="pagination-link" to={buildPageLink(page - 1, accessType, search, resourceType, programKey)}>
+          <Link className="pagination-link" to={buildPageLink(page - 1, search, resourceType, programKey)}>
             Previous page
           </Link>
         ) : (
@@ -503,7 +467,7 @@ export function StudentResourcesPage() {
           Page {page} of {totalPages} · {total} matching · {recentlyAddedCount} recent
         </span>
         {data?.hasNextPage ? (
-          <Link className="pagination-link" to={buildPageLink(page + 1, accessType, search, resourceType, programKey)}>
+          <Link className="pagination-link" to={buildPageLink(page + 1, search, resourceType, programKey)}>
             Next page
           </Link>
         ) : (

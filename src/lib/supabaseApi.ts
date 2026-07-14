@@ -757,6 +757,7 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/certificate-program-settings') return saveCertificateProgramSetting(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/certificates/leadership') return issueLeadershipCertificates(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/certificates/live-project') return issueLiveProjectCertificate(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/admins/certificates/manual') return issueManualCertificate(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/students/me/presence') return updateStudentPresence(context) as Promise<TResponse>;
   if (cleanPath === '/students/me/project-submissions') return submitStudentProjectReport(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/students/me/support-tickets') return createStudentSupportTicket(context, options.body) as Promise<TResponse>;
@@ -837,7 +838,7 @@ function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'pos
   if (path === '/admins/announcements' || path.match(/^\/admins\/announcements\/[^/]+/)) return 'admin.announcements.manage';
   if (path === '/admins/email-templates' || path.match(/^\/admins\/email-templates\/[^/]+/)) return 'admin.email.manage';
   if (path === '/admins/feature-controls' || path.match(/^\/admins\/feature-controls\/[^/]+/)) return 'admin.feature_control.manage';
-  if (path === '/admins/certificate-program-settings' || path === '/admins/certificates/leadership' || path === '/admins/certificates/live-project') return 'admin.certificates.issue';
+  if (path === '/admins/certificate-program-settings' || path === '/admins/certificates/leadership' || path === '/admins/certificates/live-project' || path === '/admins/certificates/manual') return 'admin.certificates.issue';
   if (path.match(/^\/admins\/certificates\/[^/]+\/revoke$/)) return 'admin.certificates.issue';
   if (path === '/admins/support-categories' || path === '/admins/support-faqs') return 'admin.support.manage';
   if (path.match(/^\/admins\/support-(categories|faqs)\/[^/]+/)) return 'admin.support.manage';
@@ -987,6 +988,37 @@ async function getStudentDashboard(context: Awaited<ReturnType<typeof createCont
   ]);
 
   return { certificates, dashboard, projects, resources, student };
+}
+
+async function enrichStudentCohortProgramNames(context: Awaited<ReturnType<typeof createContext>>, items: unknown[]) {
+  const rows = items.map((item) => (isRecord(item) ? item : null));
+  const programKeys = uniqueStrings(
+    rows
+      .map((row) => String(row?.program_key ?? row?.programKey ?? '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+  if (programKeys.length === 0) return items;
+
+  const { data, error } = await context.supabase
+    .from('programs')
+    .select('program_key,name,short_name')
+    .in('program_key', programKeys)
+    .limit(500);
+  if (error) throw new ApiClientError(`Student program names could not be loaded: ${error.message}`, 503);
+
+  const programNameByKey = new Map(
+    (data ?? []).map((program) => [
+      String(program.program_key ?? '').trim().toLowerCase(),
+      String(program.name ?? program.short_name ?? program.program_key ?? '').trim()
+    ])
+  );
+
+  return items.map((item) => {
+    if (!isRecord(item)) return item;
+    const programKey = String(item.program_key ?? item.programKey ?? '').trim().toLowerCase();
+    const programName = programNameByKey.get(programKey);
+    return programName ? { ...item, program_name: programName } : item;
+  });
 }
 
 async function getStudentProjectToolkit(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
@@ -1294,7 +1326,10 @@ async function getStudentBundleList(context: Awaited<ReturnType<typeof createCon
   const items = extractItems(bundle, sections);
   const activeOnly = query?.activeOnly === true || query?.activeOnly === 'true';
   const filteredItems = activeOnly && sections.includes('announcements') ? items.filter(isVisibleAnnouncementNow) : items;
-  return paginate(filteredItems, query);
+  const enrichedItems = sections.includes('cohorts') || sections.includes('studentCohorts')
+    ? await enrichStudentCohortProgramNames(context, filteredItems)
+    : filteredItems;
+  return paginate(enrichedItems, query);
 }
 
 async function getStudentRecordingsList(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
@@ -2487,6 +2522,160 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
   return {
     certificate: camelize(enrichRow(data)),
     message: `${certificateId} issued.${generationMessage ? ` ${generationMessage}` : ''}`
+  };
+}
+
+async function issueManualCertificate(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  const admin = await getAdminProfile(context);
+  const adminEmail = isRecord(admin) ? String(admin.email ?? context.email) : context.email;
+  const payload = snakifyMutationBody(body);
+  const certificateType = String(payload.certificate_type ?? '').trim();
+  const issueDate = String(payload.issue_date ?? todayIsoDate()).slice(0, 10);
+  const sendEmail = payload.send_email !== false;
+  const acknowledgeDuplicate = payload.acknowledge_duplicate === true;
+  const durationWeeks = Number(payload.duration_weeks ?? 4);
+  const projectStartDate = String(payload.project_start_date ?? '').slice(0, 10);
+  const projectTitle = String(payload.project_title ?? '').trim();
+  const projectRole = String(payload.project_role ?? '').trim();
+  const studentId = String(payload.student_id ?? '').trim();
+  const programKey = String(payload.program_key ?? '').trim();
+  let programName = String(payload.program_name ?? programKey).trim();
+  let studentEmail = normalizeEmail(payload.manual_student_email);
+  let studentName = String(payload.manual_student_name ?? '').trim();
+  let rosterStudentId: string | null = null;
+
+  if (!['leadership', 'live_project'].includes(certificateType)) {
+    throw new ApiClientError('Select a valid manual certificate type.', 400);
+  }
+  if (!isIsoDate(issueDate)) throw new ApiClientError('Issue date is required before issuing a manual certificate.', 400);
+
+  if (studentId) {
+    const { data: student, error: studentError } = await context.supabase
+      .from('students')
+      .select('id,email,full_name,student_id,program_name,active')
+      .eq('id', studentId)
+      .limit(1)
+      .maybeSingle();
+    if (studentError) throw new ApiClientError(studentError.message, 503);
+    if (!student) throw new ApiClientError('Selected student was not found.', 404);
+    if (student.active === false) throw new ApiClientError('Selected student is inactive.', 400);
+    studentEmail = normalizeEmail(student.email);
+    studentName = String(student.full_name ?? studentEmail).trim();
+    rosterStudentId = String(student.id ?? '');
+    if (!programName && student.program_name) programName = String(student.program_name).split(',')[0]?.trim() ?? '';
+  }
+
+  if (!studentName) throw new ApiClientError('Student name is required before issuing a manual certificate.', 400);
+  if (!isValidEmail(studentEmail)) throw new ApiClientError('A valid student email is required before issuing a manual certificate.', 400);
+  if (!programName && !programKey) throw new ApiClientError('Program is required before issuing a manual certificate.', 400);
+
+  let modulesCovered = asStringArray(payload.modules_covered);
+  const now = new Date();
+  const verificationToken = randomHex(24);
+  const row: Record<string, unknown> = {
+    certificate_id: '',
+    certificate_payload: {
+      issueDate,
+      manualIssue: true,
+      programKey,
+      programName
+    },
+    certificate_type: certificateType,
+    email_requested: sendEmail,
+    generation_status: 'pending',
+    issue_date: issueDate,
+    issued_by: adminEmail,
+    program_key: programKey || null,
+    program_name: programName || programKey,
+    status: 'issued',
+    student_email: studentEmail,
+    student_id: rosterStudentId,
+    student_name: studentName,
+    verification_token: verificationToken
+  };
+
+  const duplicateQuery = context.supabase
+    .from('certificates')
+    .select('id,certificate_id,certificate_type,status')
+    .eq('certificate_type', certificateType)
+    .eq('student_email', studentEmail)
+    .neq('status', 'revoked')
+    .limit(10);
+
+  if (certificateType === 'leadership') {
+    duplicateQuery.eq('program_name', programName || programKey);
+    if (programKey) duplicateQuery.eq('program_key', programKey);
+  } else {
+    duplicateQuery.eq('project_title', projectTitle);
+  }
+
+  const { data: duplicates, error: duplicateError } = await duplicateQuery;
+  if (duplicateError) throw new ApiClientError(duplicateError.message, 503);
+  const duplicateWarnings = (duplicates ?? []).map((certificate) => `Possible duplicate: ${String(certificate.certificate_id ?? certificate.id)} already exists.`);
+  if (duplicateWarnings.length > 0 && !acknowledgeDuplicate) {
+    throw new ApiClientError(`${duplicateWarnings[0]} Confirm duplicate override to issue another certificate.`, 409);
+  }
+
+  if (certificateType === 'leadership') {
+    if (modulesCovered.length === 0) modulesCovered = [programName || programKey].filter(Boolean);
+    row.certificate_id = `SS-LP-${(programKey || programName).toUpperCase().replace(/[^A-Z0-9]+/g, '-')}-${now.getFullYear()}-${randomHex(8).toUpperCase()}`;
+    row.certificate_payload = {
+      cohortName: 'Manual Issue',
+      issueDate,
+      manualIssue: true,
+      modulesCovered,
+      programKey,
+      programName
+    };
+    row.cohort_name = 'Manual Issue';
+    row.modules_covered = modulesCovered;
+  } else {
+    if (!projectTitle) throw new ApiClientError('Project title is required before issuing a manual live project certificate.', 400);
+    if (!projectRole) throw new ApiClientError('Project role is required before issuing a manual live project certificate.', 400);
+    if (![2, 4, 6, 8].includes(durationWeeks)) throw new ApiClientError('Duration must be 2, 4, 6, or 8 weeks.', 400);
+    if (!isIsoDate(projectStartDate)) throw new ApiClientError('Project start date is required before issuing a manual live project certificate.', 400);
+    const projectEndDate = addDays(projectStartDate, durationWeeks * 7 - 1);
+    const projectId = `MANUAL-${slugifyKey(projectTitle).toUpperCase()}-${now.getFullYear()}-${randomHex(4).toUpperCase()}`;
+    row.certificate_id = `SS-PROJ-${now.getFullYear()}-${randomHex(10).toUpperCase()}`;
+    row.certificate_payload = {
+      durationWeeks,
+      issueDate,
+      manualIssue: true,
+      projectEndDate,
+      projectStartDate,
+      projectTitle,
+      projectRole
+    };
+    row.duration_label = `${durationWeeks} weeks`;
+    row.modules_covered = [projectRole, projectTitle].filter(Boolean);
+    row.project_end_date = projectEndDate;
+    row.project_id = projectId;
+    row.project_role = projectRole;
+    row.project_start_date = projectStartDate;
+    row.project_title = projectTitle;
+    row.role_name = projectRole;
+    row.submission_id = `manual:${Date.now()}:${randomHex(6)}`;
+  }
+
+  row.verification_url = certificateVerificationUrl(String(row.certificate_id));
+
+  const { data, error } = await context.supabase.from('certificates').insert(row).select('*').single();
+  if (error) throw mutationError(error, 'certificates');
+
+  await writeAuditLog(context, 'certificates', 'manual_issued', data, {
+    certificate_type: certificateType,
+    duplicate_override: acknowledgeDuplicate && duplicateWarnings.length > 0,
+    manual_issue: true,
+    send_email: sendEmail,
+    student_email: studentEmail
+  });
+
+  const generationMessage = await triggerCertificateGeneration(context, [String(data.id)], sendEmail);
+
+  return {
+    certificate: camelize(enrichRow(data)),
+    duplicateWarnings,
+    message: `${String(row.certificate_id)} manually issued.${duplicateWarnings.length ? ` ${duplicateWarnings.length} duplicate warning${duplicateWarnings.length === 1 ? '' : 's'} acknowledged.` : ''}${generationMessage ? ` ${generationMessage}` : ''}`
   };
 }
 

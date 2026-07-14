@@ -1,4 +1,4 @@
-import { ExternalLink, FileCheck2, Search, ShieldCheck } from 'lucide-react';
+import { ExternalLink, FileCheck2, Search, ShieldCheck, UserPlus } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
@@ -17,17 +17,19 @@ import {
   AdminCertificateProgramSetting,
   IssueLeadershipCertificatesInput,
   IssueLiveProjectCertificateInput,
+  IssueManualCertificateInput,
   useAdminCertificateRequests,
   useAdminCertificates,
   useAdminCertificateProgramSettings,
   useGenerateAdminCertificatePdf,
   useIssueLeadershipCertificates,
   useIssueLiveProjectCertificate,
+  useIssueManualCertificate,
   useRevokeAdminCertificate,
   useSaveCertificateProgramSetting
 } from '../features/admin/useAdminCertificates';
 import { AdminProgram, useAdminPrograms } from '../features/admin/useAdminPrograms';
-import { useAdminStudents } from '../features/admin/useAdminStudents';
+import { AdminStudent, useAdminStudents } from '../features/admin/useAdminStudents';
 
 const certificateStatusOptions: Array<AdminCertificateStatus | 'all'> = ['all', 'draft', 'issued', 'revoked'];
 const generationStatusOptions: Array<AdminCertificateGenerationStatus | 'all'> = ['all', 'pending', 'generating', 'ready', 'expired', 'failed'];
@@ -166,11 +168,12 @@ function lockedButtonLabel(label: string) {
 
 const durationOptions = [2, 4, 6, 8];
 
-type CertificateWorkspaceTab = 'leadership' | 'live-projects' | 'issued';
+type CertificateWorkspaceTab = 'leadership' | 'live-projects' | 'manual' | 'issued';
 
 const certificateTabs: Array<{ description: string; id: CertificateWorkspaceTab; label: string }> = [
   { description: 'Bulk issue program completion certificates and manage module templates.', id: 'leadership', label: 'Leadership Programs' },
   { description: 'Review approved live project submissions and issue project certificates.', id: 'live-projects', label: 'Live Projects' },
+  { description: 'Issue an approved manual certificate without changing existing flows.', id: 'manual', label: 'Manual Issue' },
   { description: 'Search, verify, revoke, and monitor generated certificate records.', id: 'issued', label: 'Issued Certificates' }
 ];
 
@@ -468,6 +471,217 @@ function RevokeCertificateModal({
   );
 }
 
+function ManualCertificateIssueForm({
+  duplicateOverride,
+  error,
+  isIssuing,
+  manualStudentEmail,
+  manualStudentName,
+  onDuplicateOverrideChange,
+  onManualStudentEmailChange,
+  onManualStudentNameChange,
+  onProgramChange,
+  onProgramNameChange,
+  onStudentSearchChange,
+  onStudentSourceChange,
+  onSubmit,
+  programKey,
+  programName,
+  programs,
+  selectedStudentId,
+  setCertificateType,
+  setDurationWeeks,
+  setIssueDate,
+  setProjectRole,
+  setProjectStartDate,
+  setProjectTitle,
+  setSelectedStudentId,
+  setSendEmail,
+  studentSearch,
+  studentSource,
+  students,
+  type,
+  values
+}: {
+  duplicateOverride: boolean;
+  error?: string;
+  isIssuing: boolean;
+  manualStudentEmail: string;
+  manualStudentName: string;
+  onDuplicateOverrideChange: (checked: boolean) => void;
+  onManualStudentEmailChange: (value: string) => void;
+  onManualStudentNameChange: (value: string) => void;
+  onProgramChange: (programKey: string) => void;
+  onProgramNameChange: (value: string) => void;
+  onStudentSearchChange: (value: string) => void;
+  onStudentSourceChange: (source: 'manual' | 'roster') => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  programKey: string;
+  programName: string;
+  programs: AdminProgram[];
+  selectedStudentId: string;
+  setCertificateType: (value: AdminCertificateType) => void;
+  setDurationWeeks: (value: number) => void;
+  setIssueDate: (value: string) => void;
+  setProjectRole: (value: string) => void;
+  setProjectStartDate: (value: string) => void;
+  setProjectTitle: (value: string) => void;
+  setSelectedStudentId: (value: string) => void;
+  setSendEmail: (checked: boolean) => void;
+  studentSearch: string;
+  studentSource: 'manual' | 'roster';
+  students: AdminStudent[];
+  type: AdminCertificateType;
+  values: {
+    durationWeeks: number;
+    issueDate: string;
+    projectRole: string;
+    projectStartDate: string;
+    projectTitle: string;
+    sendEmail: boolean;
+  };
+}) {
+  const selectedProgram = programs.find((program) => program.programKey === programKey);
+  const resolvedProgramName = selectedProgram?.name ?? programName;
+  const hasStudent = studentSource === 'manual' ? manualStudentName.trim() && manualStudentEmail.trim() : selectedStudentId;
+  const canSubmit =
+    Boolean(hasStudent) &&
+    Boolean(resolvedProgramName.trim()) &&
+    isValidDateInput(values.issueDate) &&
+    (type === 'leadership' || (values.projectTitle.trim() && values.projectRole.trim() && isValidDateInput(values.projectStartDate)));
+
+  return (
+    <section className="certificate-section">
+      <header className="certificate-section__header">
+        <div>
+          <span className="certificate-section-eyebrow">Direct Issue</span>
+          <h2>Manual Certificate</h2>
+        </div>
+      </header>
+      <form className="certificate-section__body certificate-form" onSubmit={onSubmit}>
+        <div className="certificate-muted-card">
+          <ShieldCheck size={17} />
+          <span>This creates a certificate record directly. Existing Leadership and Live Project request flows are unchanged.</span>
+        </div>
+
+        <label className="certificate-field">
+          <span>Certificate type *</span>
+          <select value={type} onChange={(event) => setCertificateType(event.target.value as AdminCertificateType)}>
+            <option value="leadership">Leadership Program</option>
+            <option value="live_project">Live Project</option>
+          </select>
+        </label>
+
+        <label className="certificate-field">
+          <span>Student source *</span>
+          <select value={studentSource} onChange={(event) => onStudentSourceChange(event.target.value as 'manual' | 'roster')}>
+            <option value="roster">Search student roster</option>
+            <option value="manual">Manual external student</option>
+          </select>
+        </label>
+
+        {studentSource === 'roster' ? (
+          <>
+            <label className="certificate-field">
+              <span>Search student</span>
+              <input onChange={(event) => onStudentSearchChange(event.target.value)} placeholder="Name, email, or student ID" type="search" value={studentSearch} />
+            </label>
+            <label className="certificate-field">
+              <span>Student *</span>
+              <select value={selectedStudentId} onChange={(event) => setSelectedStudentId(event.target.value)}>
+                <option value="">Select student</option>
+                {students.map((student) => (
+                  <option key={student.id} value={student.id}>
+                    {student.fullName} · {student.email}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : (
+          <>
+            <label className="certificate-field">
+              <span>Student name *</span>
+              <input onChange={(event) => onManualStudentNameChange(event.target.value)} placeholder="Student full name" value={manualStudentName} />
+            </label>
+            <label className="certificate-field">
+              <span>Student email *</span>
+              <input onChange={(event) => onManualStudentEmailChange(event.target.value)} placeholder="student@example.com" type="email" value={manualStudentEmail} />
+            </label>
+          </>
+        )}
+
+        <label className="certificate-field">
+          <span>Program</span>
+          <select value={programKey} onChange={(event) => onProgramChange(event.target.value)}>
+            <option value="">Manual program name</option>
+            {programs.map((program) => (
+              <option key={program.id} value={program.programKey}>
+                {program.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="certificate-field">
+          <span>Program name *</span>
+          <input
+            disabled={Boolean(selectedProgram)}
+            onChange={(event) => onProgramNameChange(event.target.value)}
+            placeholder="Certificate program name"
+            readOnly={Boolean(selectedProgram)}
+            value={resolvedProgramName}
+          />
+        </label>
+
+        {type === 'live_project' ? (
+          <>
+            <label className="certificate-field">
+              <span>Project title *</span>
+              <input onChange={(event) => setProjectTitle(event.target.value)} placeholder="Live project title" value={values.projectTitle} />
+            </label>
+            <label className="certificate-field">
+              <span>Project role *</span>
+              <input onChange={(event) => setProjectRole(event.target.value)} placeholder="Example: Marketing, Finance, HR" value={values.projectRole} />
+            </label>
+            <label className="certificate-field">
+              <span>Start date *</span>
+              <input onChange={(event) => setProjectStartDate(event.target.value)} type="date" value={values.projectStartDate} />
+            </label>
+            <label className="certificate-field">
+              <span>Duration</span>
+              <select value={values.durationWeeks} onChange={(event) => setDurationWeeks(Number(event.target.value))}>
+                {durationOptions.map((weeks) => (
+                  <option key={weeks} value={weeks}>
+                    {weeks} weeks
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : null}
+
+        <label className="certificate-field">
+          <span>Issue date *</span>
+          <input onChange={(event) => setIssueDate(event.target.value)} type="date" value={values.issueDate} />
+        </label>
+        <label className="certificate-checkbox">
+          <input checked={values.sendEmail} onChange={(event) => setSendEmail(event.target.checked)} type="checkbox" />
+          <span>Send certificate email after PDF generation</span>
+        </label>
+        <label className="certificate-checkbox">
+          <input checked={duplicateOverride} onChange={(event) => onDuplicateOverrideChange(event.target.checked)} type="checkbox" />
+          <span>I understand this may issue a duplicate certificate if one already exists.</span>
+        </label>
+        {error ? <p className="admin-submission-message admin-submission-message--error">{error}</p> : null}
+        <button className="student-action student-action--primary certificate-form__submit certificate-form__submit--issue" disabled={isIssuing || !canSubmit} type="submit">
+          <UserPlus size={18} />
+          {isIssuing ? 'Issuing...' : 'Issue Manual Certificate'}
+        </button>
+      </form>
+    </section>
+  );
+}
+
 export function AdminCertificatesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = (searchParams.get('tab') as CertificateWorkspaceTab | null) ?? 'leadership';
@@ -490,6 +704,21 @@ export function AdminCertificatesPage() {
   const [selectedRequest, setSelectedRequest] = useState<AdminCertificateRequest | null>(null);
   const [certificateToRevoke, setCertificateToRevoke] = useState<AdminCertificate | null>(null);
   const [certificateMessage, setCertificateMessage] = useState('');
+  const [manualCertificateType, setManualCertificateType] = useState<AdminCertificateType>('leadership');
+  const [manualStudentSource, setManualStudentSource] = useState<'manual' | 'roster'>('roster');
+  const [manualStudentSearch, setManualStudentSearch] = useState('');
+  const [manualSelectedStudentId, setManualSelectedStudentId] = useState('');
+  const [manualStudentName, setManualStudentName] = useState('');
+  const [manualStudentEmail, setManualStudentEmail] = useState('');
+  const [manualProgramKey, setManualProgramKey] = useState('');
+  const [manualProgramName, setManualProgramName] = useState('');
+  const [manualIssueDate, setManualIssueDate] = useState(todayInputValue());
+  const [manualSendEmail, setManualSendEmail] = useState(true);
+  const [manualProjectTitle, setManualProjectTitle] = useState('');
+  const [manualProjectRole, setManualProjectRole] = useState('');
+  const [manualProjectStartDate, setManualProjectStartDate] = useState(todayInputValue());
+  const [manualDurationWeeks, setManualDurationWeeks] = useState(4);
+  const [manualDuplicateOverride, setManualDuplicateOverride] = useState(false);
 
   const adminProfileQuery = useAdminProfile();
   const adminRole = adminProfileQuery.data?.role;
@@ -499,6 +728,7 @@ export function AdminCertificatesPage() {
   const certificateSettingsQuery = useAdminCertificateProgramSettings();
   const issueCertificateMutation = useIssueLiveProjectCertificate();
   const issueLeadershipMutation = useIssueLeadershipCertificates();
+  const issueManualMutation = useIssueManualCertificate();
   const generateCertificatePdfMutation = useGenerateAdminCertificatePdf();
   const revokeCertificateMutation = useRevokeAdminCertificate();
   const saveSettingMutation = useSaveCertificateProgramSetting();
@@ -507,6 +737,13 @@ export function AdminCertificatesPage() {
   const cohortsPageTwoQuery = useAdminCohorts({ enabled: cohortsPageOneQuery.data?.hasNextPage === true, limit: 100, page: 2, status: 'all' });
   const cohortsPageThreeQuery = useAdminCohorts({ enabled: cohortsPageTwoQuery.data?.hasNextPage === true, limit: 100, page: 3, status: 'all' });
   const studentsQuery = useAdminStudents({ cohortName: selectedCohortName || undefined, limit: 100, page: 1, status: 'active' });
+  const manualStudentsQuery = useAdminStudents({
+    enabled: canIssueCertificates && activeTab === 'manual' && manualStudentSource === 'roster',
+    limit: 10,
+    page: 1,
+    search: manualStudentSearch || undefined,
+    status: 'active'
+  });
 
   const programs = programsQuery.data?.items ?? [];
   const allCohorts = useMemo(
@@ -525,6 +762,7 @@ export function AdminCertificatesPage() {
     [allCohorts, selectedProgram]
   );
   const eligibleStudents = studentsQuery.data?.items ?? [];
+  const manualStudentOptions = manualStudentsQuery.data?.items ?? [];
   const certificates = certificatesQuery.data;
   const totalPages = certificates?.totalPages ?? 1;
   const visibleCertificateTabs = useMemo(
@@ -576,6 +814,27 @@ export function AdminCertificatesPage() {
     setModuleText(moduleTextFromSetting(setting, leadershipModuleDefaults[programShortKey(program)] ?? ''));
   }
 
+  function handleManualProgramChange(programKey: string) {
+    const program = programs.find((item) => item.programKey === programKey);
+    setManualProgramKey(programKey);
+    setManualProgramName(program?.name ?? '');
+  }
+
+  function handleManualStudentSourceChange(source: 'manual' | 'roster') {
+    setManualStudentSource(source);
+    setManualSelectedStudentId('');
+    setManualStudentSearch('');
+    if (source === 'roster') {
+      setManualStudentName('');
+      setManualStudentEmail('');
+    }
+  }
+
+  function handleManualStudentSearchChange(value: string) {
+    setManualStudentSearch(value);
+    setManualSelectedStudentId('');
+  }
+
   function toggleStudent(studentId: string) {
     setSelectedStudentIds((current) => {
       const next = new Set(current);
@@ -608,6 +867,34 @@ export function AdminCertificatesPage() {
     const result = await issueLeadershipMutation.mutateAsync(body);
     setCertificateMessage(result.message);
     setSelectedStudentIds(new Set());
+  }
+
+  async function handleIssueManualCertificate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const selectedManualProgram = programs.find((program) => program.programKey === manualProgramKey);
+    const setting = settingsByProgramKey.get(manualProgramKey);
+    const modulesCovered = modulesFromText(
+      moduleTextFromSetting(setting, leadershipModuleDefaults[programShortKey(selectedManualProgram)] ?? manualProgramName ?? manualProgramKey)
+    );
+    const body: IssueManualCertificateInput = {
+      acknowledgeDuplicate: manualDuplicateOverride,
+      certificateType: manualCertificateType,
+      durationWeeks: manualCertificateType === 'live_project' ? manualDurationWeeks : undefined,
+      issueDate: manualIssueDate,
+      manualStudentEmail: manualStudentSource === 'manual' ? manualStudentEmail : undefined,
+      manualStudentName: manualStudentSource === 'manual' ? manualStudentName : undefined,
+      modulesCovered: manualCertificateType === 'leadership' ? modulesCovered : undefined,
+      programKey: manualProgramKey || undefined,
+      programName: (selectedManualProgram?.name ?? manualProgramName).trim(),
+      projectRole: manualCertificateType === 'live_project' ? manualProjectRole : undefined,
+      projectStartDate: manualCertificateType === 'live_project' ? manualProjectStartDate : undefined,
+      projectTitle: manualCertificateType === 'live_project' ? manualProjectTitle : undefined,
+      sendEmail: manualSendEmail,
+      studentId: manualStudentSource === 'roster' ? manualSelectedStudentId : undefined
+    };
+    const result = await issueManualMutation.mutateAsync(body);
+    setCertificateMessage(result.message);
+    setManualDuplicateOverride(false);
   }
 
   async function handleSaveProgramModules(event: FormEvent<HTMLFormElement>) {
@@ -837,6 +1124,48 @@ export function AdminCertificatesPage() {
       ) : null}
 
       {activeTab === 'live-projects' && canIssueCertificates ? <RequestQueue isLoading={requestsQuery.isLoading} items={requestsQuery.data?.items ?? []} onReview={setSelectedRequest} /> : null}
+
+      {activeTab === 'manual' && canIssueCertificates ? (
+        <ManualCertificateIssueForm
+          duplicateOverride={manualDuplicateOverride}
+          error={issueManualMutation.isError ? issueManualMutation.error.message : undefined}
+          isIssuing={issueManualMutation.isPending}
+          manualStudentEmail={manualStudentEmail}
+          manualStudentName={manualStudentName}
+          onDuplicateOverrideChange={setManualDuplicateOverride}
+          onManualStudentEmailChange={setManualStudentEmail}
+          onManualStudentNameChange={setManualStudentName}
+          onProgramChange={handleManualProgramChange}
+          onProgramNameChange={setManualProgramName}
+          onStudentSearchChange={handleManualStudentSearchChange}
+          onStudentSourceChange={handleManualStudentSourceChange}
+          onSubmit={handleIssueManualCertificate}
+          programKey={manualProgramKey}
+          programName={manualProgramName}
+          programs={programs}
+          selectedStudentId={manualSelectedStudentId}
+          setCertificateType={setManualCertificateType}
+          setDurationWeeks={setManualDurationWeeks}
+          setIssueDate={setManualIssueDate}
+          setProjectRole={setManualProjectRole}
+          setProjectStartDate={setManualProjectStartDate}
+          setProjectTitle={setManualProjectTitle}
+          setSelectedStudentId={setManualSelectedStudentId}
+          setSendEmail={setManualSendEmail}
+          studentSearch={manualStudentSearch}
+          studentSource={manualStudentSource}
+          students={manualStudentOptions}
+          type={manualCertificateType}
+          values={{
+            durationWeeks: manualDurationWeeks,
+            issueDate: manualIssueDate,
+            projectRole: manualProjectRole,
+            projectStartDate: manualProjectStartDate,
+            projectTitle: manualProjectTitle,
+            sendEmail: manualSendEmail
+          }}
+        />
+      ) : null}
 
       {activeTab === 'issued' ? (
         <section className="certificate-section">

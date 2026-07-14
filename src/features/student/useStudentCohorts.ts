@@ -12,6 +12,7 @@ export type StudentCohort = {
   id: string;
   name: string;
   programKey?: string;
+  programName?: string;
   selfPaced: boolean;
   startDate?: string;
   status: string;

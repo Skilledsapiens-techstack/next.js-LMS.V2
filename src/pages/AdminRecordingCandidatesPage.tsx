@@ -18,6 +18,7 @@ import {
 type RecordingTab = 'add-link' | 'pending' | 'published' | 'rejected';
 type ProgramFilter = 'all' | string;
 type CohortFilter = 'all' | string;
+type RecordingSortOption = 'latest-updated' | 'session-newest' | 'session-oldest' | 'program-az' | 'cohort-az';
 type RecordingEditForm = {
   alternateUrl: string;
   cohortNames: string[];
@@ -29,6 +30,14 @@ type RecordingEditForm = {
 };
 
 const pageSize = 25;
+
+const recordingSortOptions: Array<{ label: string; value: RecordingSortOption }> = [
+  { label: 'Latest Updated', value: 'latest-updated' },
+  { label: 'Session Date: Newest', value: 'session-newest' },
+  { label: 'Session Date: Oldest', value: 'session-oldest' },
+  { label: 'Program A-Z', value: 'program-az' },
+  { label: 'Cohort A-Z', value: 'cohort-az' }
+];
 
 function readableError(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) return error.message;
@@ -155,17 +164,39 @@ function compareCandidatesByLatestDesc(left: AdminRecordingCandidate, right: Adm
   return String(left.workshopId ?? left.id).localeCompare(String(right.workshopId ?? right.id));
 }
 
-function compareWorkshopsByScheduleAsc(left: AdminWorkshop, right: AdminWorkshop) {
-  const scheduledDiff = workshopScheduledTime(left) - workshopScheduledTime(right);
-  if (scheduledDiff !== 0) return scheduledDiff;
-
-  const updatedDiff = workshopUpdatedTime(right) - workshopUpdatedTime(left);
-  if (updatedDiff !== 0) return updatedDiff;
-
-  return left.title.localeCompare(right.title);
+function workshopProgramLabel(workshop: AdminWorkshop | undefined, programs: AdminProgram[]) {
+  return programLabelFor(programs, workshop?.programKey).toLowerCase();
 }
 
-function compareWorkshopsByUpdatedDesc(left: AdminWorkshop, right: AdminWorkshop) {
+function workshopCohortLabel(workshop: AdminWorkshop | undefined) {
+  return (workshop?.cohortNames[0] ?? '').toLowerCase();
+}
+
+function candidateWorkshopScheduledTime(workshop: AdminWorkshop | undefined, fallback = Number.POSITIVE_INFINITY) {
+  return workshop ? workshopScheduledTime(workshop, fallback) : fallback;
+}
+
+function compareWorkshopsBySort(left: AdminWorkshop, right: AdminWorkshop, sortBy: RecordingSortOption, programs: AdminProgram[]) {
+  if (sortBy === 'session-newest') {
+    const scheduledDiff = workshopScheduledTime(right, 0) - workshopScheduledTime(left, 0);
+    if (scheduledDiff !== 0) return scheduledDiff;
+  }
+
+  if (sortBy === 'session-oldest') {
+    const scheduledDiff = workshopScheduledTime(left) - workshopScheduledTime(right);
+    if (scheduledDiff !== 0) return scheduledDiff;
+  }
+
+  if (sortBy === 'program-az') {
+    const programDiff = workshopProgramLabel(left, programs).localeCompare(workshopProgramLabel(right, programs));
+    if (programDiff !== 0) return programDiff;
+  }
+
+  if (sortBy === 'cohort-az') {
+    const cohortDiff = workshopCohortLabel(left).localeCompare(workshopCohortLabel(right));
+    if (cohortDiff !== 0) return cohortDiff;
+  }
+
   const updatedDiff = workshopUpdatedTime(right) - workshopUpdatedTime(left);
   if (updatedDiff !== 0) return updatedDiff;
 
@@ -173,6 +204,42 @@ function compareWorkshopsByUpdatedDesc(left: AdminWorkshop, right: AdminWorkshop
   if (scheduledDiff !== 0) return scheduledDiff;
 
   return left.title.localeCompare(right.title);
+}
+
+function compareCandidatesBySort(
+  left: AdminRecordingCandidate,
+  right: AdminRecordingCandidate,
+  sortBy: RecordingSortOption,
+  workshopsByKey: Map<string, AdminWorkshop>,
+  programs: AdminProgram[]
+) {
+  const leftWorkshop = workshopsByKey.get(left.workshopId);
+  const rightWorkshop = workshopsByKey.get(right.workshopId);
+
+  if (sortBy === 'session-newest') {
+    const scheduledDiff = candidateWorkshopScheduledTime(rightWorkshop, 0) - candidateWorkshopScheduledTime(leftWorkshop, 0);
+    if (scheduledDiff !== 0) return scheduledDiff;
+  }
+
+  if (sortBy === 'session-oldest') {
+    const scheduledDiff = candidateWorkshopScheduledTime(leftWorkshop) - candidateWorkshopScheduledTime(rightWorkshop);
+    if (scheduledDiff !== 0) return scheduledDiff;
+  }
+
+  if (sortBy === 'program-az') {
+    const programDiff = workshopProgramLabel(leftWorkshop, programs).localeCompare(workshopProgramLabel(rightWorkshop, programs));
+    if (programDiff !== 0) return programDiff;
+  }
+
+  if (sortBy === 'cohort-az') {
+    const cohortDiff = workshopCohortLabel(leftWorkshop).localeCompare(workshopCohortLabel(rightWorkshop));
+    if (cohortDiff !== 0) return cohortDiff;
+  }
+
+  const latestDiff = latestTimestamp(right) - latestTimestamp(left);
+  if (latestDiff !== 0) return latestDiff;
+
+  return String(left.workshopId ?? left.id).localeCompare(String(right.workshopId ?? right.id));
 }
 
 function dedupeRejectedCandidates(candidates: AdminRecordingCandidate[]) {
@@ -207,6 +274,7 @@ export function AdminRecordingCandidatesPage() {
   const [activeTab, setActiveTab] = useState<RecordingTab>('add-link');
   const [programFilter, setProgramFilter] = useState<ProgramFilter>('all');
   const [cohortFilter, setCohortFilter] = useState<CohortFilter>('all');
+  const [sortBy, setSortBy] = useState<RecordingSortOption>('latest-updated');
   const [search, setSearch] = useState('');
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [pageByTab, setPageByTab] = useState<Record<RecordingTab, number>>({ 'add-link': 1, pending: 1, published: 1, rejected: 1 });
@@ -263,13 +331,13 @@ export function AdminRecordingCandidatesPage() {
           (programFilter === 'all' || workshop?.programKey === programFilter) &&
           (cohortFilter === 'all' || Boolean(workshop?.cohortNames.includes(cohortFilter)))
         );
-      }).sort(compareCandidatesByLatestDesc),
-    [candidates, cohortFilter, normalizedSearch, programFilter, workshopsByKey]
+      }).sort((left, right) => compareCandidatesBySort(left, right, sortBy, workshopsByKey, programs)),
+    [candidates, cohortFilter, normalizedSearch, programFilter, programs, sortBy, workshopsByKey]
   );
 
   const publishedWorkshops = useMemo(
-    () => workshops.filter((workshop) => hasRecordingLink(workshop) && workshopMatches(workshop, normalizedSearch, programFilter, cohortFilter)).sort(compareWorkshopsByUpdatedDesc),
-    [cohortFilter, normalizedSearch, programFilter, workshops]
+    () => workshops.filter((workshop) => hasRecordingLink(workshop) && workshopMatches(workshop, normalizedSearch, programFilter, cohortFilter)).sort((left, right) => compareWorkshopsBySort(left, right, sortBy, programs)),
+    [cohortFilter, normalizedSearch, programFilter, programs, sortBy, workshops]
   );
 
   const addLinkWorkshops = useMemo(
@@ -279,8 +347,8 @@ export function AdminRecordingCandidatesPage() {
           !hasRecordingLink(workshop) &&
           !hasOpenRecordingReviewHistory(candidates, workshop) &&
           workshopMatches(workshop, normalizedSearch, programFilter, cohortFilter)
-      ).sort(compareWorkshopsByScheduleAsc),
-    [candidates, cohortFilter, normalizedSearch, programFilter, workshops]
+      ).sort((left, right) => compareWorkshopsBySort(left, right, sortBy, programs)),
+    [candidates, cohortFilter, normalizedSearch, programFilter, programs, sortBy, workshops]
   );
 
   const rejectedCandidates = useMemo(
@@ -293,8 +361,8 @@ export function AdminRecordingCandidatesPage() {
           (programFilter === 'all' || workshop?.programKey === programFilter) &&
           (cohortFilter === 'all' || Boolean(workshop?.cohortNames.includes(cohortFilter)))
         );
-      })),
-    [candidates, cohortFilter, normalizedSearch, programFilter, workshopsByKey]
+      })).sort((left, right) => compareCandidatesBySort(left, right, sortBy, workshopsByKey, programs)),
+    [candidates, cohortFilter, normalizedSearch, programFilter, programs, sortBy, workshopsByKey]
   );
 
   const reviewedCount = candidates.filter((candidate) => candidate.status === 'reviewed').length;
@@ -661,6 +729,23 @@ export function AdminRecordingCandidatesPage() {
             {cohortOptions.map((cohortName) => (
               <option key={cohortName} value={cohortName}>
                 {cohortName}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="admin-recording-filter-field">
+          <span>Sort by</span>
+          <select
+            aria-label="Recording sort"
+            value={sortBy}
+            onChange={(event) => {
+              setSortBy(event.target.value as RecordingSortOption);
+              resetPages();
+            }}
+          >
+            {recordingSortOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
               </option>
             ))}
           </select>

@@ -1,0 +1,20 @@
+Hostinger deployment package
+
+Extract this zip inside public_html.
+
+After extraction, public_html should directly contain:
+- index.html
+- assets/
+- favicon.ico
+- favicon-16x16.png
+- favicon-32x32.png
+- apple-touch-icon.png
+
+Do not leave the files inside a nested folder.
+
+QA included:
+- Watch Recordings program chips
+- Cohort-name based recording filtering
+- Program name display fix
+- Student All/Free/Paid filter removal
+

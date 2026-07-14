@@ -16,14 +16,6 @@ function asPositiveInteger(value: string | null, defaultValue: number) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
 }
 
-const programDisplayMap: Record<string, string> = {
-  flp: 'Finance Leadership Program',
-  hrlp: 'HR Leadership Program',
-  mclp: 'Management Consulting Leadership Program',
-  pmlp: 'Product Management Leadership Program',
-  smlp: 'Sales & Marketing Leadership Program'
-};
-
 function buildPageLink(page: number) {
   const params = new URLSearchParams();
   params.set('page', String(page));
@@ -48,8 +40,7 @@ function formatStatus(status: string) {
 }
 
 function displayProgramName(cohort: StudentCohort) {
-  const key = programKeyFor(cohort);
-  if (key && programDisplayMap[key]) return programDisplayMap[key];
+  if (cohort.programName?.trim()) return cohort.programName.trim();
   if (cohort.programKey) return cohort.programKey.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
   if (cohort.domainKey) return cohort.domainKey.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
   return 'Enrolled Program';

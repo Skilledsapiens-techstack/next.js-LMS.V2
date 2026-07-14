@@ -45,6 +45,8 @@ const liveProjectDurationOptions = ['2 weeks', '4 weeks', '6 weeks', '8 weeks'] 
 const studentRowsPerPageOptions = [25, 50, 75, 100] as const;
 
 const studentImportHeaders = ['studentId', 'fullName', 'email', 'altEmail', 'phone', 'collegeName', 'cohortNames', 'programNames', 'waGroup', 'personalmentor', 'you_are_from', 'project_start_date', 'duration', 'liveProjectRoles', 'onboardingMailStatus', 'active'];
+const studentImportPasteHeader = studentImportHeaders.join('\t');
+const studentImportPasteStarter = `${studentImportPasteHeader}\n`;
 const studentExportHeaders = ['serialNumber', ...studentImportHeaders];
 const studentSortOptions = ['sequence', 'student', 'access', 'education', 'mentor', 'onboarding', 'duration', 'auth', 'status'] as const;
 
@@ -185,6 +187,10 @@ function parsePastedTableRows(text: string) {
     .split(/\r?\n/)
     .map((row) => row.split('\t').map((cell) => cell.trim()))
     .filter((row) => row.some(Boolean));
+}
+
+function hasPastedStudentRows(text: string) {
+  return parsePastedTableRows(text).some((row) => !looksLikeImportHeader(row));
 }
 
 function normalizedHeader(value: string) {
@@ -637,6 +643,7 @@ function isValidEmail(value: string) {
 function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSubmit, programOptions, roleOptions, student }: EnrollStudentModalProps) {
   const [form, setForm] = useState<EnrollStudentForm>(() => studentToForm(student));
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const selectedCohorts = cohortOptions.filter((cohort) => form.cohortNames.includes(cohort.name));
   const cohortPickerOptions = useMemo(() => cohortOptions.map((cohort) => ({ id: cohort.id, label: cohort.name, meta: cohort.status.toUpperCase(), value: cohort.name })), [cohortOptions]);
@@ -657,6 +664,7 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting) return;
     setError(null);
 
     const email = form.email.trim();
@@ -707,10 +715,13 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
     };
 
     try {
+      setSubmitting(true);
       await onSubmit(payload);
       onClose();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Student write failed.');
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -719,7 +730,7 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
       <section aria-labelledby="enroll-student-title" aria-modal="true" className="student-modal enroll-student-modal" role="dialog">
         <header className="student-modal__header">
           <h2 id="enroll-student-title">{mode === 'edit' ? 'Edit Student' : 'Enroll New Student'}</h2>
-          <button aria-label="Close enroll student form" className="student-modal__icon-button" onClick={onClose} type="button">
+          <button aria-label="Close enroll student form" className="student-modal__icon-button" disabled={submitting} onClick={onClose} type="button">
             <X size={26} />
           </button>
         </header>
@@ -869,11 +880,11 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
           </div>
 
           <footer className="student-modal__footer enroll-student-modal__footer">
-          <button className="segmented-button" onClick={onClose} type="button">
+          <button className="segmented-button" disabled={submitting} onClick={onClose} type="button">
             Cancel
           </button>
-          <button className="segmented-button segmented-button--active" type="submit">
-            {mode === 'edit' ? 'Save Student' : 'Enroll Student'} &rarr;
+          <button className={`segmented-button segmented-button--active ${submitting ? 'segmented-button--loading' : ''}`} disabled={submitting} type="submit">
+            {submitting ? (mode === 'edit' ? 'Saving...' : 'Enrolling...') : `${mode === 'edit' ? 'Save Student' : 'Enroll Student'} ->`}
           </button>
           </footer>
         </form>
@@ -995,7 +1006,8 @@ function ImportPreviewModal({
   const [bulkProgramNames, setBulkProgramNames] = useState<string[]>([]);
   const [bulkRoleIds, setBulkRoleIds] = useState<string[]>([]);
   const [editingRowNumber, setEditingRowNumber] = useState<number | null>(null);
-  const [pasteText, setPasteText] = useState('');
+  const [pasteText, setPasteText] = useState(studentImportPasteStarter);
+  const [templateDownloading, setTemplateDownloading] = useState(false);
   const validRows = preview?.rows.filter((row) => row.errors.length === 0) ?? [];
   const invalidRows = preview?.rows.filter((row) => row.errors.length > 0) ?? [];
   const previewRows = useMemo(() => preview?.rows ?? [], [preview?.rows]);
@@ -1020,6 +1032,7 @@ function ImportPreviewModal({
   const visibleSelectedCount = visibleRows.filter((row) => selectedRowSet.has(row.rowNumber)).length;
   const editingRow = editingRowNumber === null ? null : previewRows.find((row) => row.rowNumber === editingRowNumber) ?? null;
   const isImporting = Boolean(importProgress) || importStudents.isPending;
+  const hasPasteRows = useMemo(() => hasPastedStudentRows(pasteText), [pasteText]);
 
   useEffect(() => {
     setSelectedRowNumbers((current) => {
@@ -1120,7 +1133,18 @@ function ImportPreviewModal({
   }
 
   async function handlePastePreview() {
+    if (!hasPasteRows || uploading) return;
     await onPasteRows(pasteText);
+  }
+
+  async function handleDownloadTemplate() {
+    if (templateDownloading || uploading) return;
+    setTemplateDownloading(true);
+    try {
+      await onDownloadTemplate();
+    } finally {
+      setTemplateDownloading(false);
+    }
   }
 
   return (
@@ -1139,17 +1163,17 @@ function ImportPreviewModal({
           {!preview ? (
             <div className="student-import-upload">
               <div className="student-import-entry-tabs" role="group" aria-label="Choose student import method">
-                <button className={`segmented-button ${entryMode === 'file' ? 'segmented-button--active' : ''}`} onClick={() => onEntryModeChange('file')} type="button">
+                <button className={`segmented-button ${entryMode === 'file' ? 'segmented-button--active' : ''}`} disabled={uploading || templateDownloading} onClick={() => onEntryModeChange('file')} type="button">
                   <FileUp size={16} />
                   Upload file
                 </button>
-                <button className={`segmented-button ${entryMode === 'paste' ? 'segmented-button--active' : ''}`} onClick={() => onEntryModeChange('paste')} type="button">
+                <button className={`segmented-button ${entryMode === 'paste' ? 'segmented-button--active' : ''}`} disabled={uploading || templateDownloading} onClick={() => onEntryModeChange('paste')} type="button">
                   <ClipboardPaste size={16} />
                   Paste table
                 </button>
-                <button className="segmented-button" onClick={() => void onDownloadTemplate()} type="button">
+                <button className={`segmented-button ${templateDownloading ? 'segmented-button--loading' : ''}`} disabled={uploading || templateDownloading} onClick={() => void handleDownloadTemplate()} type="button">
                   <Download size={16} />
-                  Download template
+                  {templateDownloading ? 'Preparing...' : 'Download template'}
                 </button>
               </div>
               {entryMode === 'file' ? (
@@ -1173,14 +1197,14 @@ function ImportPreviewModal({
                     autoFocus
                     disabled={uploading}
                     onChange={(event) => setPasteText(event.target.value)}
-                    placeholder={studentImportHeaders.join('\t')}
+                    placeholder="Paste student rows below the header."
                     value={pasteText}
                   />
                   <div className="student-import-paste-panel__actions">
-                    <button className="segmented-button" onClick={() => setPasteText('')} type="button" disabled={!pasteText.trim() || uploading}>
+                    <button className="segmented-button" onClick={() => setPasteText(studentImportPasteStarter)} type="button" disabled={pasteText === studentImportPasteStarter || uploading}>
                       Clear
                     </button>
-                    <button className="segmented-button segmented-button--active" onClick={() => void handlePastePreview()} type="button" disabled={!pasteText.trim() || uploading}>
+                    <button className={`segmented-button segmented-button--active ${uploading ? 'segmented-button--loading' : ''}`} onClick={() => void handlePastePreview()} type="button" disabled={!hasPasteRows || uploading}>
                       {uploading ? 'Reading rows...' : 'Review Pasted Rows'}
                     </button>
                   </div>
@@ -2197,13 +2221,13 @@ export function AdminStudentsPage() {
           ) : null}
           {canImportStudents ? (
             <>
-              <button className="segmented-button" disabled={importStudents.isPending || isImportParsing} onClick={() => openImportModal('file')} type="button">
+              <button className={`segmented-button ${isImportParsing ? 'segmented-button--loading' : ''}`} disabled={importStudents.isPending || isImportParsing} onClick={() => openImportModal('file')} type="button">
                 <FileUp size={16} />
-                Import
+                {isImportParsing ? 'Preparing...' : 'Import'}
               </button>
-              <button className="segmented-button" disabled={importStudents.isPending || isImportParsing} onClick={() => openImportModal('paste')} type="button">
+              <button className={`segmented-button ${isImportParsing ? 'segmented-button--loading' : ''}`} disabled={importStudents.isPending || isImportParsing} onClick={() => openImportModal('paste')} type="button">
                 <ClipboardPaste size={16} />
-                Paste Table
+                {isImportParsing ? 'Preparing...' : 'Paste Table'}
               </button>
             </>
           ) : null}
