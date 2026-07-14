@@ -6,28 +6,27 @@ import { PageHeader } from '../components/PageHeader';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
 import { StudentCohort, useStudentCohorts } from '../features/student/useStudentCohorts';
-import { StudentRecording, StudentRecordingAccessType, useStudentRecordings } from '../features/student/useStudentRecordings';
-
-type AccessFilter = StudentRecordingAccessType | 'all';
+import { StudentRecording, useStudentRecordings } from '../features/student/useStudentRecordings';
 
 const pageSize = 25;
 
-const accessFilters: Array<{ label: string; value: AccessFilter }> = [
-  { label: 'All', value: 'all' },
-  { label: 'Free', value: 'free' },
-  { label: 'Paid', value: 'paid' }
-];
+type RecordingProgramFilter = {
+  cohortNames: string[];
+  count: number;
+  label: string;
+  value: string;
+};
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
 }
 
-function asAccessType(value: string | null): AccessFilter {
-  return value === 'free' || value === 'paid' ? value : 'all';
+function normalizeProgramKey(value: string | undefined | null) {
+  return value?.trim().toLowerCase() ?? '';
 }
 
-function normalizeProgramKey(value: string | undefined | null) {
+function normalizeCohortName(value: string | undefined | null) {
   return value?.trim().toLowerCase() ?? '';
 }
 
@@ -41,6 +40,23 @@ function programLabelFromKey(value: string) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
+}
+
+function primaryProgramKeyForRecording(recording: StudentRecording) {
+  return normalizeProgramKey(recording.programKey) || normalizeProgramKey(recording.domainKey);
+}
+
+function recordingCohortNames(recording: StudentRecording) {
+  return (recording.cohortNames ?? []).map(normalizeCohortName).filter(Boolean);
+}
+
+function recordingMatchesProgram(recording: StudentRecording, program: Pick<RecordingProgramFilter, 'cohortNames' | 'value'>) {
+  const primaryKey = primaryProgramKeyForRecording(recording);
+  if (primaryKey && primaryKey === program.value) return true;
+
+  const programCohorts = new Set(program.cohortNames.map(normalizeCohortName).filter(Boolean));
+  if (programCohorts.size === 0) return false;
+  return recordingCohortNames(recording).some((cohortName) => programCohorts.has(cohortName));
 }
 
 function formatDate(value: string | undefined) {
@@ -93,10 +109,9 @@ function hasRecordingAccess(recording: StudentRecording) {
   return !recording.locked && recording.hasAccess !== false;
 }
 
-function buildPageLink(page: number, accessType: AccessFilter, programKey: string) {
+function buildPageLink(page: number, programKey: string) {
   const params = new URLSearchParams();
   params.set('page', String(page));
-  if (accessType !== 'all') params.set('accessType', accessType);
   if (programKey) params.set('programKey', programKey);
   return `?${params.toString()}`;
 }
@@ -176,36 +191,48 @@ function RecordingRow({ recording }: { recording: StudentRecording }) {
 
 export function StudentRecordingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const accessType = asAccessType(searchParams.get('accessType'));
   const selectedProgramKey = normalizeProgramKey(searchParams.get('programKey'));
   const page = asPositiveInteger(searchParams.get('page'), 1);
-  const recordingsQuery = useStudentRecordings({ accessType, limit: 500, page: 1 });
+  const recordingsQuery = useStudentRecordings({ limit: 500, page: 1 });
   const cohortsQuery = useStudentCohorts({ limit: 100, page: 1, status: 'all' });
   const recordings = recordingsQuery.data?.items ?? [];
   const enrolledCohorts = cohortsQuery.data?.items ?? [];
-  const enrolledPrograms = useMemo(() => {
-    const labels = new Map<string, string>();
+  const enrolledPrograms = useMemo<RecordingProgramFilter[]>(() => {
+    const programMap = new Map<string, { cohortNames: Set<string>; label: string; value: string }>();
     enrolledCohorts.forEach((cohort) => {
       const key = programKeyForCohort(cohort);
-      if (!key || labels.has(key)) return;
-      labels.set(key, programLabelFromKey(key));
+      if (!key) return;
+      const existing = programMap.get(key);
+      const label = cohort.programName?.trim() || existing?.label || programLabelFromKey(key);
+      const cohortNames = existing?.cohortNames ?? new Set<string>();
+      const cohortName = normalizeCohortName(cohort.name);
+      if (cohortName) cohortNames.add(cohortName);
+      programMap.set(key, { cohortNames, label, value: key });
     });
+
     recordings.forEach((recording) => {
-      const key = normalizeProgramKey(recording.programKey || recording.domainKey);
-      if (!key || labels.has(key)) return;
-      labels.set(key, programLabelFromKey(key));
+      const key = primaryProgramKeyForRecording(recording);
+      if (!key || programMap.has(key)) return;
+      programMap.set(key, { cohortNames: new Set(recordingCohortNames(recording)), label: programLabelFromKey(key), value: key });
     });
-    return Array.from(labels.entries())
-      .map(([value, label]) => ({ label, value }))
+
+    return Array.from(programMap.values())
+      .map((program) => {
+        const filterProgram = { cohortNames: Array.from(program.cohortNames), value: program.value };
+        return {
+          ...filterProgram,
+          count: recordings.filter((recording) => recordingMatchesProgram(recording, filterProgram)).length,
+          label: program.label
+        };
+      })
       .sort((left, right) => left.label.localeCompare(right.label));
   }, [enrolledCohorts, recordings]);
+  const selectedProgram = useMemo(() => enrolledPrograms.find((program) => program.value === selectedProgramKey), [enrolledPrograms, selectedProgramKey]);
   const filteredRecordings = useMemo(() => {
     if (!selectedProgramKey) return recordings;
-    return recordings.filter((recording) => {
-      const keys = [recording.programKey, recording.domainKey].map(normalizeProgramKey).filter(Boolean);
-      return keys.includes(selectedProgramKey);
-    });
-  }, [recordings, selectedProgramKey]);
+    if (selectedProgram) return recordings.filter((recording) => recordingMatchesProgram(recording, selectedProgram));
+    return recordings.filter((recording) => primaryProgramKeyForRecording(recording) === selectedProgramKey);
+  }, [recordings, selectedProgram, selectedProgramKey]);
   const total = filteredRecordings.length;
   const totalPages = totalPagesFor(total);
   const safePage = Math.min(page, totalPages);
@@ -214,24 +241,9 @@ export function StudentRecordingsPage() {
   const availableCount = useMemo(() => filteredRecordings.filter(hasRecordingAccess).length, [filteredRecordings]);
   const latestRecordingDate = useMemo(() => getLatestRecordingDate(filteredRecordings), [filteredRecordings]);
 
-  function updateAccessType(nextAccessType: AccessFilter) {
-    const next = new URLSearchParams();
-    next.set('page', '1');
-    if (nextAccessType !== 'all') {
-      next.set('accessType', nextAccessType);
-    }
-    if (selectedProgramKey) {
-      next.set('programKey', selectedProgramKey);
-    }
-    setSearchParams(next);
-  }
-
   function updateProgramFilter(nextProgramKey: string) {
     const next = new URLSearchParams();
     next.set('page', '1');
-    if (accessType !== 'all') {
-      next.set('accessType', accessType);
-    }
     if (nextProgramKey) {
       next.set('programKey', nextProgramKey);
     }
@@ -287,23 +299,22 @@ export function StudentRecordingsPage() {
         </article>
       </div>
 
-      <section className="student-recording-chips" aria-label="Recording quick filters">
-        {accessFilters.map((filter) => (
-          <button className={`segmented-button ${accessType === filter.value ? 'segmented-button--active' : ''}`} key={filter.value} onClick={() => updateAccessType(filter.value)} type="button">
-            {filter.label}
+      <section className="student-recording-chips" aria-label="Recording program filters">
+        <button className={`student-recording-chip ${selectedProgramKey ? '' : 'student-recording-chip--active'}`} onClick={() => updateProgramFilter('')} type="button">
+          <span>All Recordings</span>
+          <strong>{recordings.length}</strong>
+        </button>
+        {enrolledPrograms.map((program) => (
+          <button
+            className={`student-recording-chip ${selectedProgramKey === program.value ? 'student-recording-chip--active' : ''}`}
+            key={program.value}
+            onClick={() => updateProgramFilter(program.value)}
+            type="button"
+          >
+            <span>{program.label}</span>
+            <strong>{program.count}</strong>
           </button>
         ))}
-        <label className="student-recording-program-filter">
-          <span>Enrolled program</span>
-          <select value={selectedProgramKey} onChange={(event) => updateProgramFilter(event.target.value)}>
-            <option value="">All enrolled programs</option>
-            {enrolledPrograms.map((program) => (
-              <option key={program.value} value={program.value}>
-                {program.label}
-              </option>
-            ))}
-          </select>
-        </label>
       </section>
 
       {visibleRecordings.length > 0 ? (
@@ -318,7 +329,7 @@ export function StudentRecordingsPage() {
 
       <nav className="pagination-bar" aria-label="Recording pagination">
         {safePage > 1 ? (
-          <Link className="pagination-link" to={buildPageLink(safePage - 1, accessType, selectedProgramKey)}>
+          <Link className="pagination-link" to={buildPageLink(safePage - 1, selectedProgramKey)}>
             Previous page
           </Link>
         ) : (
@@ -328,7 +339,7 @@ export function StudentRecordingsPage() {
           Page {safePage} of {totalPages} · {total} matching
         </span>
         {safePage < totalPages ? (
-          <Link className="pagination-link" to={buildPageLink(safePage + 1, accessType, selectedProgramKey)}>
+          <Link className="pagination-link" to={buildPageLink(safePage + 1, selectedProgramKey)}>
             Next page
           </Link>
         ) : (

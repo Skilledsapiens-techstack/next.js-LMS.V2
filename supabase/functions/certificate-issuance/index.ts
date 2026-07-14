@@ -272,23 +272,33 @@ async function getActor(supabase: ReturnType<typeof createClient>, request: Requ
   return { email: data.user.email.toLowerCase(), id: data.user.id };
 }
 
-async function getAdminRole(supabase: ReturnType<typeof createClient>, actor: { email: string; id: string }) {
+async function getAdminAccess(supabase: ReturnType<typeof createClient>, actor: { email: string; id: string }) {
   const { data } = await supabase
     .from('admin_users')
-    .select('id,role')
+    .select('id,role,permissions')
     .or(`auth_user_id.eq.${actor.id},email.eq.${actor.email}`)
     .eq('status', 'active')
     .limit(1)
     .maybeSingle();
-  return typeof data?.role === 'string' ? data.role : null;
+  return {
+    permissions: Array.isArray(data?.permissions) ? data.permissions.map(String) : null,
+    role: typeof data?.role === 'string' ? data.role : null
+  };
 }
 
-function canViewCertificates(role: string | null) {
-  return role === 'super_admin' || role === 'admin' || role === 'moderator';
+function hasAdminPermission(access: { permissions: string[] | null; role: string | null }, permission: string) {
+  if (access.permissions) return access.permissions.includes(permission);
+  if (permission === 'admin.certificates.view') return access.role === 'super_admin' || access.role === 'admin' || access.role === 'moderator';
+  if (permission === 'admin.certificates.issue') return access.role === 'super_admin' || access.role === 'admin';
+  return false;
 }
 
-function canIssueCertificates(role: string | null) {
-  return role === 'super_admin' || role === 'admin';
+function canViewCertificates(access: { permissions: string[] | null; role: string | null }) {
+  return hasAdminPermission(access, 'admin.certificates.view');
+}
+
+function canIssueCertificates(access: { permissions: string[] | null; role: string | null }) {
+  return hasAdminPermission(access, 'admin.certificates.issue');
 }
 
 async function getEmailTemplate(supabase: ReturnType<typeof createClient>, templateKey: string) {
@@ -375,12 +385,12 @@ async function generateOne(supabase: ReturnType<typeof createClient>, certificat
   if (error || !certificate) throw new Error('Certificate was not found.');
   if (certificate.status === 'revoked') throw new Error('Revoked certificates cannot be regenerated.');
 
-  const adminRole = await getAdminRole(supabase, actor);
-  const actorCanViewAsAdmin = canViewCertificates(adminRole);
+  const adminAccess = await getAdminAccess(supabase, actor);
+  const actorCanViewAsAdmin = canViewCertificates(adminAccess);
   if (!actorCanViewAsAdmin && text(certificate.student_email).toLowerCase() !== actor.email) {
     throw new Error('You do not have access to this certificate.');
   }
-  if ((options.force || options.sendEmail) && !canIssueCertificates(adminRole)) {
+  if ((options.force || options.sendEmail) && !canIssueCertificates(adminAccess)) {
     throw new Error('Certificate issuance permission is required.');
   }
 

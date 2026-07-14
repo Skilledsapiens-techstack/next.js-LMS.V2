@@ -5,25 +5,13 @@ import { EmptyState, ErrorState, LoadingState, LockedState } from '../components
 import { PageHeader } from '../components/PageHeader';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
-import { StudentScheduleAccessType, StudentScheduleItem, StudentScheduleStatus, useStudentSchedule } from '../features/student/useStudentSchedule';
-
-type AccessFilter = StudentScheduleAccessType | 'all';
+import { StudentScheduleItem, StudentScheduleStatus, useStudentSchedule } from '../features/student/useStudentSchedule';
 
 const pageSize = 25;
-
-const accessFilters: Array<{ label: string; value: AccessFilter }> = [
-  { label: 'All', value: 'all' },
-  { label: 'Free', value: 'free' },
-  { label: 'Paid', value: 'paid' }
-];
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
-}
-
-function asAccessType(value: string | null): AccessFilter {
-  return value === 'free' || value === 'paid' ? value : 'all';
 }
 
 function formatDate(value: string | undefined) {
@@ -97,10 +85,9 @@ function totalPagesFor(count: number) {
   return Math.max(1, Math.ceil(count / pageSize));
 }
 
-function buildPageLink(page: number, accessType: AccessFilter) {
+function buildPageLink(page: number) {
   const params = new URLSearchParams();
   params.set('page', String(page));
-  if (accessType !== 'all') params.set('accessType', accessType);
   return `?${params.toString()}`;
 }
 
@@ -155,10 +142,9 @@ function ScheduleRow({ item }: { item: StudentScheduleItem }) {
 }
 
 export function StudentSchedulePage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const accessType = asAccessType(searchParams.get('accessType'));
+  const [searchParams] = useSearchParams();
   const page = asPositiveInteger(searchParams.get('page'), 1);
-  const scheduleQuery = useStudentSchedule({ accessType, limit: 500, page: 1 });
+  const scheduleQuery = useStudentSchedule({ limit: 500, page: 1 });
   const scheduleItems = useMemo(() => sortScheduleItems(scheduleQuery.data?.items ?? []), [scheduleQuery.data?.items]);
   const total = scheduleItems.length;
   const totalPages = totalPagesFor(total);
@@ -168,15 +154,6 @@ export function StudentSchedulePage() {
   const liveCount = useMemo(() => scheduleItems.filter((item) => item.status === 'Live').length, [scheduleItems]);
   const joinableCount = useMemo(() => scheduleItems.filter((item) => hasScheduleAccess(item) && item.joinUrl).length, [scheduleItems]);
   const nextSession = scheduleItems.find((item) => item.status === 'Live') ?? scheduleItems[0];
-
-  function updateAccessType(nextAccessType: AccessFilter) {
-    const next = new URLSearchParams();
-    next.set('page', '1');
-    if (nextAccessType !== 'all') {
-      next.set('accessType', nextAccessType);
-    }
-    setSearchParams(next);
-  }
 
   if (scheduleQuery.isLoading) {
     return (
@@ -241,14 +218,6 @@ export function StudentSchedulePage() {
         </article>
       </div>
 
-      <section className="student-schedule-chips" aria-label="Upcoming workshop filters">
-        {accessFilters.map((filter) => (
-          <button className={`segmented-button ${accessType === filter.value ? 'segmented-button--active' : ''}`} key={filter.value} onClick={() => updateAccessType(filter.value)} type="button">
-            {filter.label}
-          </button>
-        ))}
-      </section>
-
       {visibleItems.length > 0 ? (
         <section className="student-schedule-list" aria-label="Visible workshops">
           {visibleItems.map((item) => (
@@ -261,7 +230,7 @@ export function StudentSchedulePage() {
 
       <nav className="pagination-bar" aria-label="Upcoming workshops pagination">
         {safePage > 1 ? (
-          <Link className="pagination-link" to={buildPageLink(safePage - 1, accessType)}>
+          <Link className="pagination-link" to={buildPageLink(safePage - 1)}>
             Previous page
           </Link>
         ) : (
@@ -271,7 +240,7 @@ export function StudentSchedulePage() {
           Page {safePage} of {totalPages} · {total} matching
         </span>
         {safePage < totalPages ? (
-          <Link className="pagination-link" to={buildPageLink(safePage + 1, accessType)}>
+          <Link className="pagination-link" to={buildPageLink(safePage + 1)}>
             Next page
           </Link>
         ) : (

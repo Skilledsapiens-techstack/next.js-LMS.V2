@@ -1,0 +1,23 @@
+Hostinger deployment package - SPA refresh hard fix
+
+Extract this zip inside public_html.
+
+This package includes:
+- .htaccess
+- 404.html
+- index.html
+- assets/
+
+The .htaccess file fixes refresh/direct URL access for React routes:
+- /admin/cohorts
+- /student/recordings
+- /student/programs
+
+Important Hostinger checks:
+1. .htaccess must be directly inside public_html.
+2. Hostinger may hide dotfiles. Enable "show hidden files" or create/check .htaccess manually.
+3. public_html should directly contain index.html, 404.html, .htaccess, and assets/.
+4. Clear browser cache or test in incognito after extraction.
+
+If refresh still shows Hostinger 404, the server is not reading .htaccess for this domain/subdomain. In that case, check Hostinger domain/subdomain document root and Apache/LiteSpeed rewrite support.
+

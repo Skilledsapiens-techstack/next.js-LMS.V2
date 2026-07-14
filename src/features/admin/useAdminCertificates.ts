@@ -106,6 +106,29 @@ export type IssueLeadershipCertificatesResult = {
   message: string;
 };
 
+export type IssueManualCertificateInput = {
+  acknowledgeDuplicate?: boolean;
+  certificateType: AdminCertificateType;
+  durationWeeks?: number;
+  issueDate: string;
+  manualStudentEmail?: string;
+  manualStudentName?: string;
+  modulesCovered?: string[];
+  programKey?: string;
+  programName?: string;
+  projectRole?: string;
+  projectStartDate?: string;
+  projectTitle?: string;
+  sendEmail: boolean;
+  studentId?: string;
+};
+
+export type IssueManualCertificateResult = {
+  certificate: AdminCertificate;
+  duplicateWarnings: string[];
+  message: string;
+};
+
 export type AdminCertificateProgramSetting = {
   id: string;
   leadershipTemplateUrl?: string;
@@ -217,6 +240,23 @@ export function useIssueLeadershipCertificates() {
   return useMutation({
     mutationFn: (body: IssueLeadershipCertificatesInput) =>
       apiPost<IssueLeadershipCertificatesResult, IssueLeadershipCertificatesInput>('/admins/certificates/leadership', {
+        accessToken: accessToken ?? undefined,
+        body
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-certificates'] });
+      queryClient.invalidateQueries({ queryKey: ['student-certificates'] });
+    }
+  });
+}
+
+export function useIssueManualCertificate() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: IssueManualCertificateInput) =>
+      apiPost<IssueManualCertificateResult, IssueManualCertificateInput>('/admins/certificates/manual', {
         accessToken: accessToken ?? undefined,
         body
       }),

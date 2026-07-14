@@ -1,0 +1,22 @@
+Hostinger deployment package
+
+Extract this zip inside public_html.
+
+This package includes .htaccess for React/Vite SPA refresh support.
+
+After extraction, public_html should directly contain:
+- .htaccess
+- index.html
+- assets/
+- favicon.ico
+- favicon-16x16.png
+- favicon-32x32.png
+- apple-touch-icon.png
+
+The .htaccess file fixes refresh/direct access for routes like:
+- /admin/cohorts
+- /student/recordings
+- /student/programs
+
+Do not leave the files inside a nested folder.
+
