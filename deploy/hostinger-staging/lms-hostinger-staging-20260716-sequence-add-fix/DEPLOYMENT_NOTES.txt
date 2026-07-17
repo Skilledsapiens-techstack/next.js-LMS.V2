@@ -1,0 +1,16 @@
+Hostinger deployment package - Recording Sequence Add fix
+Build date: 16 Jul 2026
+
+Changes included:
+- Fixed Admin Recordings Sequence Manager Add sequence save behavior for multi-program selections.
+- A single duplicate/failed program no longer blocks successful saves for other selected programs.
+- Sequence duplicate errors now show a sequence-specific message.
+
+QA completed:
+- npm run lint
+- npm run build
+- npm test -- --runInBand
+
+Deploy:
+- Upload/extract this folder contents into Hostinger public_html.
+- Keep the included .htaccess file.

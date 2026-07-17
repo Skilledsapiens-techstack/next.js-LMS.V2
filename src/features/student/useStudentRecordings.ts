@@ -5,6 +5,7 @@ import { PaginatedResponse } from './useStudentAnnouncements';
 
 export type StudentRecordingAccessType = 'free' | 'paid';
 export type StudentRecordingSource = 'youtube' | 'zoom';
+export type StudentRecordingSection = 'induction_live_project' | 'core_modules' | 'placement_mentorship' | 'other_workshops';
 
 export type StudentRecording = {
   accessType: StudentRecordingAccessType;
@@ -20,6 +21,12 @@ export type StudentRecording = {
   paymentLink?: string;
   price?: number | null;
   programKey?: string;
+  recordingSequenceMatched?: boolean;
+  recordingSequenceNumber?: number | null;
+  recordingSequenceProgramKey?: string | null;
+  recordingSection?: StudentRecordingSection | null;
+  recordingSequenceTitle?: string | null;
+  relatedResources?: StudentRecordingResource[];
   recordingUrl?: string;
   recordingPassword?: string;
   source?: StudentRecordingSource;
@@ -28,12 +35,26 @@ export type StudentRecording = {
   workshopId?: string;
 };
 
+export type StudentRecordingResource = {
+  description?: string | null;
+  id: string;
+  resourceMode?: string | null;
+  resourceType?: string | null;
+  title: string;
+  url?: string | null;
+};
+
 export type StudentRecordingsQuery = {
   accessType?: StudentRecordingAccessType | 'all';
   limit?: number;
   page?: number;
   search?: string;
   source?: StudentRecordingSource | 'all';
+};
+
+export type StudentRecordingResourcesResponse = {
+  recordingId: string;
+  resources: StudentRecordingResource[];
 };
 
 export function useStudentRecordings(query: StudentRecordingsQuery) {
@@ -58,6 +79,23 @@ export function useStudentRecordings(query: StudentRecordingsQuery) {
         }
       }),
     queryKey: ['student-recordings', accessToken, page, limit, accessType, source, search],
-    staleTime: 60_000
+    refetchOnMount: 'always',
+    staleTime: 0
+  });
+}
+
+export function useStudentRecordingResources(recordingId: string | undefined, enabled = true) {
+  const { accessToken } = useAuth();
+  const cleanRecordingId = recordingId?.trim();
+
+  return useQuery({
+    enabled: Boolean(accessToken && cleanRecordingId && enabled),
+    queryFn: () =>
+      apiGet<StudentRecordingResourcesResponse>(`/students/me/recordings/${encodeURIComponent(cleanRecordingId ?? '')}/resources`, {
+        accessToken: accessToken ?? undefined
+      }),
+    queryKey: ['student-recording-resources', accessToken, cleanRecordingId],
+    refetchOnMount: 'always',
+    staleTime: 0
   });
 }

@@ -9,6 +9,9 @@ type AdminStudentPayload = {
 };
 
 type AdminRole = 'admin' | 'moderator' | 'super_admin';
+type AuthMatchSource = 'linked' | 'email' | 'multiple' | 'none';
+
+const AUTH_INVITE_COOLDOWN_MS = 60_000;
 
 const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -33,6 +36,48 @@ function normalizeEmail(value: unknown) {
 
 function uniqueStrings(values: unknown[]) {
   return Array.from(new Set(values.map((value) => String(value ?? '').trim()).filter(Boolean)));
+}
+
+function text(value: unknown, fallback = '') {
+  if (value === null || value === undefined) return fallback;
+  return String(value).trim();
+}
+
+function stringList(value: unknown) {
+  if (Array.isArray(value)) return Array.from(new Set(value.map((entry) => text(entry)).filter(Boolean)));
+  return String(value || '').split(',').map((entry) => entry.trim()).filter(Boolean);
+}
+
+function authEmailRowTimestamp(row: Record<string, unknown>) {
+  return ['sent_at', 'created_at', 'updated_at', 'scheduled_at'].reduce((latest, key) => {
+    const value = Date.parse(text(row[key]));
+    return Number.isFinite(value) ? Math.max(latest, value) : latest;
+  }, 0);
+}
+
+function isAuthEmailRow(row: Record<string, unknown>) {
+  const category = text(row.category).toLowerCase();
+  const templateKey = text(row.template_key).toLowerCase();
+  const tags = stringList(row.tags).map((tag) => tag.toLowerCase());
+  return category === 'auth' || templateKey === 'portal_invite' || templateKey === 'portal_password_reset' || tags.includes('lms-auth') || tags.includes('portal-invite');
+}
+
+async function enforceInviteCooldown(supabase: ReturnType<typeof createClient>, email: string) {
+  const cutoffMs = Date.now() - AUTH_INVITE_COOLDOWN_MS;
+  const { data, error } = await supabase
+    .from('email_queue')
+    .select('category,created_at,scheduled_at,sent_at,tags,template_key,updated_at')
+    .eq('recipient_email', email)
+    .order('created_at', { ascending: false })
+    .limit(20);
+  if (error) throw new Error(`Unable to verify recent invite activity: ${error.message}`);
+
+  const recent = (data ?? [])
+    .map((row) => row as Record<string, unknown>)
+    .find((row) => isAuthEmailRow(row) && authEmailRowTimestamp(row) >= cutoffMs);
+  if (recent) {
+    throw new Error('A password setup email was sent recently. Please wait one minute before sending another fresh link.');
+  }
 }
 
 function hasPermission(role: AdminRole, permission: 'admin.students.invite' | 'admin.students.manage' | 'admin.students.view') {
@@ -70,6 +115,9 @@ async function getActiveAdmin(supabase: ReturnType<typeof createClient>, authori
 
 async function listAuthUsersByStudent(supabase: ReturnType<typeof createClient>, emails: string[], studentIds: string[]) {
   const usersByEmail = new Map<string, Record<string, unknown>>();
+  const linkedByEmail = new Map<string, boolean>();
+  const sourceByEmail = new Map<string, AuthMatchSource>();
+  const countByEmail = new Map<string, number>();
 
   const studentLookup = studentIds.length > 0
     ? supabase.from('students').select('id,email,auth_user_id').in('id', studentIds).limit(500)
@@ -83,10 +131,41 @@ async function listAuthUsersByStudent(supabase: ReturnType<typeof createClient>,
     if (!authUserId || !email) continue;
     const { data, error: userError } = await supabase.auth.admin.getUserById(authUserId);
     if (userError || !data.user) continue;
-    usersByEmail.set(email, data.user as unknown as Record<string, unknown>);
+    const user = data.user as unknown as Record<string, unknown>;
+    const existing = usersByEmail.get(email);
+    const existingLastSignInAt = typeof existing?.last_sign_in_at === 'string' ? existing.last_sign_in_at : '';
+    const nextLastSignInAt = typeof user.last_sign_in_at === 'string' ? user.last_sign_in_at : '';
+    if (!existing || (!existingLastSignInAt && nextLastSignInAt)) {
+      usersByEmail.set(email, user);
+      linkedByEmail.set(email, true);
+      sourceByEmail.set(email, 'linked');
+      countByEmail.set(email, 1);
+    }
   }
 
-  return usersByEmail;
+  const unlinkedEmails = emails.filter((email) => email && !usersByEmail.has(email));
+  if (unlinkedEmails.length > 0) {
+    const usersByUnlinkedEmail = await findAuthUsersByEmail(supabase, unlinkedEmails);
+    for (const email of unlinkedEmails) {
+      const users = usersByUnlinkedEmail.get(email) ?? [];
+      if (users.length === 0) {
+        sourceByEmail.set(email, 'none');
+        countByEmail.set(email, 0);
+        continue;
+      }
+      if (users.length > 1) {
+        sourceByEmail.set(email, 'multiple');
+        countByEmail.set(email, users.length);
+        continue;
+      }
+      usersByEmail.set(email, users[0]);
+      linkedByEmail.set(email, false);
+      sourceByEmail.set(email, 'email');
+      countByEmail.set(email, 1);
+    }
+  }
+
+  return { countByEmail, linkedByEmail, sourceByEmail, usersByEmail };
 }
 
 async function getStatusSummary(supabase: ReturnType<typeof createClient>, payload: AdminStudentPayload) {
@@ -94,11 +173,11 @@ async function getStatusSummary(supabase: ReturnType<typeof createClient>, paylo
   const studentIds = uniqueStrings(payload.studentIds ?? []).slice(0, 500);
   if (emails.length === 0) return { statuses: [] };
 
-  const [usersByEmail, inviteResult] = await Promise.all([
+  const [authLookup, inviteResult] = await Promise.all([
     listAuthUsersByStudent(supabase, emails, studentIds),
     supabase
       .from('email_queue')
-      .select('recipient_email,status,failure_message,updated_at,created_at')
+      .select('recipient_email,status,failure_message,sent_at,updated_at,created_at')
       .in('recipient_email', emails)
       .contains('tags', ['portal-invite'])
       .order('created_at', { ascending: false })
@@ -115,14 +194,22 @@ async function getStatusSummary(supabase: ReturnType<typeof createClient>, paylo
 
   return {
     statuses: emails.map((email) => {
-      const user = usersByEmail.get(email);
+      const user = authLookup.usersByEmail.get(email);
       const invite = latestInviteByEmail.get(email);
+      const authMatchCount = authLookup.countByEmail.get(email) ?? (user ? 1 : 0);
+      const authMatchSource = authLookup.sourceByEmail.get(email) ?? (user ? 'linked' : 'none');
       return {
-        authAccountExists: Boolean(user),
+        authAccountExists: Boolean(user) || authMatchCount > 0,
+        authLinked: authLookup.linkedByEmail.get(email) ?? false,
+        authMatchCount,
+        authMatchSource,
         email,
         emailConfirmedAt: (user?.email_confirmed_at as string | undefined) ?? null,
+        inviteCreatedAt: (invite?.created_at as string | undefined) ?? null,
         inviteError: (invite?.failure_message as string | undefined) ?? null,
+        inviteSentAt: (invite?.sent_at as string | undefined) ?? null,
         inviteStatus: (invite?.status as string | undefined) ?? null,
+        inviteUpdatedAt: (invite?.updated_at as string | undefined) ?? null,
         lastSignInAt: (user?.last_sign_in_at as string | undefined) ?? null
       };
     })
@@ -152,6 +239,7 @@ async function processQueuedStudentEmail(authorization: string, queueId: string)
 async function queueInvite(supabase: ReturnType<typeof createClient>, authorization: string, actorEmail: string, student: Record<string, unknown>) {
   const email = normalizeEmail(student.email);
   if (!email) throw new Error('Student email is missing.');
+  await enforceInviteCooldown(supabase, email);
 
   const queueRow = {
     category: 'auth',

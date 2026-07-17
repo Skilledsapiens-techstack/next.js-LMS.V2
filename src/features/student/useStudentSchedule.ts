@@ -4,7 +4,7 @@ import { apiGet } from '../../lib/supabaseApi';
 import { PaginatedResponse } from './useStudentAnnouncements';
 
 export type StudentScheduleAccessType = 'free' | 'paid';
-export type StudentScheduleStatus = 'Upcoming' | 'Scheduled' | 'Live';
+export type StudentScheduleStatus = 'Upcoming' | 'Scheduled' | 'Live' | 'Completed';
 
 export type StudentScheduleItem = {
   accessType: StudentScheduleAccessType;
@@ -29,6 +29,7 @@ export type StudentScheduleItem = {
 
 export type StudentScheduleQuery = {
   accessType?: StudentScheduleAccessType | 'all';
+  includePast?: boolean;
   limit?: number;
   page?: number;
   search?: string;
@@ -40,6 +41,7 @@ export function useStudentSchedule(query: StudentScheduleQuery) {
   const accessType = query.accessType ?? 'all';
   const limit = query.limit ?? 25;
   const page = query.page ?? 1;
+  const includePast = query.includePast ?? false;
   const search = query.search?.trim();
   const status = query.status ?? 'all';
 
@@ -50,13 +52,14 @@ export function useStudentSchedule(query: StudentScheduleQuery) {
         accessToken: accessToken ?? undefined,
         query: {
           accessType,
+          includePast,
           limit,
           page,
           search,
           status
         }
       }),
-    queryKey: ['student-schedule', accessToken, page, limit, accessType, status, search],
+    queryKey: ['student-schedule', accessToken, page, limit, accessType, includePast, status, search],
     staleTime: 60_000
   });
 }

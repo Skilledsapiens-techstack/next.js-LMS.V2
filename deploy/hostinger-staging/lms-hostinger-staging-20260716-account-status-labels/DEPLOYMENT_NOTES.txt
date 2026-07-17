@@ -1,0 +1,19 @@
+Hostinger deployment package - Account Status labels and filters
+
+Build date: 16 Jul 2026
+
+What changed:
+- Admin Students "Auth & Invite" column is now "Account Status".
+- Simplified account labels: Can Login, Account Ready, Password Not Set, Setup Link Sent, Link Pending, Email Failed, Needs Sync, Needs Review.
+- Updated account-status filter dropdown to match the simplified labels.
+- Updated CTAs: Sync Account, Send Password Link, Send Password Links.
+- Removed confusing technical auth/roster-link wording from the visible Students table.
+
+QA completed before packaging:
+- npm run lint
+- npm run build
+- npm test -- --runInBand
+
+Deploy:
+- Extract this package into Hostinger public_html.
+- Keep the included .htaccess file for SPA route refresh support.

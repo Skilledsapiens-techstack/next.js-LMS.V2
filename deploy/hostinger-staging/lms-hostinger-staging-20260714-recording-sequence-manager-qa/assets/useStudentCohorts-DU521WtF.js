@@ -1,0 +1,1 @@
+import{u as c}from"./query-DQqZ7ZBB.js";import{u,c as r}from"./index-laC7sfDH.js";function l(s){const{accessToken:t}=u(),e=s.page??1,o=s.limit??25,a=s.status??"all",n=s.search?.trim();return c({enabled:!!t,queryFn:()=>r("/students/me/cohorts",{accessToken:t??void 0,query:{limit:o,page:e,search:n,status:a}}),queryKey:["student-cohorts",t,e,o,a,n],staleTime:6e4})}export{l as u};

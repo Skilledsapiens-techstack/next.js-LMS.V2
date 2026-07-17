@@ -1,0 +1,18 @@
+Skilled Sapiens LMS deployment package
+Build date: 2026-07-16
+
+Scope:
+- Adds a clean Past Sessions view inside Student Upcoming Workshops.
+- Past sessions are read-only informational history with no join/pay actions.
+- Upcoming workshops keep the existing Join/Pay behavior.
+- Supabase student_schedule_view now supports optional p_include_past.
+
+Database:
+- Applied migration 20260716144511_student_schedule_include_past_sessions.sql.
+- Applied migration 20260716145614_drop_legacy_student_schedule_view_overload.sql.
+
+Verification:
+- npm run lint
+- npm run build
+- supabase db push
+- supabase migration list --linked

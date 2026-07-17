@@ -17,6 +17,7 @@ const portalUrlFallback =
 const DAILY_EMAIL_LIMIT = 300;
 const DEFAULT_BATCH_SIZE = 50;
 const MAX_BATCH_SIZE = 100;
+const AUTH_EMAIL_COOLDOWN_MS = 60_000;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -247,17 +248,37 @@ async function assertAdminCaller(req: Request, permission: AdminPermission) {
 }
 
 async function enforceCooldown(email: string) {
-  const cutoff = new Date(Date.now() - 60_000).toISOString();
+  const cutoffMs = Date.now() - AUTH_EMAIL_COOLDOWN_MS;
   const { data, error } = await admin
     .from('email_queue')
-    .select('id')
+    .select('category,created_at,scheduled_at,sent_at,tags,template_key,updated_at')
     .eq('recipient_email', email)
-    .eq('category', 'auth')
-    .gte('created_at', cutoff)
-    .limit(1);
-  if (!error && data && data.length) {
+    .order('created_at', { ascending: false })
+    .limit(20);
+  if (error) {
+    console.warn('Password setup cooldown check failed', error.message);
+    return;
+  }
+  const recent = (data ?? [])
+    .map((row) => row as JsonRecord)
+    .find((row) => isAuthEmailRow(row) && authEmailRowTimestamp(row) >= cutoffMs);
+  if (recent) {
     throw new Error('A setup email was requested recently. Please wait a minute before trying again.');
   }
+}
+
+function authEmailRowTimestamp(row: JsonRecord) {
+  return ['sent_at', 'created_at', 'updated_at', 'scheduled_at'].reduce((latest, key) => {
+    const value = Date.parse(text(row[key]));
+    return Number.isFinite(value) ? Math.max(latest, value) : latest;
+  }, 0);
+}
+
+function isAuthEmailRow(row: JsonRecord) {
+  const category = text(row.category).toLowerCase();
+  const templateKey = text(row.template_key).toLowerCase();
+  const tags = stringList(row.tags).map((tag) => tag.toLowerCase());
+  return category === 'auth' || templateKey === 'portal_invite' || templateKey === 'portal_password_reset' || tags.includes('lms-auth') || tags.includes('portal-invite');
 }
 
 async function activeStudentByEmail(email: string) {
@@ -294,7 +315,16 @@ async function generateAuthActionLink(type: 'invite' | 'recovery', student: Json
   const bodyText = await response.text();
   let body: JsonRecord = {};
   try { body = bodyText ? asRecord(JSON.parse(bodyText)) : {}; } catch (_err) { body = { raw: bodyText }; }
-  if (response.ok && body.action_link) return { status: 'generated', actionLink: text(body.action_link), type };
+  if (response.ok && body.action_link) {
+    return {
+      status: 'generated',
+      actionLink: text(body.action_link),
+      emailOtp: text(body.email_otp),
+      hashedToken: text(body.hashed_token),
+      type,
+      verificationType: text(body.verification_type, type),
+    };
+  }
   if (/already|registered|exists/i.test(bodyText)) return { status: 'existing', message: bodyText.slice(0, 300), type };
   return { status: 'failed', message: bodyText.slice(0, 300) || `Supabase link generation returned ${response.status}`, type };
 }
@@ -309,7 +339,66 @@ async function passwordSetupLink(student: JsonRecord, createRedirectUrl: string,
   if (link.status !== 'generated') {
     throw new Error(link.message || 'Supabase could not generate a password setup link.');
   }
-  return { actionLink: text(link.actionLink), mode };
+  return {
+    actionLink: text(link.actionLink),
+    emailOtp: text(link.emailOtp),
+    hashedToken: text(link.hashedToken),
+    mode,
+    verificationType: text(link.verificationType, mode),
+  };
+}
+
+function passwordOtpPortalUrl(
+  redirectUrl: string,
+  email: string,
+  verificationType: string,
+  intent: 'create' | 'forgot',
+) {
+  const safeType = verificationType === 'invite' ? 'invite' : 'recovery';
+  try {
+    const url = new URL(normalizeStudentRedirectUrl(redirectUrl, intent));
+    url.searchParams.set('email', email);
+    url.searchParams.set('otp_type', safeType);
+    url.searchParams.set('auth_method', 'email_code');
+    return url.toString();
+  } catch (_err) {
+    return `https://login.skilledsapiens.com/login?mode=recovery&intent=${intent}&portal=student&email=${encodeURIComponent(email)}&otp_type=${safeType}&auth_method=email_code`;
+  }
+}
+
+function authEmailLogParams(vars: JsonRecord) {
+  const params = { ...vars };
+  delete params.action_otp;
+  delete params.supabase_action_link;
+  return params;
+}
+
+function appendPasswordCodeHtml(htmlContent: string, emailOtp: string, portalUrl: string) {
+  if (!emailOtp) return htmlContent;
+  if (htmlContent.includes(emailOtp)) return htmlContent;
+  return [
+    htmlContent,
+    `<div style="margin-top:18px;padding:16px;border:1px solid #f3c27a;border-radius:10px;background:#fff8e6;">`,
+    `<p style="margin:0 0 8px;font-weight:700;color:#111111;">One-time password code</p>`,
+    `<p style="margin:0 0 10px;font-size:28px;letter-spacing:0.16em;font-weight:800;color:#111111;">${escHtml(emailOtp)}</p>`,
+    `<p style="margin:0;color:#55546a;">Open the LMS password page and enter this code with your registered email to create or reset your password.</p>`,
+    `<p style="margin:12px 0 0;"><a href="${escHtml(portalUrl)}" style="display:inline-block;background:#df302b;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700;">Open Password Page</a></p>`,
+    `</div>`,
+  ].join('');
+}
+
+function appendPasswordCodeText(textContent: string, emailOtp: string, portalUrl: string) {
+  if (!emailOtp) return textContent;
+  if (textContent.includes(emailOtp)) return textContent;
+  return [
+    textContent,
+    '',
+    'One-time password code:',
+    emailOtp,
+    '',
+    'Open the LMS password page and enter this code with your registered email:',
+    portalUrl,
+  ].join('\n');
 }
 
 async function emailTemplateByKey(templateKey: string) {
@@ -953,9 +1042,11 @@ async function handlePasswordSetup(payload: JsonRecord) {
   const emailIntent = passwordEmailIntentFromRedirect(rawRedirectUrl, 'create');
   const redirectUrl = normalizeStudentRedirectUrl(rawRedirectUrl, 'create');
   const recoveryRedirectUrl = normalizeStudentRedirectUrl(rawRedirectUrl, emailIntent);
-  const { actionLink, mode } = await passwordSetupLink(student, redirectUrl, recoveryRedirectUrl);
+  const { actionLink, emailOtp, mode, verificationType } = await passwordSetupLink(student, redirectUrl, recoveryRedirectUrl);
   const name = text(student.full_name, 'Student') || 'Student';
   const isResetEmail = mode === 'recovery' && emailIntent !== 'create';
+  const passwordPageUrl = passwordOtpPortalUrl(recoveryRedirectUrl || redirectUrl, email, verificationType, emailIntent);
+  const emailActionUrl = emailOtp ? passwordPageUrl : actionLink;
   const templateKey = isResetEmail ? 'portal_password_reset' : 'portal_invite';
   const fallbackSubject = isResetEmail
     ? 'Reset your Skilled Sapiens LMS password'
@@ -967,7 +1058,8 @@ async function handlePasswordSetup(payload: JsonRecord) {
       ? 'Use the secure link below to reset your Skilled Sapiens LMS password.'
       : 'Use the secure link below to create your Skilled Sapiens LMS password.',
     '',
-    actionLink,
+    emailActionUrl,
+    ...(emailOtp ? ['', 'One-time password code:', emailOtp] : []),
     '',
     'This link is generated by Supabase Auth and should only be used by you.',
     '',
@@ -978,7 +1070,8 @@ async function handlePasswordSetup(payload: JsonRecord) {
   const fallbackHtml = [
     `<p>Hi ${escHtml(name)},</p>`,
     `<p>${isResetEmail ? 'Use the secure link below to reset your Skilled Sapiens LMS password.' : 'Use the secure link below to create your Skilled Sapiens LMS password.'}</p>`,
-    `<p><a href="${escHtml(actionLink)}" style="display:inline-block;background:#df302b;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700;">${isResetEmail ? 'Reset Password' : 'Create Password'}</a></p>`,
+    `<p><a href="${escHtml(emailActionUrl)}" style="display:inline-block;background:#df302b;color:#fff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700;">${isResetEmail ? 'Reset Password' : 'Create Password'}</a></p>`,
+    emailOtp ? `<p>Your one-time password code is <strong>${escHtml(emailOtp)}</strong>.</p>` : '',
     '<p>This link is generated by Supabase Auth and should only be used by you.</p>',
     '<p>If you did not request this, you can ignore this email.</p>',
     '<p>Skilled Sapiens</p>',
@@ -986,7 +1079,10 @@ async function handlePasswordSetup(payload: JsonRecord) {
   const vars = {
     student_name: name,
     student_email: email,
-    action_link: actionLink,
+    action_link: emailActionUrl,
+    action_otp: emailOtp,
+    auth_link_mode: mode,
+    auth_verification_type: verificationType,
     portal_url: portalUrlFromRedirect(redirectUrl),
   };
   const template = await emailTemplateByKey(templateKey);
@@ -998,17 +1094,18 @@ async function handlePasswordSetup(payload: JsonRecord) {
   const htmlContent = template
     ? richPlainTextToHtml(renderedBody, {
       linkLabels: {
-        [actionLink]: isResetEmail ? 'Reset Password' : 'Create Password',
+        [emailActionUrl]: isResetEmail ? 'Reset Password' : 'Create Password',
         [portalUrl]: 'Open LMS Portal',
       },
-      buttonUrls: [actionLink],
+      buttonUrls: [emailActionUrl],
     })
     : fallbackHtml;
-  const textContent = template ? htmlToPlainText(htmlContent) || renderedBody : fallbackBody;
+  const htmlWithCode = appendPasswordCodeHtml(htmlContent, emailOtp, passwordPageUrl);
+  const textContent = appendPasswordCodeText(template ? htmlToPlainText(htmlWithCode) || renderedBody : fallbackBody, emailOtp, passwordPageUrl);
   const tags = ['lms', 'lms-auth', isResetEmail ? 'password-reset' : 'portal-invite'];
 
   try {
-    const delivery = await sendBrevo(email, name, subject, htmlContent, textContent, tags);
+    const delivery = await sendBrevo(email, name, subject, htmlWithCode, textContent, tags);
     await logEmailQueue({
       email_key: crypto.randomUUID(),
       template_key: templateUsedKey,
@@ -1019,7 +1116,7 @@ async function handlePasswordSetup(payload: JsonRecord) {
       recipient_email: email,
       recipient_name: name,
       subject,
-      params: vars,
+      params: authEmailLogParams(vars),
       tags,
       related_entity_type: 'student',
       related_entity_id: email,
@@ -1050,7 +1147,7 @@ async function handlePasswordSetup(payload: JsonRecord) {
       recipient_email: email,
       recipient_name: name,
       subject,
-      params: vars,
+      params: authEmailLogParams(vars),
       tags,
       related_entity_type: 'student',
       related_entity_id: email,
@@ -1102,12 +1199,16 @@ async function processQueuedStudentEmail(payload: JsonRecord, actor: JsonRecord)
     const rawRedirectUrl = payload.redirect_url || payload.redirectUrl || params.redirect_url || params.redirectUrl;
     const redirectUrl = normalizeStudentRedirectUrl(rawRedirectUrl, 'create');
     const recoveryRedirectUrl = normalizeStudentRedirectUrl(rawRedirectUrl, 'forgot');
-    const { actionLink, mode } = await passwordSetupLink(student, redirectUrl, recoveryRedirectUrl);
+    const { actionLink, emailOtp, mode, verificationType } = await passwordSetupLink(student, redirectUrl, recoveryRedirectUrl);
     const portalUrl = portalUrlFromRedirect(redirectUrl);
+    const passwordPageUrl = passwordOtpPortalUrl(mode === 'recovery' ? recoveryRedirectUrl : redirectUrl, email, verificationType, 'create');
+    const emailActionUrl = emailOtp ? passwordPageUrl : actionLink;
     vars = {
       ...vars,
-      action_link: actionLink,
+      action_link: emailActionUrl,
+      action_otp: emailOtp,
       auth_link_mode: mode,
+      auth_verification_type: verificationType,
       portal_url: portalUrl,
     };
     fallbackSubject = 'Create your Skilled Sapiens LMS password';
@@ -1116,7 +1217,8 @@ async function processQueuedStudentEmail(payload: JsonRecord, actor: JsonRecord)
       '',
       'Use the secure link below to create your Skilled Sapiens LMS password.',
       '',
-      actionLink,
+      emailActionUrl,
+      ...(emailOtp ? ['', 'One-time password code:', emailOtp] : []),
       '',
       'Open LMS:',
       portalUrl,
@@ -1125,8 +1227,8 @@ async function processQueuedStudentEmail(payload: JsonRecord, actor: JsonRecord)
       '',
       'Skilled Sapiens Team',
     ].join('\n');
-    buttonUrls.push(actionLink);
-    linkLabels[actionLink] = 'Create Password';
+    buttonUrls.push(emailActionUrl);
+    linkLabels[emailActionUrl] = 'Create Password';
     linkLabels[portalUrl] = 'Open LMS Portal';
   } else if (templateKey === 'onboarding_welcome') {
     fallbackSubject = `Welcome to Skilled Sapiens LMS, ${text(vars.student_name, 'Student')}`;
@@ -1159,17 +1261,20 @@ async function processQueuedStudentEmail(payload: JsonRecord, actor: JsonRecord)
   const bodyTemplate = template?.body || fallbackBody;
   const renderedBody = fillVars(bodyTemplate, vars, { html: looksLikeHtml(bodyTemplate) });
   const htmlContent = richPlainTextToHtml(renderedBody, { buttonUrls, linkLabels });
-  const textContent = htmlToPlainText(htmlContent) || renderedBody;
+  const passwordEmailOtp = templateKey === 'portal_invite' ? text(vars.action_otp) : '';
+  const passwordPageUrl = templateKey === 'portal_invite' ? text(vars.action_link) : '';
+  const htmlWithCode = appendPasswordCodeHtml(htmlContent, passwordEmailOtp, passwordPageUrl);
+  const textContent = appendPasswordCodeText(htmlToPlainText(htmlWithCode) || renderedBody, passwordEmailOtp, passwordPageUrl);
   const tags = Array.from(new Set([...stringList(queue.tags), templateKey === 'portal_invite' ? 'portal-invite' : 'onboarding']));
 
   try {
-    const delivery = await sendBrevo(email, text(queue.recipient_name || vars.student_name, email), subject, htmlContent, textContent, tags);
+    const delivery = await sendBrevo(email, text(queue.recipient_name || vars.student_name, email), subject, htmlWithCode, textContent, tags);
     const now = new Date().toISOString();
     const { error: updateError } = await admin
       .from('email_queue')
       .update({
         failure_message: null,
-        params: vars,
+        params: authEmailLogParams(vars),
         provider: 'brevo',
         provider_message_id: delivery.messageId || null,
         sent_at: now,

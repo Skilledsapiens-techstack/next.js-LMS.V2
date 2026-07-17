@@ -39,6 +39,19 @@ const statusOptions: Array<{ label: string; value: AdminStudentStatus | 'all' }>
   { label: 'Inactive Students', value: 'inactive' }
 ];
 
+const authInviteFilterOptions = [
+  { label: 'All Account Statuses', value: 'all' },
+  { label: 'Can Login', value: 'can_login' },
+  { label: 'Account Ready', value: 'account_ready' },
+  { label: 'Password Not Set', value: 'password_not_set' },
+  { label: 'Setup Link Sent', value: 'setup_link_sent' },
+  { label: 'Link Not Sent', value: 'link_not_sent' },
+  { label: 'Link Pending', value: 'link_pending' },
+  { label: 'Email Failed', value: 'email_failed' },
+  { label: 'Needs Sync', value: 'needs_sync' },
+  { label: 'Needs Review', value: 'needs_review' }
+] as const;
+
 const educationYearOptions = ['1st Year', '2nd Year', '3rd Year', '4th Year', 'Graduate', 'Working Professional'] as const;
 const personalMentorOptions = ['Yes', 'No'] as const;
 const liveProjectDurationOptions = ['2 weeks', '4 weeks', '6 weeks', '8 weeks'] as const;
@@ -52,6 +65,7 @@ const studentSortOptions = ['sequence', 'student', 'access', 'education', 'mento
 
 type StudentSortKey = (typeof studentSortOptions)[number];
 type SortDirection = 'asc' | 'desc';
+type AuthInviteFilter = (typeof authInviteFilterOptions)[number]['value'];
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
@@ -60,6 +74,21 @@ function asPositiveInteger(value: string | null, defaultValue: number) {
 
 function parseStatus(value: string | null): AdminStudentStatus | 'all' {
   return statusOptions.some((option) => option.value === value) ? (value as AdminStudentStatus | 'all') : 'all';
+}
+
+function parseAuthInviteFilter(value: string | null): AuthInviteFilter {
+  const legacyMap: Record<string, AuthInviteFilter> = {
+    account_created: 'account_ready',
+    invite_failed: 'email_failed',
+    invite_not_queued: 'link_not_sent',
+    invite_opened: 'setup_link_sent',
+    invite_pending: 'link_pending',
+    invite_sent: 'setup_link_sent',
+    no_password: 'password_not_set',
+    password_active: 'can_login'
+  };
+  if (value && legacyMap[value]) return legacyMap[value];
+  return authInviteFilterOptions.some((option) => option.value === value) ? (value as AuthInviteFilter) : 'all';
 }
 
 function parseRowsPerPage(value: string | null) {
@@ -80,6 +109,14 @@ function formatDate(value: string | undefined) {
 
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function formatDateTime(value: string | undefined | null) {
+  if (!value) return '';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, { day: '2-digit', hour: '2-digit', minute: '2-digit', month: 'short', year: 'numeric' });
 }
 
 function formatValue(value: string | number | undefined | null, fallback = '-') {
@@ -123,7 +160,7 @@ function deriveSlotFromSelectedCohorts(cohorts: AdminCohort[]) {
   return cohorts.map(deriveSlotFromCohortStartDate).find(Boolean) ?? '';
 }
 
-function buildPageLink(page: number, search: string, status: AdminStudentStatus | 'all', cohortName: string, programKey: string, limit: number, sort: StudentSortKey, direction: SortDirection) {
+function buildPageLink(page: number, search: string, status: AdminStudentStatus | 'all', cohortName: string, programKey: string, authInvite: AuthInviteFilter, limit: number, sort: StudentSortKey, direction: SortDirection) {
   const params = new URLSearchParams();
   params.set('page', String(page));
   params.set('limit', String(limit));
@@ -133,6 +170,7 @@ function buildPageLink(page: number, search: string, status: AdminStudentStatus 
   if (status !== 'all') params.set('status', status);
   if (cohortName) params.set('cohortName', cohortName);
   if (programKey) params.set('programKey', programKey);
+  if (authInvite !== 'all') params.set('authInvite', authInvite);
   return `?${params.toString()}`;
 }
 
@@ -371,12 +409,107 @@ const studentImportBatchSize = 10;
 
 function summarizeAuthStatus(status: AdminStudentAuthStatus | undefined) {
   if (!status) return 'Checking';
-  if (status.authAccountExists) return status.lastSignInAt ? 'Password active' : 'Account created';
-  return 'No password yet';
+  const statusKey = accountStatusKey(status);
+  if (statusKey === 'needs_review') return 'Needs Review';
+  if (statusKey === 'needs_sync') return 'Needs Sync';
+  if (statusKey === 'can_login') return 'Can Login';
+  if (statusKey === 'account_ready') return 'Account Ready';
+  if (statusKey === 'email_failed') return 'Email Failed';
+  if (statusKey === 'setup_link_sent') return 'Setup Link Sent';
+  if (statusKey === 'link_pending') return 'Link Pending';
+  return 'Password Not Set';
+}
+
+function accountStatusKey(status: AdminStudentAuthStatus | undefined): Exclude<AuthInviteFilter, 'all' | 'link_not_sent'> | 'checking' {
+  if (!status) return 'checking';
+  const inviteStatus = normalizedInviteStatusValue(status.inviteStatus);
+  if (status.authMatchSource === 'multiple') return 'needs_review';
+  if (status.authAccountExists && status.authLinked === false) return 'needs_sync';
+  if (status.authAccountExists && status.lastSignInAt) return 'can_login';
+  if (status.authAccountExists) return 'account_ready';
+  if (inviteStatus === 'failed' || inviteStatus === 'bounced') return 'email_failed';
+  if (['sent', 'delivered', 'opened', 'clicked'].includes(inviteStatus)) return 'setup_link_sent';
+  if (['pending', 'queued', 'processing'].includes(inviteStatus)) return 'link_pending';
+  return 'password_not_set';
 }
 
 function summarizeInviteStatus(status: AdminStudentAuthStatus | undefined, fallback?: string) {
   return status?.inviteStatus ?? fallback ?? 'Not queued';
+}
+
+function latestInviteTimestamp(status: AdminStudentAuthStatus | undefined) {
+  return status?.inviteSentAt ?? status?.inviteUpdatedAt ?? status?.inviteCreatedAt ?? null;
+}
+
+function linkActivityLabel(status: AdminStudentAuthStatus | undefined, fallback?: string) {
+  const inviteStatus = normalizedInviteStatus(status, fallback);
+  const timestamp = latestInviteTimestamp(status);
+  const timeLabel = timestamp ? formatDateTime(timestamp) : '';
+  if (inviteStatus === 'clicked') return timeLabel ? `Clicked: ${timeLabel}` : 'Clicked';
+  if (inviteStatus === 'opened') return timeLabel ? `Opened: ${timeLabel}` : 'Opened';
+  if (inviteStatus === 'sent' || inviteStatus === 'delivered') return timeLabel ? `Sent: ${timeLabel}` : 'Sent';
+  if (inviteStatus === 'pending' || inviteStatus === 'queued' || inviteStatus === 'processing') return 'Sending link';
+  if (inviteStatus === 'failed' || inviteStatus === 'bounced') return timeLabel ? `Failed: ${timeLabel}` : 'Email failed';
+  return 'No link sent';
+}
+
+function authSupportHint(status: AdminStudentAuthStatus | undefined) {
+  if (!status) return 'Checking latest auth status';
+  if (status.inviteError) return 'Check email or resend password link';
+  if (status.authMatchSource === 'multiple') return 'Multiple accounts found';
+  if (status.authAccountExists && status.authLinked === false) return 'Select student -> Sync Account';
+  if (status.authAccountExists && status.lastSignInAt) return `Last login: ${formatDateTime(status.lastSignInAt)}`;
+  if (status.authAccountExists) return 'Account created, not used yet';
+  const inviteStatus = normalizedInviteStatusValue(status.inviteStatus);
+  if (['sent', 'delivered', 'opened', 'clicked'].includes(inviteStatus)) return 'Student has a password setup link';
+  if (['pending', 'queued', 'processing'].includes(inviteStatus)) return 'Password setup email is being sent';
+  return 'Send password link';
+}
+
+function fallbackAuthStatusFromStudent(student: AdminStudent): AdminStudentAuthStatus | undefined {
+  const authAccountExists = student.authAccountExists ?? Boolean(student.authUserId || student.authEmailConfirmedAt || student.authLastSignInAt);
+  const inviteStatus = student.latestInviteStatus ?? student.onboardingMailStatus ?? null;
+  const inviteError = student.latestInviteError ?? null;
+  const inviteCreatedAt = student.latestInviteCreatedAt ?? null;
+  const inviteSentAt = student.latestInviteSentAt ?? null;
+  const inviteUpdatedAt = student.latestInviteUpdatedAt ?? null;
+  if (!authAccountExists && !student.authEmailConfirmedAt && !student.authLastSignInAt && !inviteStatus && !inviteError && !inviteCreatedAt && !inviteSentAt && !inviteUpdatedAt) return undefined;
+
+  return {
+    authAccountExists,
+    authLinked: Boolean(student.authUserId),
+    authMatchCount: authAccountExists ? 1 : 0,
+    authMatchSource: authAccountExists ? (student.authUserId ? 'linked' : 'email') : 'none',
+    email: student.email,
+    emailConfirmedAt: student.authEmailConfirmedAt ?? null,
+    inviteCreatedAt,
+    inviteError,
+    inviteSentAt,
+    inviteStatus,
+    inviteUpdatedAt,
+    lastSignInAt: student.authLastSignInAt ?? null
+  };
+}
+
+function resolveAuthStatus(student: AdminStudent, status: AdminStudentAuthStatus | undefined) {
+  return status ?? fallbackAuthStatusFromStudent(student);
+}
+
+function normalizedInviteStatus(status: AdminStudentAuthStatus | undefined, fallback?: string) {
+  return normalizedInviteStatusValue(summarizeInviteStatus(status, fallback));
+}
+
+function normalizedInviteStatusValue(value?: string | null) {
+  return String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function studentMatchesAuthInviteFilter(student: AdminStudent, status: AdminStudentAuthStatus | undefined, filter: AuthInviteFilter) {
+  const resolvedStatus = resolveAuthStatus(student, status);
+  if (filter === 'all') return true;
+  if (filter !== 'link_not_sent') return accountStatusKey(resolvedStatus) === filter;
+
+  const inviteStatus = normalizedInviteStatus(resolvedStatus, student.onboardingMailStatus);
+  return !resolvedStatus?.authAccountExists && (inviteStatus === 'not_queued' || inviteStatus === 'skipped' || !inviteStatus);
 }
 
 function isFailureMessage(message: string) {
@@ -1668,6 +1801,7 @@ export function AdminStudentsPage() {
   const sort = parseStudentSort(searchParams.get('sort'));
   const direction = parseSortDirection(searchParams.get('direction'));
   const status = parseStatus(searchParams.get('status'));
+  const authInvite = parseAuthInviteFilter(searchParams.get('authInvite'));
   const search = searchParams.get('search')?.trim() ?? '';
   const cohortName = searchParams.get('cohortName')?.trim() ?? '';
   const programKey = searchParams.get('programKey')?.trim() ?? '';
@@ -1697,7 +1831,9 @@ export function AdminStudentsPage() {
   const canImportStudents = Boolean(adminRole) && hasAdminPermission(adminRole, 'admin.students.import', adminPermissions);
   const canExportStudents = Boolean(adminRole) && hasAdminPermission(adminRole, 'admin.students.export', adminPermissions);
   const canInviteStudents = Boolean(adminRole) && hasAdminPermission(adminRole, 'admin.students.invite', adminPermissions);
-  const studentsQuery = useAdminStudents({ page, programKey, search, status, cohortName, limit, sort, direction });
+  const hasAuthInviteFilter = authInvite !== 'all';
+  const studentsQuery = useAdminStudents({ page, programKey, search, status, cohortName, limit, sort, direction, enabled: !hasAuthInviteFilter });
+  const authFilterStudentsQuery = useAdminStudents({ page: 1, programKey, search, status, cohortName, limit: 500, sort, direction, enabled: hasAuthInviteFilter });
   const studentCollegeOptionsQuery = useAdminStudentCollegeOptions();
   const exportStudents = useExportAdminStudents();
   const saveStudent = useSaveAdminStudent();
@@ -1712,14 +1848,47 @@ export function AdminStudentsPage() {
   const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, status: 'all' });
   const cohortsPageTwoQuery = useAdminCohorts({ enabled: cohortsPageOneQuery.data?.hasNextPage === true, limit: 100, page: 2, status: 'all' });
   const cohortsPageThreeQuery = useAdminCohorts({ enabled: cohortsPageTwoQuery.data?.hasNextPage === true, limit: 100, page: 3, status: 'all' });
-  const data = studentsQuery.data;
-  const pageStudents = data?.items ?? [];
-  const authStatusesQuery = useAdminStudentAuthStatuses(pageStudents.map((student) => ({ email: student.email, id: student.id })));
+  const sourceData = hasAuthInviteFilter ? authFilterStudentsQuery.data : studentsQuery.data;
+  const sourceStudents = sourceData?.items ?? [];
+  const authInviteRequiresLiveStatus = hasAuthInviteFilter;
+  const sourceAuthStatusesQuery = useAdminStudentAuthStatuses(authInviteRequiresLiveStatus ? sourceStudents.map((student) => ({ email: student.email, id: student.id })) : []);
+  const sourceAuthStatusByEmail = useMemo(() => {
+    const statuses = new Map<string, AdminStudentAuthStatus>();
+    sourceAuthStatusesQuery.data?.statuses.forEach((item) => statuses.set(item.email.toLowerCase(), item));
+    return statuses;
+  }, [sourceAuthStatusesQuery.data?.statuses]);
+  const filteredAuthStudents = useMemo(
+    () =>
+      hasAuthInviteFilter
+        ? sourceStudents.filter((student) => {
+            const liveStatus = authInviteRequiresLiveStatus ? sourceAuthStatusByEmail.get(student.email.toLowerCase()) : undefined;
+            return studentMatchesAuthInviteFilter(student, liveStatus, authInvite);
+          })
+        : sourceStudents,
+    [authInvite, authInviteRequiresLiveStatus, hasAuthInviteFilter, sourceAuthStatusByEmail, sourceStudents]
+  );
+  const authFilteredTotalPages = Math.max(1, Math.ceil(filteredAuthStudents.length / limit));
+  const authFilteredSafePage = Math.min(page, authFilteredTotalPages);
+  const authFilteredFrom = (authFilteredSafePage - 1) * limit;
+  const pageStudents = hasAuthInviteFilter ? filteredAuthStudents.slice(authFilteredFrom, authFilteredFrom + limit) : sourceStudents;
+  const data = hasAuthInviteFilter
+    ? {
+        hasNextPage: authFilteredSafePage < authFilteredTotalPages,
+        hasPreviousPage: authFilteredSafePage > 1,
+        items: pageStudents,
+        limit,
+        page: authFilteredSafePage,
+        total: filteredAuthStudents.length,
+        totalPages: authFilteredTotalPages
+      }
+    : studentsQuery.data;
+  const authStatusesQuery = useAdminStudentAuthStatuses(authInviteRequiresLiveStatus ? [] : pageStudents.map((student) => ({ email: student.email, id: student.id })));
   const authStatusByEmail = useMemo(() => {
     const statuses = new Map<string, AdminStudentAuthStatus>();
+    sourceAuthStatusesQuery.data?.statuses.forEach((item) => statuses.set(item.email.toLowerCase(), item));
     authStatusesQuery.data?.statuses.forEach((item) => statuses.set(item.email.toLowerCase(), item));
     return statuses;
-  }, [authStatusesQuery.data?.statuses]);
+  }, [authStatusesQuery.data?.statuses, sourceAuthStatusesQuery.data?.statuses]);
   const totalPages = data?.totalPages ?? 1;
   const cohortOptions = useMemo(() => {
     const values = new Set<string>();
@@ -1730,7 +1899,7 @@ export function AdminStudentsPage() {
       studentCohortNames(student).forEach((cohortName) => values.add(cohortName));
     });
     return Array.from(values).sort((a, b) => a.localeCompare(b));
-  }, [cohortsPageOneQuery.data, cohortsPageTwoQuery.data, cohortsPageThreeQuery.data, data?.items]);
+  }, [cohortsPageOneQuery.data, cohortsPageTwoQuery.data, cohortsPageThreeQuery.data, sourceData?.items]);
   const cohortRecords = useMemo(() => {
     const values = new Map<string, AdminCohort>();
     [cohortsPageOneQuery.data, cohortsPageTwoQuery.data, cohortsPageThreeQuery.data].forEach((pageData) => {
@@ -1740,15 +1909,18 @@ export function AdminStudentsPage() {
   }, [cohortsPageOneQuery.data, cohortsPageTwoQuery.data, cohortsPageThreeQuery.data]);
   const programRecords = useMemo(() => programsQuery.data?.items ?? [], [programsQuery.data?.items]);
   const roleRecords = useMemo(() => rolesQuery.data?.items ?? [], [rolesQuery.data?.items]);
-  const pageCollegeOptions = useMemo(() => uniqueSorted(data?.items.map((student) => student.collegeName) ?? []), [data?.items]);
+  const pageCollegeOptions = useMemo(() => uniqueSorted(sourceData?.items.map((student) => student.collegeName) ?? []), [sourceData?.items]);
   const collegeOptions = studentCollegeOptionsQuery.data?.items.length ? studentCollegeOptionsQuery.data.items : pageCollegeOptions;
   const selectedStudents = useMemo(() => pageStudents.filter((student) => selectedStudentIds.includes(student.id)), [pageStudents, selectedStudentIds]);
   const selectedCount = selectedStudentIds.length;
   const searchParamsKey = searchParams.toString();
+  const activeStudentsQuery = hasAuthInviteFilter ? authFilterStudentsQuery : studentsQuery;
+  const isStudentsLoading = activeStudentsQuery.isLoading || (authInviteRequiresLiveStatus && sourceAuthStatusesQuery.isLoading);
+  const isStudentsError = activeStudentsQuery.isError;
 
   useEffect(() => {
     setSelectedStudentIds([]);
-  }, [page, search, status, cohortName, programKey, limit, sort, direction]);
+  }, [page, search, status, cohortName, programKey, authInvite, limit, sort, direction]);
 
   useEffect(() => {
     setSearchInput(search);
@@ -1792,6 +1964,10 @@ export function AdminStudentsPage() {
 
   function handleStatusChange(nextStatus: AdminStudentStatus | 'all') {
     updateParams({ status: nextStatus === 'all' ? undefined : nextStatus });
+  }
+
+  function handleAuthInviteChange(nextAuthInvite: AuthInviteFilter) {
+    updateParams({ authInvite: nextAuthInvite === 'all' ? undefined : nextAuthInvite });
   }
 
   function handleRowsPerPageChange(nextLimit: string) {
@@ -1918,6 +2094,11 @@ export function AdminStudentsPage() {
 
   async function handleExportCsv() {
     try {
+      if (hasAuthInviteFilter) {
+        downloadStudentsCsv(filteredAuthStudents, `students-filtered-${new Date().toISOString().slice(0, 10)}.csv`);
+        setActionMessage(`Exported ${filteredAuthStudents.length} filtered students.`);
+        return;
+      }
       const result = await exportStudents.mutateAsync({ cohortName, direction, programKey, search, sort, status });
       downloadStudentsCsv(result.items, `students-filtered-${new Date().toISOString().slice(0, 10)}.csv`);
       setActionMessage(`Exported ${result.items.length} filtered students.`);
@@ -2076,7 +2257,7 @@ export function AdminStudentsPage() {
 
       setImportResultRows(aggregate.rows);
       setActionMessage(`Student import finished: ${aggregate.created} created, ${aggregate.updated} updated, ${aggregate.failed} failed.`);
-      await studentsQuery.refetch();
+      await activeStudentsQuery.refetch();
       if (aggregate.failed === 0) {
         window.setTimeout(() => {
           setImportProgress(null);
@@ -2140,16 +2321,23 @@ export function AdminStudentsPage() {
     }
   }
 
+  async function handleBulkResendInvites() {
+    if (selectedStudentIds.length === 0) return;
+    const confirmed = window.confirm(`Send a fresh password email to ${selectedStudentIds.length} selected student${selectedStudentIds.length === 1 ? '' : 's'}?`);
+    if (!confirmed) return;
+    await runBulkUpdate({ resendInvite: true }, 'Fresh password email send finished');
+  }
+
   async function handleResendInvite(student: AdminStudent) {
     try {
       await resendStudentInvite.mutateAsync(student.id);
-      setActionMessage(`Password setup invite queued for ${student.email}.`);
+      setActionMessage(`Fresh password email queued for ${student.email}.`);
     } catch (error) {
-      setActionMessage(readableError(error, 'Invite could not be queued.'));
+      setActionMessage(readableError(error, 'Fresh password email could not be queued.'));
     }
   }
 
-  if (studentsQuery.isLoading) {
+  if (isStudentsLoading) {
     return (
       <div className="page-stack">
         <PageHeader description="Loading student operations list." eyebrow="Module refresh" title="Students" />
@@ -2158,7 +2346,7 @@ export function AdminStudentsPage() {
     );
   }
 
-  if (studentsQuery.isError) {
+  if (isStudentsError) {
     return (
       <div className="page-stack">
         <PageHeader description="Students could not be loaded right now." eyebrow="Module refresh" title="Students unavailable" />
@@ -2171,7 +2359,7 @@ export function AdminStudentsPage() {
     <div className="page-stack admin-students-page">
       <PageHeader
         actions={
-          <button className="segmented-button" disabled={studentsQuery.isFetching} onClick={() => void studentsQuery.refetch()} type="button">
+          <button className="segmented-button" disabled={activeStudentsQuery.isFetching} onClick={() => void activeStudentsQuery.refetch()} type="button">
             <RefreshCw size={16} />
             Refresh Students
           </button>
@@ -2207,6 +2395,13 @@ export function AdminStudentsPage() {
         </select>
         <select aria-label="Filter by student status" className="admin-student-select" value={status} onChange={(event) => handleStatusChange(event.target.value as AdminStudentStatus | 'all')}>
           {statusOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <select aria-label="Filter by account status" className="admin-student-select admin-student-select--auth" value={authInvite} onChange={(event) => handleAuthInviteChange(event.target.value as AuthInviteFilter)}>
+          {authInviteFilterOptions.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
@@ -2268,14 +2463,14 @@ export function AdminStudentsPage() {
               </button>
               <button className="segmented-button" disabled={backfillAuthLinks.isPending} onClick={() => void handleBackfillAuthLinks()} type="button">
                 <Link2 size={16} />
-                Link auth
+                Sync Account
               </button>
             </>
           ) : null}
           {canInviteStudents ? (
-            <button className="segmented-button" disabled={bulkUpdateStudents.isPending} onClick={() => void runBulkUpdate({ resendInvite: true }, 'Invite resend finished')} type="button">
+            <button className="segmented-button" disabled={bulkUpdateStudents.isPending} onClick={() => void handleBulkResendInvites()} type="button">
               <Mail size={16} />
-              Resend invites
+              Send Password Links
             </button>
           ) : null}
           {canExportStudents ? (
@@ -2323,14 +2518,14 @@ export function AdminStudentsPage() {
                   <th scope="col">{renderSortHeader('Onboarding Date', 'onboarding')}</th>
                   <th scope="col">{renderSortHeader('Live Project Duration', 'duration')}</th>
                   <th scope="col">Live Project Role</th>
-                  <th scope="col">{renderSortHeader('Auth & Invite', 'auth')}</th>
+                  <th scope="col">{renderSortHeader('Account Status', 'auth')}</th>
                   <th scope="col">{renderSortHeader('Status', 'status')}</th>
                   <th scope="col">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {data.items.map((student) => {
-                  const authStatus = authStatusByEmail.get(student.email.toLowerCase());
+                  const authStatus = resolveAuthStatus(student, authStatusByEmail.get(student.email.toLowerCase()));
                   return (
                   <tr key={student.id}>
                     <td>
@@ -2374,8 +2569,10 @@ export function AdminStudentsPage() {
                     </td>
                     <td>
                       <div className="admin-student-auth-cell">
-                        <StatusBadge tone={authStatus?.authAccountExists ? 'safe' : 'warning'}>{authStatusesQuery.isError ? 'Status unavailable' : summarizeAuthStatus(authStatus)}</StatusBadge>
-                        <small>Invite: {authStatusesQuery.isError ? formatValue(student.onboardingMailStatus) : summarizeInviteStatus(authStatus, student.onboardingMailStatus)}</small>
+                        <StatusBadge tone={authStatus?.authAccountExists && authStatus.authLinked !== false ? 'safe' : 'warning'}>{summarizeAuthStatus(authStatus)}</StatusBadge>
+                        <small>{linkActivityLabel(authStatus, student.onboardingMailStatus)}</small>
+                        <small className="admin-student-auth-cell__hint">{authSupportHint(authStatus)}</small>
+                        {authStatus?.inviteError ? <small className="admin-student-auth-cell__error">{authStatus.inviteError}</small> : null}
                       </div>
                     </td>
                     <td>
@@ -2387,6 +2584,10 @@ export function AdminStudentsPage() {
                           <Eye size={15} />
                           View
                         </button>
+                        <Link className="segmented-button" to={`/admin/student-preview/${encodeURIComponent(student.id)}`}>
+                          <Eye size={15} />
+                          Preview
+                        </Link>
                         {canManageStudents ? (
                           <>
                             <button className="segmented-button" onClick={() => setEditingStudent(student)} type="button">
@@ -2402,7 +2603,7 @@ export function AdminStudentsPage() {
                         ) : null}
                         {canInviteStudents ? (
                           <button className="segmented-button" disabled={resendStudentInvite.isPending} onClick={() => void handleResendInvite(student)} type="button">
-                            Invite
+                            Send Password Link
                           </button>
                         ) : null}
                       </div>
@@ -2414,23 +2615,25 @@ export function AdminStudentsPage() {
             </table>
           </div>
         </section>
+      ) : activeStudentsQuery.isFetching ? (
+        <LoadingState />
       ) : (
         <EmptyState />
       )}
 
       <nav className="pagination-bar" aria-label="Admin student pagination">
         {data?.hasPreviousPage ? (
-          <Link className="pagination-link" to={buildPageLink(page - 1, search, status, cohortName, programKey, limit, sort, direction)}>
+          <Link className="pagination-link" to={buildPageLink((data?.page ?? page) - 1, search, status, cohortName, programKey, authInvite, limit, sort, direction)}>
             Previous page
           </Link>
         ) : (
           <span className="pagination-link pagination-link--disabled">Previous page</span>
         )}
         <span>
-          Page {page} of {totalPages}
+          Page {data?.page ?? page} of {totalPages}
         </span>
         {data?.hasNextPage ? (
-          <Link className="pagination-link" to={buildPageLink(page + 1, search, status, cohortName, programKey, limit, sort, direction)}>
+          <Link className="pagination-link" to={buildPageLink((data?.page ?? page) + 1, search, status, cohortName, programKey, authInvite, limit, sort, direction)}>
             Next page
           </Link>
         ) : (

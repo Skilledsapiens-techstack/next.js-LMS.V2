@@ -1,0 +1,18 @@
+Hostinger deployment package - Student recording resources refresh
+
+Deploy by extracting this package into the Hostinger public_html directory.
+
+Included fix:
+- Student Watch Recordings now refetches recording data when the page opens.
+- This prevents stale client-side cached recording rows from hiding newly linked resources after admin saves them.
+
+Already verified in production database:
+- Admin links are saved for recording 14ef9734-96b2-408a-b462-46febb39501b.
+- The Sales & Marketing student eligibility path can see the linked recording_resource_links rows.
+- The same student can see the linked Resource Library items.
+
+Verification completed:
+- npm run lint
+- git diff --check
+- npm test -- --runInBand
+- npm run build

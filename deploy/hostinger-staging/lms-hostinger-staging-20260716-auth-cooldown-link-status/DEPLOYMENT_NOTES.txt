@@ -1,0 +1,16 @@
+Skilled Sapiens LMS deployment package
+
+Build: 2026-07-16 auth cooldown and auth-link status visibility
+
+Upload the contents of public_html to Hostinger public_html.
+
+Supabase Edge Functions already deployed:
+- admin-students
+- transactional-email
+
+Verified:
+- npm run build
+- npm run lint
+- public password email cooldown blocks immediate duplicate requests
+- admin Fresh Link cooldown blocks immediate duplicate requests
+- Admin student auth status now detects Auth accounts by email when roster auth_user_id is not linked

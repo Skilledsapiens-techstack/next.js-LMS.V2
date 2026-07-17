@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthProvider';
 import { apiGet, apiInvokeFunction, apiPatch, apiPost } from '../../lib/supabaseApi';
 import { PaginatedResponse } from '../student/useStudentAnnouncements';
@@ -10,6 +10,7 @@ export type AdminStudent = {
   altEmail?: string;
   authAccountExists?: boolean;
   authEmailConfirmedAt?: string;
+  authUserId?: string;
   authLastSignInAt?: string;
   cohortNames?: string[];
   cohortName?: string;
@@ -24,8 +25,11 @@ export type AdminStudent = {
   liveProjectDuration?: string;
   liveProjectRoleIds?: string[];
   liveProjectRoles?: string[];
+  latestInviteCreatedAt?: string;
   latestInviteError?: string;
+  latestInviteSentAt?: string;
   latestInviteStatus?: string;
+  latestInviteUpdatedAt?: string;
   onboardingMailStatus?: string;
   onboardingDate?: string;
   onboardingSequence?: number;
@@ -102,10 +106,16 @@ type AdminStudentImportMutationPayload =
 
 export type AdminStudentAuthStatus = {
   authAccountExists: boolean;
+  authLinked?: boolean | null;
+  authMatchCount?: number | null;
+  authMatchSource?: 'linked' | 'email' | 'multiple' | 'none' | null;
   email: string;
   emailConfirmedAt?: string | null;
+  inviteCreatedAt?: string | null;
   inviteError?: string | null;
+  inviteSentAt?: string | null;
   inviteStatus?: string | null;
+  inviteUpdatedAt?: string | null;
   lastSignInAt?: string | null;
 };
 
@@ -197,6 +207,7 @@ export function useAdminStudents(query: AdminStudentsQuery) {
         }
       }),
     queryKey: ['admin-students', accessToken, page, limit, status, search, cohortName, programKey, sort, direction],
+    placeholderData: keepPreviousData,
     staleTime: 60_000
   });
 }
@@ -318,7 +329,11 @@ export function useBulkUpdateAdminStudents() {
         accessToken: accessToken ?? undefined,
         body
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-students'] })
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-students'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-student-auth-statuses'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-student-invite-health'] });
+    }
   });
 }
 
@@ -332,7 +347,11 @@ export function useResendAdminStudentInvite() {
         accessToken: accessToken ?? undefined,
         body: { studentIds: [studentId] }
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-students'] })
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-students'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-student-auth-statuses'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-student-invite-health'] });
+    }
   });
 }
 
