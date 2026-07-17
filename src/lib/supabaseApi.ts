@@ -79,6 +79,7 @@ const ADMIN_READ_PERMISSIONS_BY_PATH: Record<string, AdminPermission> = {
   '/admins/project-submissions': 'admin.submissions.view',
   '/admins/projects': 'admin.projects.view',
   '/admins/recording-candidates': 'admin.recordings.view',
+  '/admins/recording-sequences': 'admin.recordings.view',
   '/admins/resources': 'admin.resources.view',
   '/admins/student-audit-logs': 'admin.observability.view',
   '/admins/students': 'admin.students.view',
@@ -246,6 +247,17 @@ const PROJECT_TOOLKIT_WRITE_COLUMNS = new Set([
   'toolkit_id'
 ]);
 
+const RECORDING_SEQUENCE_WRITE_COLUMNS = new Set([
+  'match_aliases',
+  'program_key',
+  'recording_section',
+  'sequence_number',
+  'status',
+  'title'
+]);
+
+const RECORDING_SECTION_KEYS = new Set(['induction_live_project', 'core_modules', 'placement_mentorship', 'other_workshops']);
+
 const ANNOUNCEMENT_WRITE_COLUMNS = new Set([
   'announcement_id',
   'audience',
@@ -388,6 +400,12 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   },
   '/admins/projects': { table: 'projects', searchColumns: ['title', 'company_name', 'program_key'] },
   '/admins/recording-candidates': { table: 'workshop_recording_candidates', searchColumns: ['workshop_id', 'zoom_id', 'zoom_account'] },
+  '/admins/recording-sequences': {
+    table: 'recording_sequence_rules',
+    filterColumns: { programKey: 'program_key', status: 'status' },
+    searchColumns: ['program_key', 'title'],
+    sortColumns: { order: { column: 'sequence_number', ascending: true }, updated: { column: 'updated_at', ascending: false } }
+  },
   '/admins/resources': {
     table: 'resources',
     searchColumns: ['title', 'resource_type', 'resource_mode', 'domain_key'],
@@ -397,7 +415,7 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
     table: 'students',
     filterColumns: { status: 'active' },
     filterValues: { status: (value) => (value === 'active' ? true : value === 'inactive' ? false : undefined) },
-    searchColumns: ['full_name', 'email', 'student_id', 'cohort_name', 'program_name', 'you_are_from', 'duration'],
+    searchColumns: ['full_name', 'email', 'alt_email', 'phone', 'student_id', 'college_name', 'cohort_name', 'program_name', 'wa_group_name', 'you_are_from', 'duration'],
     sortColumns: {
       access: { column: 'program_name', ascending: true },
       auth: { column: 'onboarding_mail_status', ascending: true },
@@ -479,6 +497,12 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     table: 'project_toolkit_items',
     validateBody: validateProjectToolkitWriteBody
   },
+  recording_sequence_rules: {
+    columns: RECORDING_SEQUENCE_WRITE_COLUMNS,
+    normalizeBody: normalizeRecordingSequenceWriteBody,
+    table: 'recording_sequence_rules',
+    validateBody: validateRecordingSequenceWriteBody
+  },
   announcements: {
     columns: ANNOUNCEMENT_WRITE_COLUMNS,
     normalizeBody: normalizeAnnouncementWriteBody,
@@ -523,6 +547,17 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
 
   const studentAccessPreview = cleanPath.match(/^\/admins\/students\/([^/]+)\/access-preview$/);
   if (studentAccessPreview) return getStudentAccessPreview(context, decodeURIComponent(studentAccessPreview[1])) as Promise<TResponse>;
+
+  const adminStudentPreview = cleanPath.match(/^\/admins\/students\/([^/]+)\/preview$/);
+  if (adminStudentPreview) return getAdminStudentPreview(context, decodeURIComponent(adminStudentPreview[1])) as Promise<TResponse>;
+
+  if (cleanPath === '/admins/recordings/resources-summary') return getAdminRecordingResourceSummary(context, options.query) as Promise<TResponse>;
+
+  const adminRecordingResources = cleanPath.match(/^\/admins\/recordings\/([^/]+)\/resources$/);
+  if (adminRecordingResources) return getAdminRecordingResourceLinks(context, decodeURIComponent(adminRecordingResources[1])) as Promise<TResponse>;
+
+  const studentRecordingResources = cleanPath.match(/^\/students\/me\/recordings\/([^/]+)\/resources$/);
+  if (studentRecordingResources) return getStudentRecordingResources(context, decodeURIComponent(studentRecordingResources[1])) as Promise<TResponse>;
 
   const studentTicketMatch = cleanPath.match(/^\/students\/me\/support-tickets\/(.+)$/);
   if (studentTicketMatch) return getSupportTicketDetail(context, decodeURIComponent(studentTicketMatch[1]), false) as Promise<TResponse>;
@@ -679,6 +714,12 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
   const projectToolkitUpdate = cleanPath.match(/^\/admins\/project-toolkit\/([^/]+)$/);
   if (projectToolkitUpdate) return updateById(context, 'project_toolkit_items', decodeURIComponent(projectToolkitUpdate[1]), options.body, 'updated') as Promise<TResponse>;
 
+  const recordingSequenceUpdate = cleanPath.match(/^\/admins\/recording-sequences\/([^/]+)$/);
+  if (recordingSequenceUpdate) return updateById(context, 'recording_sequence_rules', decodeURIComponent(recordingSequenceUpdate[1]), options.body, 'updated') as Promise<TResponse>;
+
+  const recordingResourcesUpdate = cleanPath.match(/^\/admins\/recordings\/([^/]+)\/resources$/);
+  if (recordingResourcesUpdate) return updateAdminRecordingResourceLinks(context, decodeURIComponent(recordingResourcesUpdate[1]), options.body) as Promise<TResponse>;
+
   const projectStatus = cleanPath.match(/^\/admins\/projects\/([^/]+)\/status$/);
   if (projectStatus) return updateById(context, 'projects', decodeURIComponent(projectStatus[1]), options.body, 'status_changed') as Promise<TResponse>;
 
@@ -715,6 +756,9 @@ export async function apiDelete<TResponse>(path: string, options: ApiClientOptio
 
   const adminSupportFaqDelete = cleanPath.match(/^\/admins\/support-faqs\/([^/]+)$/);
   if (adminSupportFaqDelete) return deleteSupportFaq(context, decodeURIComponent(adminSupportFaqDelete[1])) as Promise<TResponse>;
+
+  const recordingSequenceDelete = cleanPath.match(/^\/admins\/recording-sequences\/([^/]+)$/);
+  if (recordingSequenceDelete) return deleteById(context, 'recording_sequence_rules', decodeURIComponent(recordingSequenceDelete[1]), 'deleted') as Promise<TResponse>;
 
   throw new ApiClientError(`Unsupported Supabase delete route: ${cleanPath}`, 404);
 }
@@ -753,6 +797,7 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/programs') return insertRow(context, 'programs', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/project-roles') return insertRow(context, 'role_master', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/project-toolkit') return insertRow(context, 'project_toolkit_items', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/recording-sequences') return insertRow(context, 'recording_sequence_rules', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/projects') return insertRow(context, 'projects', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/certificate-program-settings') return saveCertificateProgramSetting(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/certificates/leadership') return issueLeadershipCertificates(context, options.body) as Promise<TResponse>;
@@ -804,8 +849,11 @@ function getFunctionErrorMessage(data: unknown, error: unknown) {
 
 function getAdminReadPermission(path: string): AdminPermission | undefined {
   if (!path.startsWith('/admins/')) return undefined;
+  if (path === '/admins/recordings/resources-summary') return 'admin.recordings.view';
+  if (path.match(/^\/admins\/recordings\/[^/]+\/resources$/)) return 'admin.recordings.view';
   if (path.match(/^\/admins\/students\/[^/]+\/lp-attempts$/)) return 'admin.students.view';
   if (path.match(/^\/admins\/students\/[^/]+\/access-preview$/)) return 'admin.students.view';
+  if (path.match(/^\/admins\/students\/[^/]+\/preview$/)) return 'admin.students.view';
   if (path.match(/^\/admins\/support-tickets\/[^/]+$/)) return 'admin.support.view';
   if (path.match(/^\/admins\/enrollment-requests\/[^/]+$/)) return 'admin.enrollments.view';
   return ADMIN_READ_PERMISSIONS_BY_PATH[path];
@@ -833,6 +881,8 @@ function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'pos
     return 'admin.projects.manage';
   }
   if (path.match(/^\/admins\/project-submissions\/[^/]+\/(approve|reject|changes-requested)$/)) return 'admin.submissions.review';
+  if (path === '/admins/recording-sequences' || path.match(/^\/admins\/recording-sequences\/[^/]+/)) return 'admin.recordings.manage';
+  if (path.match(/^\/admins\/recordings\/[^/]+\/resources$/)) return 'admin.recordings.manage';
   if (path === '/admins/workshops' || path.match(/^\/admins\/workshops\/[^/]+/)) return 'admin.meetings.manage';
   if (path === '/admins/resources' || path.match(/^\/admins\/resources\/[^/]+/)) return 'admin.resources.manage';
   if (path === '/admins/announcements' || path.match(/^\/admins\/announcements\/[^/]+/)) return 'admin.announcements.manage';
@@ -1335,7 +1385,382 @@ async function getStudentBundleList(context: Awaited<ReturnType<typeof createCon
 async function getStudentRecordingsList(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
   const bundle = await callRpc(context, 'student_dashboard_bundle', { p_student_email: context.email });
   const workshops = extractItems(bundle, ['recordings', 'workshopRecordings', 'workshops']);
-  return paginate(workshops.filter(isStudentRecordingRow), query);
+  const cohorts = extractItems(bundle, ['cohorts', 'studentCohorts']);
+  const enrolledPrograms = extractItems(bundle, ['studentPrograms', 'programs', 'activePrograms']);
+  const rows = workshops.filter(isStudentRecordingRow).map(enrichRow).map(camelize).filter(studentRecordingHasAudienceScope);
+  const sequencedItems = await enrichStudentRecordingsWithSequence(context, rows, [...cohorts, ...enrolledPrograms]);
+  const items = await enrichStudentRecordingsWithRelatedResources(context, sequencedItems);
+  const search = String(query?.search ?? '').trim().toLowerCase();
+  const filtered = items
+    .filter((item) => matchesClientFilters(item, query))
+    .filter((item) => !search || JSON.stringify(item).toLowerCase().includes(search))
+    .sort(compareStudentRecordingsWithSequence);
+  const page = Number(query?.page ?? 1);
+  const limit = Math.min(Number(query?.limit ?? 25), 500);
+  const start = (page - 1) * limit;
+  return createPaginatedResponse(filtered.slice(start, start + limit), filtered.length, page, limit);
+}
+
+async function getAdminRecordingResourceLinks(context: Awaited<ReturnType<typeof createContext>>, recordingId: string) {
+  const cleanRecordingId = recordingId.trim();
+  if (!cleanRecordingId) throw new ApiClientError('Recording ID is required.', 400);
+
+  const { data, error } = await context.supabase
+    .from('recording_resource_links')
+    .select('resource_id')
+    .eq('recording_id', cleanRecordingId)
+    .order('created_at', { ascending: true })
+    .limit(500);
+
+  if (error) throw new ApiClientError(error.message, 503);
+
+  return {
+    recordingId: cleanRecordingId,
+    resourceIds: (data ?? []).map((row) => String(row.resource_id ?? '')).filter(Boolean)
+  };
+}
+
+async function getAdminRecordingResourceSummary(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const recordingIds = uniqueStrings(splitCommaValues(String(query?.recordingIds ?? query?.recording_ids ?? '')).map((recordingId) => recordingId.trim()).filter(Boolean));
+  if (recordingIds.length === 0) {
+    return { items: [] };
+  }
+
+  const { data, error } = await context.supabase
+    .from('recording_resource_links')
+    .select('recording_id,resource_id')
+    .in('recording_id', recordingIds)
+    .limit(5000);
+
+  if (error) throw new ApiClientError(error.message, 503);
+
+  const resourceIdsByRecordingId = new Map<string, Set<string>>();
+  (data ?? []).forEach((link) => {
+    const recordingId = String(link.recording_id ?? '');
+    const resourceId = String(link.resource_id ?? '');
+    if (!recordingId || !resourceId) return;
+    const resourceIds = resourceIdsByRecordingId.get(recordingId) ?? new Set<string>();
+    resourceIds.add(resourceId);
+    resourceIdsByRecordingId.set(recordingId, resourceIds);
+  });
+
+  return {
+    items: recordingIds.map((recordingId) => ({
+      recordingId,
+      resourceCount: resourceIdsByRecordingId.get(recordingId)?.size ?? 0
+    }))
+  };
+}
+
+async function updateAdminRecordingResourceLinks(context: Awaited<ReturnType<typeof createContext>>, recordingId: string, body: unknown) {
+  const cleanRecordingId = recordingId.trim();
+  if (!cleanRecordingId) throw new ApiClientError('Recording ID is required.', 400);
+  if (!isRecord(body)) throw new ApiClientError('Resource link payload must be an object.', 400);
+
+  const resourceIds = uniqueStrings(asStringArray(body.resourceIds ?? body.resource_ids))
+    .map((resourceId) => resourceId.trim())
+    .filter(Boolean);
+
+  const { data: workshop, error: workshopError } = await context.supabase
+    .from('workshops')
+    .select('id,title')
+    .eq('id', cleanRecordingId)
+    .maybeSingle();
+  if (workshopError) throw new ApiClientError(workshopError.message, 503);
+  if (!workshop) throw new ApiClientError('Recording workshop was not found.', 404);
+
+  if (resourceIds.length > 0) {
+    const { data: resources, error: resourcesError } = await context.supabase
+      .from('resources')
+      .select('id')
+      .in('id', resourceIds)
+      .eq('status', 'active')
+      .limit(resourceIds.length);
+    if (resourcesError) throw new ApiClientError(resourcesError.message, 503);
+    const foundIds = new Set((resources ?? []).map((resource) => String(resource.id ?? '')));
+    const missingIds = resourceIds.filter((resourceId) => !foundIds.has(resourceId));
+    if (missingIds.length > 0) throw new ApiClientError('Only active Resource Library items can be linked to recordings.', 400);
+  }
+
+  const { error: deleteError } = await context.supabase.from('recording_resource_links').delete().eq('recording_id', cleanRecordingId);
+  if (deleteError) throw new ApiClientError(deleteError.message, 503);
+
+  if (resourceIds.length > 0) {
+    const rows = resourceIds.map((resourceId) => ({
+      created_by: context.email,
+      recording_id: cleanRecordingId,
+      resource_id: resourceId
+    }));
+    const { error: insertError } = await context.supabase.from('recording_resource_links').insert(rows);
+    if (insertError) throw new ApiClientError(insertError.message, 503);
+  }
+
+  return {
+    recordingId: cleanRecordingId,
+    resourceIds
+  };
+}
+
+function recordingResourceLookupIds(recording: Record<string, unknown>) {
+  return uniqueStrings(
+    [
+      recording.id,
+      recording.workshopId,
+      recording.workshop_id
+    ]
+      .map((value) => String(value ?? '').trim())
+      .filter(Boolean)
+  );
+}
+
+async function getStudentRecordingResources(context: Awaited<ReturnType<typeof createContext>>, recordingId: string) {
+  const cleanRecordingId = recordingId.trim();
+  if (!cleanRecordingId) throw new ApiClientError('Recording ID is required.', 400);
+
+  const resourceIdsByRecordingId = await getStudentVisibleRecordingResourceMap(context, [cleanRecordingId]);
+  return {
+    recordingId: cleanRecordingId,
+    resources: resourceIdsByRecordingId.get(cleanRecordingId) ?? []
+  };
+}
+
+async function getStudentVisibleRecordingResourceMap(context: Awaited<ReturnType<typeof createContext>>, recordingIds: string[]) {
+  const cleanRecordingIds = uniqueStrings(recordingIds.map((recordingId) => recordingId.trim()).filter(Boolean));
+  const resourcesByRecordingId = new Map<string, Array<Record<string, unknown>>>();
+  if (cleanRecordingIds.length === 0) return resourcesByRecordingId;
+
+  const { data: links, error } = await context.supabase
+    .from('recording_resource_links')
+    .select('recording_id,resource_id')
+    .in('recording_id', cleanRecordingIds)
+    .limit(5000);
+
+  if (error) {
+    console.warn('Recording resource links unavailable; hiding related resources.', error.message);
+    return resourcesByRecordingId;
+  }
+
+  const resourceIdsByRecordingId = new Map<string, string[]>();
+  (links ?? []).forEach((link) => {
+    const recordingId = String(link.recording_id ?? '');
+    const resourceId = String(link.resource_id ?? '');
+    if (!recordingId || !resourceId) return;
+    const current = resourceIdsByRecordingId.get(recordingId) ?? [];
+    current.push(resourceId);
+    resourceIdsByRecordingId.set(recordingId, current);
+  });
+
+  if (resourceIdsByRecordingId.size === 0) return resourcesByRecordingId;
+
+  const resourcesData = await callRpc(context, 'student_resources_view', { p_student_email: context.email });
+  const visibleResources = extractItems(resourcesData, ['resources', 'items'])
+    .map(enrichRow)
+    .map(camelize)
+    .filter(isRecord)
+    .filter((resource) => resource.locked !== true && resource.hasAccess !== false);
+  const visibleResourceById = new Map(visibleResources.map((resource) => [String(resource.id ?? ''), resource]));
+
+  resourceIdsByRecordingId.forEach((resourceIds, recordingId) => {
+    const relatedResources = uniqueStrings(resourceIds)
+      .map((resourceId) => visibleResourceById.get(resourceId))
+      .filter(isRecord)
+      .map((resource) => ({
+        description: resource.description ?? null,
+        id: String(resource.id ?? ''),
+        resourceMode: resource.resourceMode ?? resource.resource_mode ?? null,
+        resourceType: resource.resourceType ?? resource.resource_type ?? 'general',
+        title: String(resource.title ?? 'Resource'),
+        url: resource.url ?? null
+      }))
+      .filter((resource) => resource.id && resource.url);
+    resourcesByRecordingId.set(recordingId, relatedResources);
+  });
+
+  return resourcesByRecordingId;
+}
+
+async function enrichStudentRecordingsWithRelatedResources(context: Awaited<ReturnType<typeof createContext>>, recordings: unknown[]) {
+  const rows = recordings.filter(isRecord);
+  const recordingIds = uniqueStrings(rows.flatMap(recordingResourceLookupIds));
+  if (recordingIds.length === 0) return recordings;
+
+  const resourcesByRecordingId = await getStudentVisibleRecordingResourceMap(context, recordingIds);
+  if (resourcesByRecordingId.size === 0) return recordings;
+
+  return rows.map((recording) => {
+    const relatedResourcesById = new Map<string, Record<string, unknown>>();
+    recordingResourceLookupIds(recording).forEach((recordingId) => {
+      (resourcesByRecordingId.get(recordingId) ?? []).forEach((resource) => {
+        const resourceId = String(resource.id ?? '');
+        if (resourceId) relatedResourcesById.set(resourceId, resource);
+      });
+    });
+
+    return {
+      ...recording,
+      relatedResources: Array.from(relatedResourcesById.values())
+    };
+  });
+}
+
+async function enrichStudentRecordingsWithSequence(context: Awaited<ReturnType<typeof createContext>>, recordings: unknown[], cohorts: unknown[] = []) {
+  const rows = recordings.filter(isRecord);
+  const cohortProgramMap = buildRecordingCohortProgramMap(cohorts);
+  const enrolledProgramKeys = uniqueStrings(Array.from(cohortProgramMap.values())).map((key) => key.toLowerCase());
+  const programKeys = uniqueStrings(rows.flatMap((row) => recordingProgramKeys(row, cohortProgramMap, enrolledProgramKeys)).filter(Boolean));
+  if (programKeys.length === 0) return recordings;
+
+  const { data, error } = await context.supabase
+    .from('recording_sequence_rules')
+    .select('*')
+    .eq('status', 'active')
+    .in('program_key', programKeys)
+    .order('sequence_number', { ascending: true })
+    .limit(1000);
+
+  if (error) {
+    console.warn('Recording sequence rules unavailable; falling back to standard recording order.', error.message);
+    return recordings;
+  }
+
+  const rules = (data ?? []).map((item) => camelize(item)).filter(isRecord);
+  if (rules.length === 0) return recordings;
+
+  return rows.map((recording) => {
+    const inferredProgramKeys = recordingProgramKeys(recording, cohortProgramMap, enrolledProgramKeys);
+    const match = findRecordingSequenceRule(recording, rules, inferredProgramKeys);
+    return match
+      ? {
+          ...recording,
+          programKey: String(recording.programKey ?? recording.program_key ?? '') || inferredProgramKeys[0],
+          recordingSequenceMatched: true,
+          recordingSequenceNumber: Number(match.sequenceNumber),
+          recordingSequenceProgramKey: String(match.programKey ?? ''),
+          recordingSection: normalizeRecordingSection(match.recordingSection ?? match.recording_section),
+          recordingSequenceTitle: String(match.title ?? '')
+        }
+      : {
+          ...recording,
+          recordingSection: normalizeRecordingSection(recording.recordingSection ?? recording.recording_section)
+        };
+  });
+}
+
+function compareStudentRecordingsWithSequence(left: unknown, right: unknown) {
+  if (isRecord(left) && isRecord(right)) {
+    const leftSequence = Number(left.recordingSequenceNumber);
+    const rightSequence = Number(right.recordingSequenceNumber);
+    const leftSequenced = Number.isFinite(leftSequence);
+    const rightSequenced = Number.isFinite(rightSequence);
+
+    if (leftSequenced && rightSequenced && leftSequence !== rightSequence) return leftSequence - rightSequence;
+    if (leftSequenced !== rightSequenced) return leftSequenced ? -1 : 1;
+
+    const scheduledDiff = recordingScheduledTime(right, 0) - recordingScheduledTime(left, 0);
+    if (scheduledDiff !== 0) return scheduledDiff;
+
+    return String(left.title ?? '').localeCompare(String(right.title ?? ''));
+  }
+
+  return 0;
+}
+
+function findRecordingSequenceRule(recording: Record<string, unknown>, rules: Record<string, unknown>[], programKeys = recordingProgramKeys(recording)) {
+  if (programKeys.length === 0) return undefined;
+  const programKeySet = new Set(programKeys);
+  return rules.find((rule) => programKeySet.has(String(rule.programKey ?? '').trim().toLowerCase()) && recordingMatchesSequenceRule(recording, rule));
+}
+
+function buildRecordingCohortProgramMap(cohorts: unknown[]) {
+  const map = new Map<string, string>();
+  cohorts.filter(isRecord).forEach((cohort) => {
+    const programKey = recordingProgramKey(cohort);
+    if (!programKey) return;
+    const names = uniqueStrings([
+      cohort.name,
+      cohort.cohortName,
+      cohort.cohort_name,
+      cohort.cohortId,
+      cohort.cohort_id
+    ]).map((name) => name.toLowerCase());
+    names.forEach((name) => map.set(name, programKey));
+  });
+  return map;
+}
+
+function recordingProgramKeys(recording: Record<string, unknown>, cohortProgramMap = new Map<string, string>(), enrolledProgramKeys: string[] = []) {
+  const directProgramKey = recordingProgramKey(recording);
+  const cohortProgramKeys = recordingCohortNames(recording)
+    .map((cohortName) => cohortProgramMap.get(cohortName))
+    .filter(Boolean);
+  const inferredFallback = directProgramKey || cohortProgramKeys.length > 0 || enrolledProgramKeys.length !== 1 ? [] : enrolledProgramKeys;
+  return uniqueStrings([directProgramKey, ...cohortProgramKeys, ...inferredFallback]).map((key) => key.toLowerCase());
+}
+
+function recordingProgramKey(recording: Record<string, unknown>) {
+  return String(recording.programKey ?? recording.program_key ?? recording.domainKey ?? recording.domain_key ?? '').trim().toLowerCase();
+}
+
+function recordingCohortNames(recording: Record<string, unknown>) {
+  return uniqueStrings([
+    ...asStringArray(recording.cohortNames ?? recording.cohort_names),
+    recording.cohortName,
+    recording.cohort_name,
+    recording.cohort,
+    recording.cohortId,
+    recording.cohort_id
+  ]).map((cohortName) => cohortName.toLowerCase());
+}
+
+function studentRecordingHasAudienceScope(recording: unknown) {
+  if (!isRecord(recording)) return false;
+  return Boolean(recordingProgramKey(recording)) || recordingCohortNames(recording).length > 0;
+}
+
+function recordingMatchesSequenceRule(recording: Record<string, unknown>, rule: Record<string, unknown>) {
+  const recordingTitle = normalizeRecordingSequenceText(String(recording.title ?? ''));
+  if (!recordingTitle) return false;
+  const candidates = uniqueStrings([String(rule.title ?? ''), ...asStringArray(rule.matchAliases ?? rule.match_aliases)])
+    .map(normalizeRecordingSequenceText)
+    .filter(Boolean);
+  return candidates.some(
+    (candidate) =>
+      candidate === recordingTitle ||
+      (candidate.length >= 8 && recordingTitle.includes(candidate)) ||
+      (recordingTitle.length >= 8 && candidate.includes(recordingTitle))
+  );
+}
+
+function normalizeRecordingSequenceText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeRecordingSection(value: unknown) {
+  const section = String(value ?? '').trim().toLowerCase();
+  return RECORDING_SECTION_KEYS.has(section) ? section : 'other_workshops';
+}
+
+function recordingScheduledTime(recording: Record<string, unknown>, fallback = Number.POSITIVE_INFINITY) {
+  const dateValue = String(recording.date ?? '').trim();
+  const timeValue = String(recording.time ?? '').trim();
+  const dateMatch = dateValue.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const timeMatch = timeValue.match(/^(\d{1,2}):(\d{2})/);
+
+  if (dateMatch) {
+    const [, year, month, day] = dateMatch;
+    const hour = timeMatch ? Number(timeMatch[1]) : 0;
+    const minute = timeMatch ? Number(timeMatch[2]) : 0;
+    const scheduledAt = new Date(Number(year), Number(month) - 1, Number(day), hour, minute).getTime();
+    return Number.isFinite(scheduledAt) ? scheduledAt : fallback;
+  }
+
+  const fallbackDate = dateValue ? new Date(dateValue).getTime() : Number.NaN;
+  return Number.isFinite(fallbackDate) ? fallbackDate : fallback;
 }
 
 async function getStudentResourcesList(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
@@ -1379,7 +1804,11 @@ function summarizeStudentResources(items: unknown[]) {
 }
 
 async function getRpcList(context: Awaited<ReturnType<typeof createContext>>, endpoint: { functionName: string; section?: string[] }, query: ApiClientOptions['query']) {
-  const data = await callRpc(context, endpoint.functionName, { p_student_email: context.email });
+  const params: Record<string, boolean | string> = { p_student_email: context.email };
+  if (endpoint.functionName === 'student_schedule_view' && query?.includePast === true) {
+    params.p_include_past = true;
+  }
+  const data = await callRpc(context, endpoint.functionName, params);
   const items = extractItems(data, endpoint.section ?? ['items']);
   return paginate(items, query);
 }
@@ -1534,6 +1963,22 @@ async function enrichAdminStudents(context: Awaited<ReturnType<typeof createCont
 
   const cohortsByStudent = groupByStudentId(cohortsResult.data ?? []);
   const programsByStudent = groupByStudentId(programsResult.data ?? []);
+  const studentEmails = uniqueStrings(rows.map((row) => String(row.email ?? '').trim().toLowerCase()));
+  const latestInviteByEmail = new Map<string, Record<string, unknown>>();
+  if (studentEmails.length > 0) {
+    const { data: inviteRows, error: inviteError } = await context.supabase
+      .from('email_queue')
+      .select('recipient_email,status,failure_message,sent_at,updated_at,created_at')
+      .in('recipient_email', studentEmails)
+      .contains('tags', ['portal-invite'])
+      .order('created_at', { ascending: false })
+      .limit(2000);
+    if (inviteError) throw new ApiClientError(inviteError.message, 503);
+    (inviteRows ?? []).forEach((invite) => {
+      const email = String(invite.recipient_email ?? '').trim().toLowerCase();
+      if (email && !latestInviteByEmail.has(email)) latestInviteByEmail.set(email, invite);
+    });
+  }
   const liveProjectRoleIds = uniqueStrings(rows.flatMap((row) => asStringArray(row.live_project_role_ids)));
   const liveProjectRoleNameById = new Map<string, string>();
   if (liveProjectRoleIds.length > 0) {
@@ -1566,15 +2011,22 @@ async function enrichAdminStudents(context: Awaited<ReturnType<typeof createCont
     ]);
     const studentLiveProjectRoleIds = asStringArray(row.live_project_role_ids);
     const liveProjectRoles = uniqueStrings(studentLiveProjectRoleIds.map((roleId) => liveProjectRoleNameById.get(roleId) ?? roleId));
+    const latestInvite = latestInviteByEmail.get(String(row.email ?? '').trim().toLowerCase());
 
     return camelize(
       enrichRow({
         ...row,
+        auth_account_exists: Boolean(row.auth_user_id),
         cohort_names: cohortNames,
         cohorts: cohortRows.map((cohort) => ({
           cohort_id: cohort.cohort_id,
           cohort_name: cohort.cohort_name
         })),
+        latest_invite_created_at: latestInvite?.created_at ?? null,
+        latest_invite_error: latestInvite?.failure_message ?? null,
+        latest_invite_sent_at: latestInvite?.sent_at ?? null,
+        latest_invite_status: latestInvite?.status ?? row.onboarding_mail_status ?? null,
+        latest_invite_updated_at: latestInvite?.updated_at ?? null,
         live_project_role_ids: studentLiveProjectRoleIds,
         live_project_roles: liveProjectRoles,
         program_keys: studentProgramKeys,
@@ -2113,6 +2565,199 @@ async function getStudentAccessPreview(context: Awaited<ReturnType<typeof create
     studentEmail: student.email,
     studentName: student.full_name
   };
+}
+
+async function getAdminStudentPreview(context: Awaited<ReturnType<typeof createContext>>, studentId: string) {
+  const student = await getStudentById(context, studentId);
+  const [dashboard, schedule, resources, projects, certificates, enrichedStudent] = await Promise.all([
+    callRpc(context, 'student_dashboard_bundle', { p_student_email: student.email }),
+    callRpc(context, 'student_schedule_view', { p_student_email: student.email }),
+    callRpc(context, 'student_resources_view', { p_student_email: student.email }),
+    callRpc(context, 'student_projects_bundle', { p_student_email: student.email }),
+    callRpc(context, 'student_certificates_bundle', { p_student_email: student.email }),
+    enrichAdminStudents(context, [student])
+  ]);
+
+  const studentRow = enrichedStudent[0] as Record<string, unknown> | undefined;
+  const cohorts = Array.isArray(studentRow?.cohortNames) ? (studentRow.cohortNames as string[]) : student.cohort_name ? [student.cohort_name] : [];
+  const programs = Array.isArray(studentRow?.programs) ? (studentRow.programs as string[]) : splitCommaValues(student.program_name);
+  const liveProjectRoles = Array.isArray(studentRow?.liveProjectRoles) ? (studentRow.liveProjectRoles as string[]) : [];
+  const studentCohorts = extractItems(dashboard, ['cohorts', 'studentCohorts']);
+  const enrolledPrograms = extractItems(dashboard, ['studentPrograms', 'programs', 'activePrograms']);
+  const recordings = extractItems(dashboard, ['recordings', 'workshopRecordings', 'workshops'])
+    .filter(isStudentRecordingRow)
+    .map(enrichRow)
+    .map(camelize)
+    .filter(studentRecordingHasAudienceScope);
+  const sequencedRecordings = (await enrichStudentRecordingsWithSequence(context, recordings, [...studentCohorts, ...enrolledPrograms]))
+    .filter(isRecord)
+    .sort(compareStudentRecordingsWithSequence);
+  const scheduleItems = extractItems(schedule, ['schedule', 'items']).map(enrichRow).map(camelize).filter(isRecord).sort(comparePreviewScheduleItems);
+  const resourceItems = extractItems(resources, ['resources', 'items']).map(enrichRow).map(camelize).filter(isRecord).sort(comparePreviewUpdatedItems);
+  const projectItems = extractItems(projects, ['projects', 'items']).map(enrichRow).map(camelize).filter(isRecord).sort(comparePreviewTitleItems);
+  const certificateItems = extractItems(certificates, ['certificates', 'items']).map(enrichRow).map(camelize).filter(isRecord).sort(comparePreviewCertificateItems);
+
+  await writeAuditLog(context, 'students', 'preview_started', student, {
+    previewMode: 'read_only',
+    studentEmail: student.email
+  });
+
+  return {
+    counts: {
+      certificates: extractItems(certificates, ['certificates', 'items']).length,
+      projects: extractItems(projects, ['projects', 'items']).length,
+      recordings: sequencedRecordings.length,
+      resources: extractItems(resources, ['resources', 'items']).length,
+      schedule: extractItems(schedule, ['schedule', 'items']).length
+    },
+    cohorts,
+    generatedAt: new Date().toISOString(),
+    previewMode: true,
+    programs,
+    student: {
+      active: Boolean(student.active),
+      collegeName: String(student.college_name ?? studentRow?.collegeName ?? '').trim() || undefined,
+      email: student.email,
+      fullName: student.full_name,
+      id: student.id,
+      liveProjectRoles,
+      programName: String(student.program_name ?? studentRow?.programName ?? '').trim() || undefined,
+      studentId: String(student.student_id ?? studentRow?.studentId ?? '').trim() || undefined
+    },
+    modules: {
+      certificates: createAdminPreviewModule(certificateItems, toCertificatePreviewItem),
+      projects: createAdminPreviewModule(projectItems, toProjectPreviewItem),
+      recordings: createAdminPreviewModule(sequencedRecordings, toRecordingPreviewItem),
+      resources: createAdminPreviewModule(resourceItems, toResourcePreviewItem),
+      schedule: createAdminPreviewModule(scheduleItems, toSchedulePreviewItem)
+    }
+  };
+}
+
+type AdminPreviewItem = {
+  id: string;
+  title: string;
+  eyebrow?: string;
+  meta: string[];
+  status?: string;
+  locked?: boolean;
+};
+
+function createAdminPreviewModule(rows: Record<string, unknown>[], mapItem: (row: Record<string, unknown>, index: number) => AdminPreviewItem) {
+  const previewLimit = 6;
+  return {
+    items: rows.slice(0, previewLimit).map(mapItem),
+    total: rows.length
+  };
+}
+
+function toSchedulePreviewItem(row: Record<string, unknown>, index: number): AdminPreviewItem {
+  return {
+    id: previewItemId(row, index),
+    title: previewTitle(row, 'Untitled workshop'),
+    eyebrow: previewText(row.status) || 'Workshop',
+    meta: compactPreviewMeta([previewDateTime(row), previewText(row.durationMinutes ?? row.duration_minutes, ' min'), previewArrayLabel(row.cohortNames ?? row.cohort_names)]),
+    status: previewText(row.lockReason ?? row.lock_reason) || (row.locked ? 'Locked' : 'Visible'),
+    locked: Boolean(row.locked)
+  };
+}
+
+function toRecordingPreviewItem(row: Record<string, unknown>, index: number): AdminPreviewItem {
+  const sequenceNumber = Number(row.recordingSequenceNumber);
+  return {
+    id: previewItemId(row, index),
+    title: previewTitle(row, 'Untitled recording'),
+    eyebrow: Number.isFinite(sequenceNumber) ? `Step ${sequenceNumber}` : previewText(row.recordingSection) || 'Recording',
+    meta: compactPreviewMeta([previewDateTime(row), previewText(row.durationMinutes ?? row.duration_minutes, ' min'), previewArrayLabel(row.cohortNames ?? row.cohort_names)]),
+    status: row.locked ? 'Locked' : 'Visible',
+    locked: Boolean(row.locked)
+  };
+}
+
+function toResourcePreviewItem(row: Record<string, unknown>, index: number): AdminPreviewItem {
+  return {
+    id: previewItemId(row, index),
+    title: previewTitle(row, 'Untitled resource'),
+    eyebrow: previewText(row.resourceType ?? row.resource_type) || 'Resource',
+    meta: compactPreviewMeta([previewText(row.phase), previewArrayLabel(row.programKeys ?? row.program_keys), previewDateLabel(row.updatedAt ?? row.updated_at, 'Updated')]),
+    status: previewText(row.lockReason ?? row.lock_reason) || (row.locked ? 'Locked' : 'Visible'),
+    locked: Boolean(row.locked)
+  };
+}
+
+function toProjectPreviewItem(row: Record<string, unknown>, index: number): AdminPreviewItem {
+  return {
+    id: previewItemId(row, index),
+    title: previewTitle(row, 'Untitled project'),
+    eyebrow: previewText(row.projectRole ?? row.project_role) || 'Live Project',
+    meta: compactPreviewMeta([previewText(row.companyName ?? row.company_name), previewText(row.programName ?? row.program_name), previewDateLabel(row.deadline, 'Deadline')]),
+    status: previewText(row.status) || 'Visible'
+  };
+}
+
+function toCertificatePreviewItem(row: Record<string, unknown>, index: number): AdminPreviewItem {
+  return {
+    id: previewItemId(row, index),
+    title: previewTitle(row, 'Certificate'),
+    eyebrow: previewText(row.certificateType ?? row.certificate_type) || 'Certificate',
+    meta: compactPreviewMeta([previewText(row.programName ?? row.program_name), previewText(row.projectTitle ?? row.project_title), previewDateLabel(row.issueDate ?? row.issue_date, 'Issued')]),
+    status: previewText(row.generationStatus ?? row.generation_status ?? row.status) || 'Available'
+  };
+}
+
+function previewItemId(row: Record<string, unknown>, index: number) {
+  return String(row.id ?? row.workshopId ?? row.workshop_id ?? row.resourceId ?? row.resource_id ?? row.projectId ?? row.project_id ?? row.certificateId ?? row.certificate_id ?? index);
+}
+
+function previewTitle(row: Record<string, unknown>, fallback: string) {
+  return previewText(row.title ?? row.sessionTitle ?? row.session_title ?? row.projectTitle ?? row.project_title ?? row.certificateId ?? row.certificate_id) || fallback;
+}
+
+function previewText(value: unknown, suffix = '') {
+  const text = String(value ?? '').trim();
+  return text ? `${text}${suffix}` : '';
+}
+
+function previewArrayLabel(value: unknown) {
+  const values = Array.isArray(value) ? asStringArray(value) : splitCommaValues(value);
+  return values.slice(0, 3).join(', ');
+}
+
+function previewDateTime(row: Record<string, unknown>) {
+  const date = previewText(row.date ?? row.scheduledDate ?? row.scheduled_date ?? row.startDate ?? row.start_date);
+  const time = previewText(row.time ?? row.scheduledTime ?? row.scheduled_time);
+  return compactPreviewMeta([date, time]).join(' · ');
+}
+
+function previewDateLabel(value: unknown, label: string) {
+  const text = previewText(value);
+  if (!text) return '';
+  return `${label}: ${text}`;
+}
+
+function compactPreviewMeta(values: unknown[]) {
+  return values.map((value) => String(value ?? '').trim()).filter(Boolean);
+}
+
+function comparePreviewScheduleItems(left: Record<string, unknown>, right: Record<string, unknown>) {
+  return recordingScheduledTime(left, Number.POSITIVE_INFINITY) - recordingScheduledTime(right, Number.POSITIVE_INFINITY);
+}
+
+function comparePreviewUpdatedItems(left: Record<string, unknown>, right: Record<string, unknown>) {
+  return previewTime(right.updatedAt ?? right.updated_at) - previewTime(left.updatedAt ?? left.updated_at) || comparePreviewTitleItems(left, right);
+}
+
+function comparePreviewCertificateItems(left: Record<string, unknown>, right: Record<string, unknown>) {
+  return previewTime(right.issueDate ?? right.issue_date ?? right.createdAt ?? right.created_at) - previewTime(left.issueDate ?? left.issue_date ?? left.createdAt ?? left.created_at) || comparePreviewTitleItems(left, right);
+}
+
+function comparePreviewTitleItems(left: Record<string, unknown>, right: Record<string, unknown>) {
+  return previewTitle(left, '').localeCompare(previewTitle(right, ''));
+}
+
+function previewTime(value: unknown) {
+  const time = new Date(String(value ?? '')).getTime();
+  return Number.isFinite(time) ? time : 0;
 }
 
 async function updateStudentAttemptLimit(context: Awaited<ReturnType<typeof createContext>>, studentId: string, body: unknown) {
@@ -2841,6 +3486,14 @@ async function updateById(context: Awaited<ReturnType<typeof createContext>>, ta
   return endpoint.table === 'students' ? (await enrichAdminStudents(context, [data]))[0] : camelize(enrichRow(data));
 }
 
+async function deleteById(context: Awaited<ReturnType<typeof createContext>>, table: string, id: string, auditAction?: string) {
+  const endpoint = getWriteEndpoint(table);
+  const { data, error } = await context.supabase.from(endpoint.table).delete().eq('id', id).select('*').single();
+  if (error) throw mutationError(error, endpoint.table);
+  if (auditAction) await writeAuditLog(context, endpoint.table, auditAction, data, {});
+  return camelize(enrichRow(data));
+}
+
 async function insertRow(context: Awaited<ReturnType<typeof createContext>>, table: string, body: unknown, auditAction?: string) {
   const endpoint = getWriteEndpoint(table);
   const metadata = getWriteMetadata(endpoint.table, body);
@@ -3052,7 +3705,7 @@ async function resendStudentInvites(context: Awaited<ReturnType<typeof createCon
 }
 
 async function getStudentById(context: Awaited<ReturnType<typeof createContext>>, studentId: string) {
-  const { data, error } = await context.supabase.from('students').select('id,email,full_name,student_id,cohort_name,program_name,active').eq('id', studentId).single();
+  const { data, error } = await context.supabase.from('students').select('id,email,full_name,student_id,cohort_name,program_name,college_name,live_project_role_ids,active').eq('id', studentId).single();
   if (error) throw new ApiClientError(error.message, error.code === 'PGRST116' ? 404 : 503);
   return data;
 }
@@ -3248,14 +3901,14 @@ async function processQueuedStudentEmail(context: Awaited<ReturnType<typeof crea
   }
 }
 
-async function callRpc(context: Awaited<ReturnType<typeof createContext>>, functionName: string, params?: Record<string, string>) {
+async function callRpc(context: Awaited<ReturnType<typeof createContext>>, functionName: string, params?: Record<string, boolean | string>) {
   const { data, error } = await context.supabase.rpc(functionName, params);
   if (error) throw new ApiClientError(error.message, 503);
   return camelize(data);
 }
 
 function applyCommonFilters<TQuery extends SupabaseQuery>(request: TQuery, query: ApiClientOptions['query'], endpoint: TableEndpoint): TQuery {
-  const ignored = new Set(['activeOnly', 'direction', 'limit', 'page', 'search', 'sort']);
+  const ignored = new Set(['activeOnly', 'direction', 'includePast', 'limit', 'page', 'search', 'sort']);
   Object.entries(query ?? {}).forEach(([key, value]) => {
     if (ignored.has(key) || value === undefined || value === '' || value === 'all' || value === 'any') return;
     if (key === 'submittedDate') {
@@ -3317,7 +3970,7 @@ function paginate(rawItems: unknown[], query: ApiClientOptions['query']) {
 function matchesClientFilters(item: unknown, query: ApiClientOptions['query']) {
   if (!isRecord(item)) return true;
 
-  const ignored = new Set(['activeOnly', 'direction', 'limit', 'page', 'search', 'sort']);
+  const ignored = new Set(['activeOnly', 'direction', 'includePast', 'limit', 'page', 'search', 'sort']);
   return Object.entries(query ?? {}).every(([key, value]) => {
     if (ignored.has(key) || value === undefined || value === '' || value === 'all' || value === 'any') return true;
 
@@ -3855,6 +4508,24 @@ function normalizeProjectToolkitWriteBody(payload: Record<string, unknown>) {
   };
 }
 
+function normalizeRecordingSequenceWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  const sequenceNumber = has('sequence_number') && payload.sequence_number !== '' && payload.sequence_number !== null ? Number(payload.sequence_number) : payload.sequence_number;
+  const matchAliases = has('match_aliases')
+    ? uniqueStrings(asStringArray(payload.match_aliases).map((alias) => alias.trim()).filter(Boolean))
+    : payload.match_aliases;
+
+  return {
+    ...payload,
+    match_aliases: matchAliases,
+    program_key: has('program_key') && typeof payload.program_key === 'string' ? payload.program_key.trim().toLowerCase() : payload.program_key,
+    recording_section: has('recording_section') ? normalizeRecordingSection(payload.recording_section) : payload.recording_section,
+    sequence_number: sequenceNumber,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    title: has('title') && typeof payload.title === 'string' ? payload.title.trim() : payload.title
+  };
+}
+
 function normalizeAnnouncementWriteBody(payload: Record<string, unknown>) {
   const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
   const normalizeOptionalText = (key: string) => {
@@ -4051,6 +4722,25 @@ function validateProjectToolkitWriteBody(payload: Record<string, unknown>, inser
   if (programKeys !== undefined && !Array.isArray(programKeys)) throw new ApiClientError('Toolkit programs must be a list.', 400);
   if (linkUrl && !isHttpUrl(linkUrl)) throw new ApiClientError('Toolkit link must start with http:// or https://.', 400);
   if (sortOrder !== undefined && sortOrder !== null && sortOrder !== '' && !Number.isFinite(Number(sortOrder))) throw new ApiClientError('Toolkit sort order is invalid.', 400);
+}
+
+function validateRecordingSequenceWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const programKey = typeof payload.program_key === 'string' ? payload.program_key.trim() : '';
+  const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+  const sequenceNumber = payload.sequence_number;
+  const recordingSection = typeof payload.recording_section === 'string' ? payload.recording_section.trim() : undefined;
+  const status = typeof payload.status === 'string' ? payload.status.trim() : undefined;
+  const aliases = payload.match_aliases;
+
+  if (inserting && !programKey) throw new ApiClientError('Program is required for sequence rules.', 400);
+  if (inserting && !title) throw new ApiClientError('Workshop title is required for sequence rules.', 400);
+  if (inserting && !Number.isInteger(Number(sequenceNumber))) throw new ApiClientError('Sequence number is required.', 400);
+  if ('program_key' in payload && (!programKey || !/^[a-z0-9_]+$/.test(programKey))) throw new ApiClientError('Program key is invalid.', 400);
+  if ('title' in payload && !title) throw new ApiClientError('Workshop title is required for sequence rules.', 400);
+  if (recordingSection && !RECORDING_SECTION_KEYS.has(recordingSection)) throw new ApiClientError('Recording section is invalid.', 400);
+  if (sequenceNumber !== undefined && (!Number.isInteger(Number(sequenceNumber)) || Number(sequenceNumber) < 1)) throw new ApiClientError('Sequence number must be a positive whole number.', 400);
+  if (status && !['active', 'inactive'].includes(status)) throw new ApiClientError('Sequence status is invalid.', 400);
+  if (aliases !== undefined && !Array.isArray(aliases)) throw new ApiClientError('Sequence aliases must be a list.', 400);
 }
 
 function validateAnnouncementWriteBody(payload: Record<string, unknown>, inserting: boolean) {
@@ -4398,6 +5088,7 @@ function mutationError(error: { code?: string; message: string }, table: string)
     if (table === 'resources') return new ApiClientError('A resource with this Resource ID already exists.', 409);
     if (table === 'projects') return new ApiClientError('A project with this Project ID already exists.', 409);
     if (table === 'role_master') return new ApiClientError('A project role with this Role ID already exists.', 409);
+    if (table === 'recording_sequence_rules') return new ApiClientError('This sequence number already exists for the selected program and section.', 409);
     if (table === 'project_submission_requests') return new ApiClientError('A project report attempt already exists for this cohort.', 409);
     return new ApiClientError('A record with this unique value already exists.', 409);
   }

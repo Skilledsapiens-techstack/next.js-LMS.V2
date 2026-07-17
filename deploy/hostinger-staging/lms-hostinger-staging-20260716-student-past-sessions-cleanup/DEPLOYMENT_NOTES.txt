@@ -1,0 +1,14 @@
+Hostinger deployment package - Student Past Sessions cleanup
+
+Extract/upload the contents of public_html into Hostinger public_html.
+
+Included changes:
+- Student Upcoming Workshops now supports Past Sessions.
+- Past Sessions no longer shows cohort/program metadata chips.
+- Duplicate past workshop titles are collapsed to one latest entry.
+- Past Sessions are ordered latest to oldest.
+- Past Sessions header copy is aligned cleanly.
+
+Verification before packaging:
+- npm run lint
+- npm run build

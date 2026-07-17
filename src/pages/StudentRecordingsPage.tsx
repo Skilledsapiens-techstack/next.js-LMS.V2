@@ -1,4 +1,4 @@
-import { CalendarDays, Check, Copy, ExternalLink, Lock, ShieldCheck, Video } from 'lucide-react';
+import { CalendarDays, Check, ChevronDown, Copy, ExternalLink, Link2, Lock, ShieldCheck, Video } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState, LockedState } from '../components/ScreenStates';
@@ -6,7 +6,7 @@ import { PageHeader } from '../components/PageHeader';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
 import { StudentCohort, useStudentCohorts } from '../features/student/useStudentCohorts';
-import { StudentRecording, useStudentRecordings } from '../features/student/useStudentRecordings';
+import { StudentRecording, StudentRecordingSection, useStudentRecordingResources, useStudentRecordings } from '../features/student/useStudentRecordings';
 
 const pageSize = 25;
 
@@ -16,6 +16,25 @@ type RecordingProgramFilter = {
   label: string;
   value: string;
 };
+
+type RecordingDisplayGroup = {
+  key: string;
+  label: string;
+  sections: RecordingSectionGroup[];
+};
+
+type RecordingSectionGroup = {
+  items: StudentRecording[];
+  key: StudentRecordingSection;
+  label: string;
+};
+
+const recordingSectionOptions: Array<{ label: string; value: StudentRecordingSection }> = [
+  { label: 'Induction & Live Project Overview', value: 'induction_live_project' },
+  { label: 'Core Modules', value: 'core_modules' },
+  { label: 'Placement Mentorship', value: 'placement_mentorship' },
+  { label: 'Other Workshops', value: 'other_workshops' }
+];
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
@@ -89,22 +108,6 @@ function formatDuration(value: number | undefined | null) {
   return value == null ? 'Not set' : `${value} min`;
 }
 
-function formatPrice(recording: StudentRecording) {
-  if (recording.price == null) {
-    return recording.accessType === 'paid' ? 'Paid' : 'Free';
-  }
-
-  return `${recording.currency ?? 'INR'} ${recording.price}`;
-}
-
-function formatFilterLabel(value: string) {
-  return value === 'all' ? 'All' : value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function getProgramLabel(recording: StudentRecording) {
-  return recording.programKey || recording.domainKey;
-}
-
 function hasRecordingAccess(recording: StudentRecording) {
   return !recording.locked && recording.hasAccess !== false;
 }
@@ -121,14 +124,89 @@ function paginateItems<TItem>(items: TItem[], page: number) {
   return items.slice(start, start + pageSize);
 }
 
+function recordingSequenceNumber(recording: StudentRecording) {
+  return typeof recording.recordingSequenceNumber === 'number' && Number.isFinite(recording.recordingSequenceNumber)
+    ? recording.recordingSequenceNumber
+    : null;
+}
+
+function recordingSection(recording: StudentRecording): StudentRecordingSection {
+  return recordingSectionOptions.some((option) => option.value === recording.recordingSection) ? recording.recordingSection ?? 'other_workshops' : 'other_workshops';
+}
+
+function recordingSectionOrder(recording: StudentRecording) {
+  const index = recordingSectionOptions.findIndex((option) => option.value === recordingSection(recording));
+  return index === -1 ? recordingSectionOptions.length : index;
+}
+
+function recordingScheduledTime(recording: StudentRecording) {
+  const time = recording.date ? new Date(`${recording.date}T${recording.time ?? '00:00'}`).getTime() : Number.NaN;
+  return Number.isFinite(time) ? time : Number.POSITIVE_INFINITY;
+}
+
+function compareRecordingsForStudent(left: StudentRecording, right: StudentRecording) {
+  const sectionDiff = recordingSectionOrder(left) - recordingSectionOrder(right);
+  if (sectionDiff !== 0) return sectionDiff;
+
+  const leftSequence = recordingSequenceNumber(left);
+  const rightSequence = recordingSequenceNumber(right);
+  if (leftSequence !== null && rightSequence !== null && leftSequence !== rightSequence) return leftSequence - rightSequence;
+  if (leftSequence !== null && rightSequence === null) return -1;
+  if (leftSequence === null && rightSequence !== null) return 1;
+
+  const dateDiff = recordingScheduledTime(left) - recordingScheduledTime(right);
+  if (dateDiff !== 0) return dateDiff;
+  return left.title.localeCompare(right.title);
+}
+
+function buildRecordingDisplayGroups(recordings: StudentRecording[], programs: RecordingProgramFilter[], selectedProgram?: RecordingProgramFilter) {
+  if (selectedProgram) {
+    return [buildRecordingDisplayGroup(selectedProgram.value, selectedProgram.label, recordings)];
+  }
+
+  if (programs.length <= 1) {
+    const label = programs[0]?.label ?? 'Recordings';
+    const key = programs[0]?.value ?? 'all';
+    return [buildRecordingDisplayGroup(key, label, recordings)];
+  }
+
+  const groups = programs
+    .map((program) => buildRecordingDisplayGroup(program.value, program.label, recordings.filter((recording) => recordingMatchesProgram(recording, program))))
+    .filter((group) => group.sections.some((section) => section.items.length > 0));
+
+  const assignedIds = new Set(groups.flatMap((group) => group.sections.flatMap((section) => section.items.map((recording) => recording.id))));
+  const remaining = recordings.filter((recording) => !assignedIds.has(recording.id));
+  return remaining.length > 0 ? [...groups, buildRecordingDisplayGroup('additional', 'Additional Recordings', remaining)] : groups;
+}
+
+function buildRecordingDisplayGroup(key: string, label: string, recordings: StudentRecording[]): RecordingDisplayGroup {
+  const ordered = [...recordings].sort(compareRecordingsForStudent);
+  const sections = recordingSectionOptions
+    .map((section) => ({
+      key: section.value,
+      label: section.label,
+      items: ordered.filter((recording) => recordingSection(recording) === section.value)
+    }))
+    .filter((section) => section.items.length > 0);
+
+  return {
+    key,
+    label,
+    sections
+  };
+}
+
 function totalPagesFor(count: number) {
   return Math.max(1, Math.ceil(count / pageSize));
 }
 
 function RecordingRow({ recording }: { recording: StudentRecording }) {
   const canOpen = hasRecordingAccess(recording) && Boolean(recording.recordingUrl);
-  const programLabel = getProgramLabel(recording);
   const [copied, setCopied] = useState(false);
+  const [resourcesOpen, setResourcesOpen] = useState(false);
+  const initialRelatedResources = recording.relatedResources ?? [];
+  const resourcesQuery = useStudentRecordingResources(recording.id, initialRelatedResources.length === 0 && hasRecordingAccess(recording));
+  const relatedResources = initialRelatedResources.length > 0 ? initialRelatedResources : resourcesQuery.data?.resources ?? [];
 
   function copyPasscode() {
     const passcode = recording.recordingPassword?.trim();
@@ -146,16 +224,11 @@ function RecordingRow({ recording }: { recording: StudentRecording }) {
       <div className="student-recording-row__main">
         <div className="student-recording-row__title">
           <strong>{recording.title}</strong>
-          {recording.source ? <StatusBadge>{formatFilterLabel(recording.source)}</StatusBadge> : null}
-          <StatusBadge tone={recording.locked ? 'warning' : 'safe'}>{recording.locked ? 'Locked' : 'Available'}</StatusBadge>
+          {recordingSequenceNumber(recording) !== null ? <StatusBadge tone="safe">{`Step ${recordingSequenceNumber(recording)}`}</StatusBadge> : null}
         </div>
         <p>
           {formatDate(recording.date)} · {recording.time ?? 'Time not set'} · {formatDuration(recording.durationMinutes)}
         </p>
-        <div className="student-recording-row__meta">
-          {programLabel ? <span>{programLabel}</span> : null}
-          <span>{formatPrice(recording)}</span>
-        </div>
         {recording.locked ? (
           <div className="student-recording-row__notice">
             <Lock size={15} />
@@ -184,7 +257,36 @@ function RecordingRow({ recording }: { recording: StudentRecording }) {
             Pay to unlock
           </a>
         ) : null}
+        {relatedResources.length > 0 ? (
+          <button
+            className={resourcesOpen ? 'student-recording-resource-toggle student-recording-resource-toggle--open' : 'student-recording-resource-toggle'}
+            onClick={() => setResourcesOpen((current) => !current)}
+            type="button"
+          >
+            <Link2 size={15} />
+            Related Resources
+            <span>{relatedResources.length}</span>
+            <ChevronDown size={15} />
+          </button>
+        ) : null}
       </div>
+      {resourcesOpen && relatedResources.length > 0 ? (
+        <div className="student-recording-resources">
+          <div className="student-recording-resources__header">
+            <span>Related resources</span>
+            <strong>{relatedResources.length}</strong>
+          </div>
+          {relatedResources.map((resource) => (
+            <a className="student-recording-resource-card" href={resource.url ?? '#'} key={resource.id} rel="noreferrer" target="_blank">
+              <span>
+                <strong>{resource.title}</strong>
+                {resource.description ? <small>{resource.description}</small> : null}
+              </span>
+              <ExternalLink size={15} />
+            </a>
+          ))}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -210,12 +312,6 @@ export function StudentRecordingsPage() {
       programMap.set(key, { cohortNames, label, value: key });
     });
 
-    recordings.forEach((recording) => {
-      const key = primaryProgramKeyForRecording(recording);
-      if (!key || programMap.has(key)) return;
-      programMap.set(key, { cohortNames: new Set(recordingCohortNames(recording)), label: programLabelFromKey(key), value: key });
-    });
-
     return Array.from(programMap.values())
       .map((program) => {
         const filterProgram = { cohortNames: Array.from(program.cohortNames), value: program.value };
@@ -229,14 +325,18 @@ export function StudentRecordingsPage() {
   }, [enrolledCohorts, recordings]);
   const selectedProgram = useMemo(() => enrolledPrograms.find((program) => program.value === selectedProgramKey), [enrolledPrograms, selectedProgramKey]);
   const filteredRecordings = useMemo(() => {
-    if (!selectedProgramKey) return recordings;
-    if (selectedProgram) return recordings.filter((recording) => recordingMatchesProgram(recording, selectedProgram));
-    return recordings.filter((recording) => primaryProgramKeyForRecording(recording) === selectedProgramKey);
+    const matched = !selectedProgramKey
+      ? recordings
+      : selectedProgram
+        ? recordings.filter((recording) => recordingMatchesProgram(recording, selectedProgram))
+        : recordings.filter((recording) => primaryProgramKeyForRecording(recording) === selectedProgramKey);
+    return [...matched].sort(compareRecordingsForStudent);
   }, [recordings, selectedProgram, selectedProgramKey]);
   const total = filteredRecordings.length;
   const totalPages = totalPagesFor(total);
   const safePage = Math.min(page, totalPages);
   const visibleRecordings = paginateItems(filteredRecordings, safePage);
+  const visibleGroups = useMemo(() => buildRecordingDisplayGroups(visibleRecordings, enrolledPrograms, selectedProgram), [enrolledPrograms, selectedProgram, visibleRecordings]);
   const lockedCount = useMemo(() => filteredRecordings.filter((item) => item.locked).length, [filteredRecordings]);
   const availableCount = useMemo(() => filteredRecordings.filter(hasRecordingAccess).length, [filteredRecordings]);
   const latestRecordingDate = useMemo(() => getLatestRecordingDate(filteredRecordings), [filteredRecordings]);
@@ -319,8 +419,21 @@ export function StudentRecordingsPage() {
 
       {visibleRecordings.length > 0 ? (
         <section className="student-recording-list" aria-label="Visible recordings">
-          {visibleRecordings.map((recording) => (
-            <RecordingRow key={recording.id} recording={recording} />
+          {visibleGroups.map((group) => (
+            <div className="student-recording-group" key={group.key}>
+              {visibleGroups.length > 1 ? <h2>{group.label}</h2> : null}
+              {group.sections.map((section) => (
+                <div className="student-recording-section" key={`${group.key}-${section.key}`}>
+                  <div className="student-recording-section-heading">
+                    <span>{section.label}</span>
+                    <strong>{section.items.length}</strong>
+                  </div>
+                  {section.items.map((recording) => (
+                    <RecordingRow key={recording.id} recording={recording} />
+                  ))}
+                </div>
+              ))}
+            </div>
           ))}
         </section>
       ) : (

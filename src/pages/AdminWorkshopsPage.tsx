@@ -5,6 +5,7 @@ import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { AdminCohort, useAdminCohorts } from '../features/admin/useAdminCohorts';
+import { createTopicDraft, customWorkshopTopicValue, loadSavedWorkshopTopics, saveWorkshopTopics, uniqueTitles, WorkshopTopicDraft } from '../lib/workshopTopics';
 import {
   AdminWorkshop,
   AdminWorkshopStatus,
@@ -30,12 +31,6 @@ type WorkshopForm = {
   zoomAccount: string;
 };
 
-type WorkshopTopicDraft = {
-  id: string;
-  isEditing: boolean;
-  title: string;
-};
-
 const emptyWorkshopForm: WorkshopForm = {
   agenda: '',
   cohortNames: [],
@@ -46,53 +41,6 @@ const emptyWorkshopForm: WorkshopForm = {
   title: '',
   zoomAccount: 'Zoom Account 1'
 };
-
-const workshopTopicStorageKey = 'admin-workshop-topic-options';
-
-const defaultWorkshopTopics = [
-  'Market Research Foundation - MR',
-  'Case Based Frameworks & Sample Mocks - Part 01',
-  'Case Based Frameworks & Sample Mocks - Part 02',
-  'Product & Brand Management - Detailed Overview',
-  'Induction Session - Skilled Sapiens',
-  'Forecasting of financial statements - Part 1',
-  'How to think like a Consultant & Marketer',
-  'Introduction to Equity Research, Financial Modeling & Excel'
-];
-
-const customWorkshopTopicValue = '__custom_workshop_topic__';
-
-function uniqueTitles(values: string[]) {
-  const seen = new Set<string>();
-  return values
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .filter((value) => {
-      const key = value.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-}
-
-function createTopicDraft(title = '', isEditing = title.trim().length === 0): WorkshopTopicDraft {
-  return { id: `topic-${Date.now()}-${Math.random()}`, isEditing, title };
-}
-
-function loadSavedWorkshopTopics() {
-  if (typeof window === 'undefined') return defaultWorkshopTopics;
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(workshopTopicStorageKey) ?? 'null');
-    return Array.isArray(parsed) ? uniqueTitles(parsed.filter((item): item is string => typeof item === 'string')) : defaultWorkshopTopics;
-  } catch {
-    return defaultWorkshopTopics;
-  }
-}
-
-function saveWorkshopTopics(topics: string[]) {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(workshopTopicStorageKey, JSON.stringify(topics));
-}
 
 function toDateInput(value: string | undefined) {
   if (!value) return '';

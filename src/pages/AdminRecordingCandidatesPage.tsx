@@ -1,10 +1,24 @@
-import { AlertTriangle, CheckCircle2, Clock3, Edit3, ExternalLink, Loader2, Play, RefreshCw, Save, Search, Video, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock3, Edit3, ExternalLink, Link2, ListOrdered, Loader2, Play, RefreshCw, Save, Search, Trash2, Video, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { StatusBadge } from '../components/StatusBadge';
 import { AdminCohort, useAdminCohorts } from '../features/admin/useAdminCohorts';
 import { AdminProgram, useAdminPrograms } from '../features/admin/useAdminPrograms';
-import { AdminRecordingCandidate, useAdminRecordingCandidates } from '../features/admin/useAdminRecordingCandidates';
+import { customWorkshopTopicValue, loadSavedWorkshopTopics, uniqueTitles } from '../lib/workshopTopics';
+import {
+  AdminRecordingCandidate,
+  AdminRecordingSection,
+  AdminRecordingSequenceRule,
+  useAdminRecordingCandidates,
+  useAdminRecordingResourceLinks,
+  useAdminRecordingResourceSummary,
+  useAdminRecordingSequenceRules,
+  useCreateAdminRecordingSequenceRule,
+  useDeleteAdminRecordingSequenceRule,
+  useUpdateAdminRecordingResourceLinks,
+  useUpdateAdminRecordingSequenceRule
+} from '../features/admin/useAdminRecordingCandidates';
+import { AdminResource, useAdminResources } from '../features/admin/useAdminResources';
 import {
   AdminWorkshop,
   useCreateAdminManualRecordingCandidate,
@@ -28,6 +42,19 @@ type RecordingEditForm = {
   workshopId: string;
   youtubeUrl: string;
 };
+type RecordingSequenceForm = {
+  aliases: string;
+  programKeys: string[];
+  recordingSection: AdminRecordingSection;
+  sequenceNumber: string;
+  status: 'active' | 'inactive';
+  title: string;
+};
+
+type ResourceManagerState = {
+  recordingId: string;
+  title: string;
+};
 
 const pageSize = 25;
 
@@ -38,6 +65,26 @@ const recordingSortOptions: Array<{ label: string; value: RecordingSortOption }>
   { label: 'Program A-Z', value: 'program-az' },
   { label: 'Cohort A-Z', value: 'cohort-az' }
 ];
+
+const emptySequenceForm: RecordingSequenceForm = {
+  aliases: '',
+  programKeys: [],
+  recordingSection: 'other_workshops',
+  sequenceNumber: '',
+  status: 'active',
+  title: ''
+};
+
+const recordingSectionOptions: Array<{ label: string; value: AdminRecordingSection }> = [
+  { label: 'Induction & Live Project Overview', value: 'induction_live_project' },
+  { label: 'Core Modules', value: 'core_modules' },
+  { label: 'Placement Mentorship', value: 'placement_mentorship' },
+  { label: 'Other Workshops', value: 'other_workshops' }
+];
+
+function recordingSectionLabel(value: string | undefined | null) {
+  return recordingSectionOptions.find((option) => option.value === value)?.label ?? 'Other Workshops';
+}
 
 function readableError(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) return error.message;
@@ -82,9 +129,65 @@ function cohortProgramMatches(cohort: AdminCohort, programKey: string) {
 }
 
 function sourceLabel(item: AdminWorkshop) {
-  if (item.youtubeVideoUrl) return 'YouTube';
-  if (item.zoomRecordingUrl) return 'Zoom/manual';
-  return 'Add Link';
+  return item.zoomId ? 'Zoom' : 'Manual';
+}
+
+function resourceSummary(resource: AdminResource) {
+  return [resource.resourceType, resource.resourceMode, resource.programKeys?.slice(0, 2).join(', '), resource.cohortNames?.slice(0, 2).join(', ')]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function normalizeSequenceText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function splitSequenceAliases(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .split(/[\n,]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function sequenceRuleMatchesWorkshop(workshop: AdminWorkshop, rule: AdminRecordingSequenceRule) {
+  const workshopProgramKey = workshop.programKey?.trim().toLowerCase() ?? '';
+  if (!workshopProgramKey || workshopProgramKey !== rule.programKey) return false;
+  const title = normalizeSequenceText(workshop.title);
+  if (!title) return false;
+  const candidates = [rule.title, ...(rule.matchAliases ?? [])].map(normalizeSequenceText).filter(Boolean);
+  return candidates.some((candidate) => candidate === title || (candidate.length >= 8 && title.includes(candidate)) || (title.length >= 8 && candidate.includes(title)));
+}
+
+function sequenceMatchForWorkshop(workshop: AdminWorkshop, rules: AdminRecordingSequenceRule[]) {
+  return rules.find((rule) => rule.status === 'active' && sequenceRuleMatchesWorkshop(workshop, rule));
+}
+
+function comparePublishedWorkshops(
+  left: AdminWorkshop,
+  right: AdminWorkshop,
+  sortBy: RecordingSortOption,
+  programs: AdminProgram[],
+  sequenceRules: AdminRecordingSequenceRule[]
+) {
+  if (sortBy === 'latest-updated') {
+    const leftSequence = sequenceMatchForWorkshop(left, sequenceRules)?.sequenceNumber;
+    const rightSequence = sequenceMatchForWorkshop(right, sequenceRules)?.sequenceNumber;
+    const leftSequenced = typeof leftSequence === 'number';
+    const rightSequenced = typeof rightSequence === 'number';
+    if (leftSequenced && rightSequenced && leftSequence !== rightSequence) return leftSequence - rightSequence;
+    if (leftSequenced !== rightSequenced) return leftSequenced ? -1 : 1;
+  }
+
+  return compareWorkshopsBySort(left, right, sortBy, programs);
 }
 
 function candidateMatches(candidate: AdminRecordingCandidate, workshop: AdminWorkshop | undefined, search: string) {
@@ -279,8 +382,18 @@ export function AdminRecordingCandidatesPage() {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [pageByTab, setPageByTab] = useState<Record<RecordingTab, number>>({ 'add-link': 1, pending: 1, published: 1, rejected: 1 });
   const [recordingEditForm, setRecordingEditForm] = useState<RecordingEditForm | null>(null);
+  const [showSequenceManager, setShowSequenceManager] = useState(false);
+  const [sequenceForm, setSequenceForm] = useState<RecordingSequenceForm>(emptySequenceForm);
+  const [editingSequenceId, setEditingSequenceId] = useState<string | null>(null);
+  const [sequenceCustomTitleMode, setSequenceCustomTitleMode] = useState(false);
+  const [resourceManager, setResourceManager] = useState<ResourceManagerState | null>(null);
+  const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
+  const [savedWorkshopTopics] = useState<string[]>(loadSavedWorkshopTopics);
   const workshopsQuery = useAdminWorkshops({ limit: 500, page: 1, status: 'Completed' });
   const candidatesQuery = useAdminRecordingCandidates({ limit: 500, page: 1, status: 'all' });
+  const sequenceRulesQuery = useAdminRecordingSequenceRules({ limit: 500, page: 1, status: 'all' });
+  const resourcesQuery = useAdminResources({ limit: 500, page: 1, status: 'active' });
+  const recordingResourceLinksQuery = useAdminRecordingResourceLinks(resourceManager?.recordingId);
   const programsQuery = useAdminPrograms({ limit: 500, page: 1, status: 'active' });
   const activeCohortsQuery = useAdminCohorts({ limit: 500, page: 1, status: 'active' });
   const fetchRecordingsMutation = useFetchAdminWorkshopRecordings();
@@ -288,8 +401,14 @@ export function AdminRecordingCandidatesPage() {
   const rejectRecordingMutation = useRejectAdminWorkshopRecording();
   const createManualCandidateMutation = useCreateAdminManualRecordingCandidate();
   const editPublishedRecordingMutation = useEditAdminPublishedRecording();
+  const createSequenceRuleMutation = useCreateAdminRecordingSequenceRule();
+  const updateSequenceRuleMutation = useUpdateAdminRecordingSequenceRule();
+  const deleteSequenceRuleMutation = useDeleteAdminRecordingSequenceRule();
+  const updateRecordingResourceLinksMutation = useUpdateAdminRecordingResourceLinks();
   const workshops = workshopsQuery.data?.items ?? [];
   const candidates = (candidatesQuery.data?.items ?? []).filter(isReviewableCandidate);
+  const sequenceRules = sequenceRulesQuery.data?.items ?? [];
+  const resources = resourcesQuery.data?.items ?? [];
   const programs = programsQuery.data?.items ?? [];
   const activeCohorts = activeCohortsQuery.data?.items ?? [];
   const normalizedSearch = search.trim().toLowerCase();
@@ -308,6 +427,7 @@ export function AdminRecordingCandidatesPage() {
     const workshopProgramKeys = workshops.map((item) => item.programKey).filter((value): value is string => Boolean(value));
     return Array.from(new Set([...activeProgramKeys, ...cohortProgramKeys, ...workshopProgramKeys]));
   }, [activeCohorts, programs, workshops]);
+  const workshopTopicOptions = useMemo(() => uniqueTitles(savedWorkshopTopics), [savedWorkshopTopics]);
 
   const cohortOptions = useMemo(() => {
     const eligibleCohorts = programFilter === 'all' ? activeCohorts : activeCohorts.filter((cohort) => cohortProgramMatches(cohort, programFilter));
@@ -320,6 +440,12 @@ export function AdminRecordingCandidatesPage() {
       setPageByTab({ 'add-link': 1, pending: 1, published: 1, rejected: 1 });
     }
   }, [cohortFilter, cohortOptions]);
+
+  useEffect(() => {
+    if (resourceManager && recordingResourceLinksQuery.data) {
+      setSelectedResourceIds(recordingResourceLinksQuery.data.resourceIds);
+    }
+  }, [recordingResourceLinksQuery.data, resourceManager]);
 
   const pendingCandidates = useMemo(
     () =>
@@ -336,8 +462,11 @@ export function AdminRecordingCandidatesPage() {
   );
 
   const publishedWorkshops = useMemo(
-    () => workshops.filter((workshop) => hasRecordingLink(workshop) && workshopMatches(workshop, normalizedSearch, programFilter, cohortFilter)).sort((left, right) => compareWorkshopsBySort(left, right, sortBy, programs)),
-    [cohortFilter, normalizedSearch, programFilter, programs, sortBy, workshops]
+    () =>
+      workshops
+        .filter((workshop) => hasRecordingLink(workshop) && workshopMatches(workshop, normalizedSearch, programFilter, cohortFilter))
+        .sort((left, right) => comparePublishedWorkshops(left, right, sortBy, programs, sequenceRules)),
+    [cohortFilter, normalizedSearch, programFilter, programs, sequenceRules, sortBy, workshops]
   );
 
   const addLinkWorkshops = useMemo(
@@ -376,6 +505,11 @@ export function AdminRecordingCandidatesPage() {
   const activeItems = visibleByTab[activeTab];
   const activePage = Math.min(pageByTab[activeTab], totalPagesFor(activeItems.length));
   const activeTotalPages = totalPagesFor(activeItems.length);
+  const paginatedPublishedWorkshops = useMemo(() => paginateItems(publishedWorkshops, activePage), [activePage, publishedWorkshops]);
+  const recordingResourceSummaryQuery = useAdminRecordingResourceSummary(activeTab === 'published' ? paginatedPublishedWorkshops.map((workshop) => workshop.id) : []);
+  const resourceCountByRecordingId = useMemo(() => {
+    return new Map((recordingResourceSummaryQuery.data?.items ?? []).map((item) => [item.recordingId, item.resourceCount]));
+  }, [recordingResourceSummaryQuery.data?.items]);
 
   async function refetchRecordingData() {
     await Promise.all([candidatesQuery.refetch(), workshopsQuery.refetch()]);
@@ -544,6 +678,413 @@ export function AdminRecordingCandidatesPage() {
     });
   }
 
+  function resetSequenceForm(nextProgramKeys = sequenceForm.programKeys) {
+    setEditingSequenceId(null);
+    setSequenceCustomTitleMode(false);
+    setSequenceForm({ ...emptySequenceForm, programKeys: nextProgramKeys });
+  }
+
+  function handleSequenceTopicSelect(value: string) {
+    if (value === customWorkshopTopicValue) {
+      setSequenceCustomTitleMode(true);
+      setSequenceForm((current) => ({ ...current, title: '' }));
+      return;
+    }
+    setSequenceCustomTitleMode(false);
+    setSequenceForm((current) => ({ ...current, title: value }));
+  }
+
+  function startEditingSequence(rule: AdminRecordingSequenceRule) {
+    setEditingSequenceId(rule.id);
+    setSequenceCustomTitleMode(!workshopTopicOptions.includes(rule.title));
+    setSequenceForm({
+      aliases: (rule.matchAliases ?? []).join('\n'),
+      programKeys: [rule.programKey],
+      recordingSection: rule.recordingSection ?? 'other_workshops',
+      sequenceNumber: String(rule.sequenceNumber),
+      status: rule.status,
+      title: rule.title
+    });
+    setShowSequenceManager(true);
+  }
+
+  function toggleSequenceProgram(programKey: string) {
+    setSequenceForm((current) => {
+      const normalizedProgramKey = programKey.trim().toLowerCase();
+      const selected = new Set(current.programKeys);
+      if (selected.has(normalizedProgramKey)) selected.delete(normalizedProgramKey);
+      else selected.add(normalizedProgramKey);
+      return { ...current, programKeys: Array.from(selected) };
+    });
+  }
+
+  function selectAllSequencePrograms() {
+    setSequenceForm((current) => ({ ...current, programKeys: programKeys.map((programKey) => programKey.trim().toLowerCase()).filter(Boolean) }));
+  }
+
+  function clearSequencePrograms() {
+    setSequenceForm((current) => ({ ...current, programKeys: [] }));
+  }
+
+  async function saveSequenceRule() {
+    const selectedProgramKeys = Array.from(new Set(sequenceForm.programKeys.map((programKey) => programKey.trim().toLowerCase()).filter(Boolean)));
+    const title = sequenceForm.title.trim();
+    const sequenceNumber = Number(sequenceForm.sequenceNumber);
+    setActionMessage(null);
+
+    if (selectedProgramKeys.length === 0) {
+      setActionMessage('Select at least one program before saving sequence.');
+      return;
+    }
+    if (editingSequenceId && selectedProgramKeys.length !== 1) {
+      setActionMessage('Editing an existing sequence supports one program. Select one program or reset before bulk adding.');
+      return;
+    }
+    if (!Number.isInteger(sequenceNumber) || sequenceNumber < 1) {
+      setActionMessage('Sequence number must be 1 or higher.');
+      return;
+    }
+    if (!title) {
+      setActionMessage('Workshop title is required for sequence matching.');
+      return;
+    }
+
+    const baseBody = {
+      matchAliases: splitSequenceAliases(sequenceForm.aliases),
+      recordingSection: sequenceForm.recordingSection,
+      sequenceNumber,
+      status: sequenceForm.status,
+      title
+    };
+
+    try {
+      if (editingSequenceId) {
+        await updateSequenceRuleMutation.mutateAsync({ body: { ...baseBody, programKey: selectedProgramKeys[0] }, id: editingSequenceId });
+        await sequenceRulesQuery.refetch();
+        resetSequenceForm(selectedProgramKeys);
+        setActionMessage('Recording sequence updated.');
+      } else {
+        const skippedProgramKeys =
+          sequenceForm.status === 'active'
+            ? selectedProgramKeys.filter((programKey) =>
+                sequenceRules.some(
+                  (rule) =>
+                    rule.status === 'active' &&
+                    rule.programKey === programKey &&
+                    rule.recordingSection === sequenceForm.recordingSection &&
+                    rule.sequenceNumber === sequenceNumber
+                )
+              )
+            : [];
+        const creatableProgramKeys = selectedProgramKeys.filter((programKey) => !skippedProgramKeys.includes(programKey));
+
+        if (creatableProgramKeys.length === 0) {
+          setActionMessage(`Sequence ${sequenceNumber} already exists for the selected program${selectedProgramKeys.length === 1 ? '' : 's'}. No changes were saved.`);
+          return;
+        }
+
+        const createResults = await Promise.allSettled(
+          creatableProgramKeys.map((programKey) => createSequenceRuleMutation.mutateAsync({ ...baseBody, programKey }))
+        );
+        const savedCount = createResults.filter((result) => result.status === 'fulfilled').length;
+        const failedResults = createResults.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+        await sequenceRulesQuery.refetch();
+        resetSequenceForm(selectedProgramKeys);
+        const createdText = savedCount
+          ? `Recording sequence added for ${savedCount} program${savedCount === 1 ? '' : 's'}.`
+          : 'No new recording sequences were added.';
+        const skippedText = skippedProgramKeys.length
+          ? ` Skipped ${skippedProgramKeys.length} program${skippedProgramKeys.length === 1 ? '' : 's'} with existing Seq ${sequenceNumber} in ${recordingSectionLabel(sequenceForm.recordingSection)}.`
+          : '';
+        const failedText = failedResults.length
+          ? ` ${failedResults.length} program${failedResults.length === 1 ? '' : 's'} could not be saved: ${readableError(failedResults[0].reason, 'Unknown error')}`
+          : '';
+        setActionMessage(`${createdText}${skippedText}${failedText}`);
+      }
+    } catch (error) {
+      setActionMessage(readableError(error, 'Recording sequence could not be saved.'));
+    }
+  }
+
+  async function deleteSequenceRule(rule: AdminRecordingSequenceRule) {
+    if (!window.confirm(`Delete sequence ${rule.sequenceNumber} for ${programLabelFor(programs, rule.programKey)}?`)) return;
+    setActionMessage(null);
+    try {
+      await deleteSequenceRuleMutation.mutateAsync(rule.id);
+      await sequenceRulesQuery.refetch();
+      if (editingSequenceId === rule.id) resetSequenceForm([rule.programKey]);
+      setActionMessage('Recording sequence deleted.');
+    } catch (error) {
+      setActionMessage(readableError(error, 'Recording sequence could not be deleted.'));
+    }
+  }
+
+  function openResourceManager(workshop: AdminWorkshop) {
+    setActionMessage(null);
+    setSelectedResourceIds([]);
+    setResourceManager({ recordingId: workshop.id, title: workshop.title });
+  }
+
+  function closeResourceManager() {
+    if (updateRecordingResourceLinksMutation.isPending) return;
+    setResourceManager(null);
+    setSelectedResourceIds([]);
+  }
+
+  function toggleRecordingResource(resourceId: string) {
+    setSelectedResourceIds((current) => {
+      const selected = new Set(current);
+      if (selected.has(resourceId)) selected.delete(resourceId);
+      else selected.add(resourceId);
+      return Array.from(selected);
+    });
+  }
+
+  async function saveRecordingResources() {
+    if (!resourceManager) return;
+    setActionMessage(null);
+    try {
+      await updateRecordingResourceLinksMutation.mutateAsync({
+        recordingId: resourceManager.recordingId,
+        resourceIds: selectedResourceIds
+      });
+      setActionMessage('Related resources updated for this recording.');
+      setResourceManager(null);
+      setSelectedResourceIds([]);
+    } catch (error) {
+      setActionMessage(readableError(error, 'Related resources could not be updated.'));
+    }
+  }
+
+  function renderResourceManager() {
+    if (!resourceManager) return null;
+    const isBusy = updateRecordingResourceLinksMutation.isPending;
+    const isLoading = resourcesQuery.isLoading || recordingResourceLinksQuery.isLoading;
+
+    return (
+      <div className="admin-recording-resource-modal" role="dialog" aria-modal="true" aria-label="Manage recording resources">
+        <div className="admin-recording-resource-modal__panel">
+          <div className="admin-recording-resource-modal__header">
+            <div>
+              <span className="section-eyebrow">RELATED RESOURCES</span>
+              <h2>{resourceManager.title}</h2>
+              <p>Select Resource Library items students can access directly from this recording.</p>
+            </div>
+            <button className="admin-recording-action" disabled={isBusy} onClick={closeResourceManager} type="button">
+              Close
+            </button>
+          </div>
+          {resourcesQuery.isError || recordingResourceLinksQuery.isError ? (
+            <div className="workshop-error-note">Resources could not be loaded right now. Existing recording actions are unchanged.</div>
+          ) : null}
+          {isLoading ? (
+            <LoadingState />
+          ) : (
+            <div className="admin-recording-resource-picker">
+              {resources.length > 0 ? (
+                resources.map((resource) => (
+                  <label className="admin-recording-resource-option" key={resource.id}>
+                    <input checked={selectedResourceIds.includes(resource.id)} disabled={isBusy} onChange={() => toggleRecordingResource(resource.id)} type="checkbox" />
+                    <span>
+                      <strong>{resource.title}</strong>
+                      <small>{resourceSummary(resource) || 'Resource Library item'}</small>
+                    </span>
+                    {resource.url ? (
+                      <a href={resource.url} onClick={(event) => event.stopPropagation()} rel="noreferrer" target="_blank">
+                        Preview
+                      </a>
+                    ) : null}
+                  </label>
+                ))
+              ) : (
+                <p className="admin-recording-resource-empty">No active resources are available to link.</p>
+              )}
+            </div>
+          )}
+          <div className="admin-recording-resource-modal__actions">
+            <span>{selectedResourceIds.length} selected</span>
+            <div>
+              <button className="admin-recording-action" disabled={isBusy} onClick={closeResourceManager} type="button">
+                Cancel
+              </button>
+              <button className="admin-recording-action admin-recording-action--primary" disabled={isBusy || isLoading} onClick={() => void saveRecordingResources()} type="button">
+                {isBusy ? <Loader2 className="admin-spin" size={14} /> : <Save size={14} />}
+                Save resources
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function renderSequenceManager() {
+    if (!showSequenceManager) return null;
+    const selectedProgramKeys = Array.from(new Set(sequenceForm.programKeys.map((programKey) => programKey.trim().toLowerCase()).filter(Boolean)));
+    const visibleRules = sequenceRules
+      .filter((rule) => selectedProgramKeys.length === 0 || selectedProgramKeys.includes(rule.programKey))
+      .sort((left, right) => left.programKey.localeCompare(right.programKey) || left.sequenceNumber - right.sequenceNumber);
+    const isBusy = createSequenceRuleMutation.isPending || updateSequenceRuleMutation.isPending || deleteSequenceRuleMutation.isPending;
+    const selectedSequenceTitleValue =
+      sequenceCustomTitleMode || (sequenceForm.title && !workshopTopicOptions.includes(sequenceForm.title)) ? customWorkshopTopicValue : sequenceForm.title;
+
+    return (
+      <section className="admin-recording-sequence-manager" aria-label="Recording sequence manager">
+        <div className="admin-recording-panel__header">
+          <div>
+            <h2>Sequence Manager</h2>
+            <p>Define program-level recording order by workshop title and optional aliases. Unmatched recordings stay latest-first.</p>
+          </div>
+          <button className="admin-recording-action" onClick={() => setShowSequenceManager(false)} type="button">
+            Close
+          </button>
+        </div>
+        {sequenceRulesQuery.isError ? <div className="workshop-error-note">Sequence rules could not be loaded. Existing recording operations are still available.</div> : null}
+        <form className="admin-recording-sequence-form" onSubmit={(event) => {
+          event.preventDefault();
+          if (!isBusy) void saveSequenceRule();
+        }}>
+          <fieldset className="admin-recording-sequence-programs">
+            <div className="admin-recording-sequence-programs__head">
+              <span>Programs</span>
+              <div>
+                <button className="admin-recording-mini-action" disabled={isBusy || programKeys.length === 0} onClick={selectAllSequencePrograms} type="button">
+                  Select all
+                </button>
+                <button className="admin-recording-mini-action" disabled={isBusy || selectedProgramKeys.length === 0} onClick={clearSequencePrograms} type="button">
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div className="admin-recording-sequence-programs__list">
+              {programKeys.length > 0 ? (
+                programKeys.map((programKey) => {
+                  const normalizedProgramKey = programKey.trim().toLowerCase();
+                  return (
+                    <label key={programKey}>
+                      <input
+                        checked={selectedProgramKeys.includes(normalizedProgramKey)}
+                        disabled={isBusy}
+                        onChange={() => toggleSequenceProgram(programKey)}
+                        type="checkbox"
+                      />
+                      <strong>{programLabelFor(programs, programKey)}</strong>
+                    </label>
+                  );
+                })
+              ) : (
+                <p>No active programs available.</p>
+              )}
+            </div>
+            <small>
+              {selectedProgramKeys.length > 0
+                ? `${selectedProgramKeys.length} program${selectedProgramKeys.length === 1 ? '' : 's'} selected.`
+                : 'Select one or more programs for this sequence.'}
+            </small>
+          </fieldset>
+          <label>
+            <span>Seq #</span>
+            <input
+              min="1"
+              onChange={(event) => setSequenceForm((current) => ({ ...current, sequenceNumber: event.target.value }))}
+              placeholder="1"
+              type="number"
+              value={sequenceForm.sequenceNumber}
+            />
+          </label>
+          <label className="admin-recording-sequence-form__wide admin-recording-sequence-form__title">
+            <span>Workshop title to match</span>
+            <select value={selectedSequenceTitleValue} onChange={(event) => handleSequenceTopicSelect(event.target.value)}>
+              <option value="">Select workshop title</option>
+              {workshopTopicOptions.map((title) => (
+                <option key={title} value={title}>
+                  {title}
+                </option>
+              ))}
+              <option value={customWorkshopTopicValue}>Custom title</option>
+            </select>
+            {sequenceCustomTitleMode || selectedSequenceTitleValue === customWorkshopTopicValue ? (
+              <input
+                onChange={(event) => setSequenceForm((current) => ({ ...current, title: event.target.value }))}
+                placeholder="Type custom workshop title..."
+                value={sequenceForm.title}
+              />
+            ) : null}
+          </label>
+          <label>
+            <span>Section</span>
+            <select
+              value={sequenceForm.recordingSection}
+              onChange={(event) => setSequenceForm((current) => ({ ...current, recordingSection: event.target.value as AdminRecordingSection }))}
+            >
+              {recordingSectionOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Status</span>
+            <select value={sequenceForm.status} onChange={(event) => setSequenceForm((current) => ({ ...current, status: event.target.value as 'active' | 'inactive' }))}>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </label>
+          <label className="admin-recording-sequence-form__wide admin-recording-sequence-form__aliases">
+            <span>Aliases</span>
+            <textarea
+              onChange={(event) => setSequenceForm((current) => ({ ...current, aliases: event.target.value }))}
+              placeholder="Live Project Briefing Session&#10;Live Project Overview & Doubt Session"
+              rows={3}
+              value={sequenceForm.aliases}
+            />
+          </label>
+          <div className="admin-recording-edit-form__actions admin-recording-sequence-form__actions">
+            <button className="admin-recording-action admin-recording-action--primary" disabled={isBusy} type="submit">
+              {isBusy ? <Loader2 className="admin-spin" size={14} /> : <Save size={14} />}
+              {editingSequenceId ? 'Update sequence' : 'Add sequence'}
+            </button>
+            <button className="admin-recording-action" disabled={isBusy} onClick={() => resetSequenceForm()} type="button">
+              Reset
+            </button>
+          </div>
+        </form>
+        {actionMessage ? <div className="workshop-error-note admin-recording-sequence-message">{actionMessage}</div> : null}
+        <div className="admin-recording-sequence-list">
+          {visibleRules.length > 0 ? (
+            visibleRules.map((rule) => (
+              <article className="admin-recording-sequence-row" key={rule.id}>
+                <div>
+                  <strong>Seq {rule.sequenceNumber}</strong>
+                  <span>{programLabelFor(programs, rule.programKey)}</span>
+                </div>
+                <div>
+                  <strong>{rule.title}</strong>
+                  <span>{recordingSectionLabel(rule.recordingSection)}</span>
+                  <span>{rule.matchAliases?.length ? `Aliases: ${rule.matchAliases.join(', ')}` : 'No aliases'}</span>
+                </div>
+                <StatusBadge tone={rule.status === 'active' ? 'safe' : 'neutral'}>{rule.status}</StatusBadge>
+                <div className="admin-recording-row__actions">
+                  <button className="admin-recording-action" disabled={isBusy} onClick={() => startEditingSequence(rule)} type="button">
+                    <Edit3 size={14} />
+                    Edit
+                  </button>
+                  <button className="admin-recording-action" disabled={isBusy} onClick={() => void deleteSequenceRule(rule)} type="button">
+                    <Trash2 size={14} />
+                    Delete
+                  </button>
+                </div>
+              </article>
+            ))
+          ) : (
+            <p className="admin-recording-sequence-empty">No sequence rules yet for this view.</p>
+          )}
+        </div>
+      </section>
+    );
+  }
+
   function renderRecordingEditForm(workshop: AdminWorkshop, mode: 'draft' | 'published' = 'draft') {
     if (recordingEditForm?.workshopId !== workshop.id) return null;
     const isPublishedEdit = mode === 'published';
@@ -654,6 +1195,10 @@ export function AdminRecordingCandidatesPage() {
           <p>Add recording links, review completed session videos, and publish only the approved recordings students should see.</p>
         </div>
         <div className="admin-recording-hero__meta">
+          <button className="admin-recording-action" onClick={() => setShowSequenceManager((current) => !current)} type="button">
+            <ListOrdered size={14} />
+            Sequence Manager
+          </button>
           <StatusBadge>{`${addLinkWorkshops.length} need links`}</StatusBadge>
           <StatusBadge>{`${pendingCandidates.length} pending`}</StatusBadge>
           <StatusBadge>{`${publishedWorkshops.length} published`}</StatusBadge>
@@ -752,6 +1297,9 @@ export function AdminRecordingCandidatesPage() {
         </label>
       </section>
 
+      {renderSequenceManager()}
+      {renderResourceManager()}
+
       <nav className="admin-recording-tabs" aria-label="Recording workspace tabs">
         <button className={activeTab === 'add-link' ? 'admin-recording-tab admin-recording-tab--active' : 'admin-recording-tab'} onClick={() => changeTab('add-link')} type="button">
           Add Link
@@ -767,7 +1315,7 @@ export function AdminRecordingCandidatesPage() {
         </button>
       </nav>
 
-      {actionMessage ? <div className="workshop-error-note">{actionMessage}</div> : null}
+      {actionMessage && !showSequenceManager ? <div className="workshop-error-note">{actionMessage}</div> : null}
 
       {activeTab === 'pending' ? (
         <section className="admin-recording-panel">
@@ -842,38 +1390,48 @@ export function AdminRecordingCandidatesPage() {
           </div>
           {publishedWorkshops.length > 0 ? (
             <div className="admin-recording-list">
-              {paginateItems(publishedWorkshops, activePage).map((workshop) => (
-                <article className="admin-recording-row" key={workshop.id}>
-                  <div className="admin-recording-row__icon admin-recording-row__icon--published">
-                    <CheckCircle2 size={18} />
-                  </div>
-                  <div className="admin-recording-row__main">
-                    <div className="admin-recording-row__title">
-                      <strong>{workshop.title}</strong>
-                      <StatusBadge>{sourceLabel(workshop)}</StatusBadge>
+              {paginatedPublishedWorkshops.map((workshop) => {
+                const sequenceMatch = sequenceMatchForWorkshop(workshop, sequenceRules);
+                const linkedResourceCount = resourceCountByRecordingId.get(workshop.id) ?? 0;
+                return (
+                  <article className="admin-recording-row" key={workshop.id}>
+                    <div className="admin-recording-row__icon admin-recording-row__icon--published">
+                      <CheckCircle2 size={18} />
                     </div>
-                    <p>{[programLabelFor(programs, workshop.programKey), formatDate(workshop.date), workshop.time, workshop.cohortNames.slice(0, 2).join(', ')].filter(Boolean).join(' · ')}</p>
-                    <div className="admin-recording-row__meta">
-                      <span>{workshop.workshopId ?? 'No workshop ID'}</span>
-                      <span>{workshop.zoomId ? `Zoom ${workshop.zoomId}` : 'Manual link'}</span>
-                      <span>{workshop.updatedAt ? `Updated ${formatDate(workshop.updatedAt)}` : 'Update date unavailable'}</span>
-                      {workshop.zoomRecordingPassword ? <span>Passcode saved</span> : null}
-                      <span>{visibilityText(workshop)}</span>
+                    <div className="admin-recording-row__main">
+                      <div className="admin-recording-row__title">
+                        <strong>{workshop.title}</strong>
+                        <StatusBadge>{sourceLabel(workshop)}</StatusBadge>
+                        <StatusBadge tone={sequenceMatch ? 'safe' : 'neutral'}>{sequenceMatch ? `Seq ${sequenceMatch.sequenceNumber}` : 'Unsequenced'}</StatusBadge>
+                      </div>
+                      <p>{[formatDate(workshop.date), workshop.time, workshop.cohortNames.slice(0, 2).join(', ')].filter(Boolean).join(' · ')}</p>
+                      <div className="admin-recording-row__meta">
+                        <span>{workshop.updatedAt ? `Updated ${formatDate(workshop.updatedAt)}` : 'Update date unavailable'}</span>
+                      </div>
+                      {renderRecordingEditForm(workshop, 'published')}
                     </div>
-                    {renderRecordingEditForm(workshop, 'published')}
-                  </div>
-                  <div className="admin-recording-row__actions">
-                    <button className="admin-recording-action" onClick={() => startEditingPublishedRecording(workshop)} type="button">
-                      <Edit3 size={14} />
-                      Edit
-                    </button>
-                    <a className="admin-recording-action admin-recording-action--primary" href={recordingUrlFor(workshop)} rel="noreferrer" target="_blank">
-                      <ExternalLink size={14} />
-                      Open
-                    </a>
-                  </div>
-                </article>
-              ))}
+                    <div className="admin-recording-row__actions">
+                      <button
+                        className={linkedResourceCount > 0 ? 'admin-recording-action admin-recording-action--resources-enabled' : 'admin-recording-action'}
+                        onClick={() => openResourceManager(workshop)}
+                        type="button"
+                      >
+                        <Link2 size={14} />
+                        Resources
+                        {linkedResourceCount > 0 ? <span>{linkedResourceCount}</span> : null}
+                      </button>
+                      <button className="admin-recording-action" onClick={() => startEditingPublishedRecording(workshop)} type="button">
+                        <Edit3 size={14} />
+                        Edit
+                      </button>
+                      <a className="admin-recording-action admin-recording-action--primary" href={recordingUrlFor(workshop)} rel="noreferrer" target="_blank">
+                        <ExternalLink size={14} />
+                        Open
+                      </a>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           ) : (
             <EmptyState />

@@ -1,4 +1,4 @@
-import { CalendarDays, ExternalLink, Lock, Radio, ShieldCheck } from 'lucide-react';
+import { CalendarDays, ExternalLink, History, Lock, Radio, ShieldCheck } from 'lucide-react';
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState, LockedState } from '../components/ScreenStates';
@@ -8,10 +8,17 @@ import { StatusBadge } from '../components/StatusBadge';
 import { StudentScheduleItem, StudentScheduleStatus, useStudentSchedule } from '../features/student/useStudentSchedule';
 
 const pageSize = 25;
+const scheduleViews = ['upcoming', 'past'] as const;
+
+type ScheduleView = (typeof scheduleViews)[number];
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
+}
+
+function asScheduleView(value: string | null): ScheduleView {
+  return value === 'past' ? 'past' : 'upcoming';
 }
 
 function formatDate(value: string | undefined) {
@@ -52,6 +59,14 @@ function getProgramLabel(item: StudentScheduleItem) {
   return item.programKey || item.domainKey;
 }
 
+function getCohortLabel(item: StudentScheduleItem) {
+  return item.cohortNames?.filter(Boolean).join(', ');
+}
+
+function getDedupKey(item: StudentScheduleItem) {
+  return item.title.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 function getScheduledAt(item: StudentScheduleItem) {
   const dateMatch = item.date?.match(/^(\d{4})-(\d{2})-(\d{2})/);
   const timeMatch = item.time?.match(/^(\d{1,2}):(\d{2})/);
@@ -76,6 +91,30 @@ function sortScheduleItems(items: StudentScheduleItem[]) {
   });
 }
 
+function sortPastScheduleItems(items: StudentScheduleItem[]) {
+  return [...items].sort((left, right) => {
+    const leftTime = getScheduledAt(left)?.getTime() ?? 0;
+    const rightTime = getScheduledAt(right)?.getTime() ?? 0;
+    return rightTime - leftTime;
+  });
+}
+
+function dedupePastScheduleItems(items: StudentScheduleItem[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = getDedupKey(item);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function isPastSession(item: StudentScheduleItem, now: number) {
+  if (item.status === 'Completed') return true;
+  const scheduledAt = getScheduledAt(item);
+  return Boolean(scheduledAt && scheduledAt.getTime() < now);
+}
+
 function paginateItems<TItem>(items: TItem[], page: number) {
   const start = (page - 1) * pageSize;
   return items.slice(start, start + pageSize);
@@ -85,18 +124,21 @@ function totalPagesFor(count: number) {
   return Math.max(1, Math.ceil(count / pageSize));
 }
 
-function buildPageLink(page: number) {
+function buildPageLink(page: number, view: ScheduleView) {
   const params = new URLSearchParams();
   params.set('page', String(page));
+  if (view === 'past') params.set('view', view);
   return `?${params.toString()}`;
 }
 
-function ScheduleRow({ item }: { item: StudentScheduleItem }) {
+function ScheduleRow({ item, variant = 'upcoming' }: { item: StudentScheduleItem; variant?: ScheduleView }) {
   const canJoin = hasScheduleAccess(item) && Boolean(item.joinUrl);
   const programLabel = getProgramLabel(item);
+  const cohortLabel = getCohortLabel(item);
+  const isPast = variant === 'past';
 
   return (
-    <article className="student-schedule-row">
+    <article className={isPast ? 'student-schedule-row student-schedule-row--expired' : 'student-schedule-row'}>
       <div className={item.status === 'Live' ? 'student-schedule-row__date student-schedule-row__date--live' : 'student-schedule-row__date'}>
         <CalendarDays size={17} />
         <strong>{formatShortDate(item.date)}</strong>
@@ -106,17 +148,18 @@ function ScheduleRow({ item }: { item: StudentScheduleItem }) {
       <div className="student-schedule-row__main">
         <div className="student-schedule-row__title">
           <strong>{item.title}</strong>
-          <StatusBadge tone={statusTone(item.status)}>{item.status}</StatusBadge>
-          <StatusBadge tone={item.locked ? 'warning' : 'safe'}>{item.locked ? 'Locked' : 'Available'}</StatusBadge>
+          {isPast ? <StatusBadge tone="neutral">Expired</StatusBadge> : <StatusBadge tone={statusTone(item.status)}>{item.status}</StatusBadge>}
+          {!isPast ? <StatusBadge tone={item.locked ? 'warning' : 'safe'}>{item.locked ? 'Locked' : 'Available'}</StatusBadge> : null}
         </div>
         <p>
           {formatDate(item.date)} · {item.time ? `${item.time} IST` : 'Time not set'} · {formatDuration(item.durationMinutes)}
         </p>
         <div className="student-schedule-row__meta">
-          {programLabel ? <span>{programLabel}</span> : null}
-          <span>{formatPrice(item)}</span>
+          {!isPast && programLabel ? <span>{programLabel}</span> : null}
+          {!isPast && cohortLabel ? <span>{cohortLabel}</span> : null}
+          {!isPast ? <span>{formatPrice(item)}</span> : null}
         </div>
-        {item.locked ? (
+        {item.locked && !isPast ? (
           <div className="student-schedule-row__notice">
             <Lock size={15} />
             <span>{item.lockReason ?? 'This session is locked for your account.'}</span>
@@ -124,7 +167,7 @@ function ScheduleRow({ item }: { item: StudentScheduleItem }) {
         ) : null}
       </div>
 
-      <div className="student-schedule-row__actions">
+      {!isPast ? <div className="student-schedule-row__actions">
         {canJoin ? (
           <a className="student-action student-action--primary" href={item.joinUrl} rel="noreferrer" target="_blank">
             <ExternalLink size={16} />
@@ -136,7 +179,7 @@ function ScheduleRow({ item }: { item: StudentScheduleItem }) {
             Pay to unlock
           </a>
         ) : null}
-      </div>
+      </div> : null}
     </article>
   );
 }
@@ -144,16 +187,24 @@ function ScheduleRow({ item }: { item: StudentScheduleItem }) {
 export function StudentSchedulePage() {
   const [searchParams] = useSearchParams();
   const page = asPositiveInteger(searchParams.get('page'), 1);
-  const scheduleQuery = useStudentSchedule({ limit: 500, page: 1 });
-  const scheduleItems = useMemo(() => sortScheduleItems(scheduleQuery.data?.items ?? []), [scheduleQuery.data?.items]);
+  const view = asScheduleView(searchParams.get('view'));
+  const now = Date.now();
+  const scheduleQuery = useStudentSchedule({ includePast: true, limit: 500, page: 1 });
+  const allScheduleItems = useMemo(() => scheduleQuery.data?.items ?? [], [scheduleQuery.data?.items]);
+  const upcomingItems = useMemo(() => sortScheduleItems(allScheduleItems.filter((item) => !isPastSession(item, now))), [allScheduleItems, now]);
+  const pastItems = useMemo(
+    () => dedupePastScheduleItems(sortPastScheduleItems(allScheduleItems.filter((item) => isPastSession(item, now)))),
+    [allScheduleItems, now]
+  );
+  const scheduleItems = view === 'past' ? pastItems : upcomingItems;
   const total = scheduleItems.length;
   const totalPages = totalPagesFor(total);
   const safePage = Math.min(page, totalPages);
   const visibleItems = paginateItems(scheduleItems, safePage);
-  const lockedCount = useMemo(() => scheduleItems.filter((item) => item.locked).length, [scheduleItems]);
-  const liveCount = useMemo(() => scheduleItems.filter((item) => item.status === 'Live').length, [scheduleItems]);
-  const joinableCount = useMemo(() => scheduleItems.filter((item) => hasScheduleAccess(item) && item.joinUrl).length, [scheduleItems]);
-  const nextSession = scheduleItems.find((item) => item.status === 'Live') ?? scheduleItems[0];
+  const lockedCount = useMemo(() => upcomingItems.filter((item) => item.locked).length, [upcomingItems]);
+  const liveCount = useMemo(() => upcomingItems.filter((item) => item.status === 'Live').length, [upcomingItems]);
+  const joinableCount = useMemo(() => upcomingItems.filter((item) => hasScheduleAccess(item) && item.joinUrl).length, [upcomingItems]);
+  const nextSession = upcomingItems.find((item) => item.status === 'Live') ?? upcomingItems[0];
 
   if (scheduleQuery.isLoading) {
     return (
@@ -198,8 +249,8 @@ export function StudentSchedulePage() {
       <div className="student-schedule-summary">
         <article>
           <CalendarDays size={20} />
-          <span>Visible sessions</span>
-          <strong>{total}</strong>
+          <span>Upcoming</span>
+          <strong>{upcomingItems.length}</strong>
         </article>
         <article>
           <Radio size={20} />
@@ -216,12 +267,37 @@ export function StudentSchedulePage() {
           <span>Locked</span>
           <strong>{lockedCount}</strong>
         </article>
+        <article>
+          <History size={20} />
+          <span>Past sessions</span>
+          <strong>{pastItems.length}</strong>
+        </article>
       </div>
 
+      <nav className="student-schedule-tabs" aria-label="Workshop schedule views">
+        <Link className={view === 'upcoming' ? 'student-schedule-tab student-schedule-tab--active' : 'student-schedule-tab'} to="?page=1">
+          <span>Upcoming Workshops</span>
+          <strong>{upcomingItems.length}</strong>
+        </Link>
+        <Link className={view === 'past' ? 'student-schedule-tab student-schedule-tab--active' : 'student-schedule-tab'} to="?view=past&page=1">
+          <span>Past Sessions</span>
+          <strong>{pastItems.length}</strong>
+        </Link>
+      </nav>
+
       {visibleItems.length > 0 ? (
-        <section className="student-schedule-list" aria-label="Visible workshops">
+        <section className="student-schedule-list" aria-label={view === 'past' ? 'Past sessions' : 'Upcoming workshops'}>
+          {view === 'past' ? (
+            <header className="student-schedule-list__header">
+              <div>
+                <span>Expired sessions</span>
+                <strong>For your information</strong>
+              </div>
+              <p>Past sessions are shown only as history. Recordings, when published, remain available from Watch Recordings.</p>
+            </header>
+          ) : null}
           {visibleItems.map((item) => (
-            <ScheduleRow item={item} key={item.id} />
+            <ScheduleRow item={item} key={item.id} variant={view} />
           ))}
         </section>
       ) : (
@@ -230,7 +306,7 @@ export function StudentSchedulePage() {
 
       <nav className="pagination-bar" aria-label="Upcoming workshops pagination">
         {safePage > 1 ? (
-          <Link className="pagination-link" to={buildPageLink(safePage - 1)}>
+          <Link className="pagination-link" to={buildPageLink(safePage - 1, view)}>
             Previous page
           </Link>
         ) : (
@@ -240,7 +316,7 @@ export function StudentSchedulePage() {
           Page {safePage} of {totalPages} · {total} matching
         </span>
         {safePage < totalPages ? (
-          <Link className="pagination-link" to={buildPageLink(safePage + 1)}>
+          <Link className="pagination-link" to={buildPageLink(safePage + 1, view)}>
             Next page
           </Link>
         ) : (
@@ -248,10 +324,10 @@ export function StudentSchedulePage() {
         )}
       </nav>
 
-      {lockedCount > 0 ? <LockedState /> : null}
+      {lockedCount > 0 && view === 'upcoming' ? <LockedState /> : null}
 
       <StateBlock title="Upcoming Workshops access">
-        Only sessions mapped to your account are shown here. Join links and paid access stay protected for eligible learners.
+        Only sessions mapped to your account are shown here. Past sessions are read-only history, while join links and paid access stay protected for eligible learners.
       </StateBlock>
     </div>
   );

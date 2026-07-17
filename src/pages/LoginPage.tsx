@@ -49,15 +49,17 @@ async function resolveSignedInPortal(accessToken: string, requestedPortal: Login
 }
 
 export function LoginPage() {
-  const { isConfigured, isPasswordRecovery, resetPasswordForEmail, session, signInWithPassword, status: authStatus, updatePassword } = useAuth();
+  const { isConfigured, isPasswordRecovery, resetPasswordForEmail, session, signInWithPassword, status: authStatus, updatePassword, verifyPasswordOtpAndUpdatePassword } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const portal: LoginPortal = searchParams.get('portal') === 'admin' ? 'admin' : 'student';
   const urlIntent = searchParams.get('intent') === 'create' ? 'create' : 'forgot';
+  const urlOtpType = searchParams.get('otp_type') === 'invite' ? 'invite' : 'recovery';
   const isPasswordActionRoute = searchParams.get('mode') === 'recovery';
   const canSetPassword = isPasswordActionRoute && isPasswordRecovery && Boolean(session?.access_token);
   const isCheckingPasswordLink = isPasswordActionRoute && authStatus === 'loading';
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => searchParams.get('email') ?? '');
+  const [emailCode, setEmailCode] = useState('');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -99,6 +101,7 @@ export function LoginPage() {
     setRequestIntent(intent);
     setRequestStatus('sending');
     setStatus('idle');
+    setPasswordUpdateStatus('idle');
     setErrorMessage('');
     setNoticeMessage('');
 
@@ -113,12 +116,64 @@ export function LoginPage() {
       setRequestStatus('sent');
       setNoticeMessage(
         intent === 'create'
-          ? 'Password creation link sent. Open the email and return here to create your LMS password.'
-          : 'Password reset link sent. Open the email and return here to set a new password.'
+          ? 'Password email sent. Open it, then use the email code here to create your LMS password.'
+          : 'Password reset email sent. Open it, then use the email code here to set a new password.'
       );
     } catch (error) {
       setRequestStatus('failed');
       setErrorMessage(error instanceof Error ? error.message : 'Unable to send password email.');
+    }
+  }
+
+  async function handleEmailCodePasswordUpdate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalizedEmail = email.trim();
+    const normalizedCode = emailCode.trim().replace(/\s+/g, '');
+    setPasswordUpdateStatus('updating');
+    setErrorMessage('');
+    setNoticeMessage('');
+
+    if (!normalizedEmail) {
+      setPasswordUpdateStatus('failed');
+      setErrorMessage('Enter your registered LMS email.');
+      return;
+    }
+
+    if (!normalizedCode) {
+      setPasswordUpdateStatus('failed');
+      setErrorMessage('Enter the one-time code from your latest password email.');
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      setPasswordUpdateStatus('failed');
+      setErrorMessage('Password must be at least 8 characters.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordUpdateStatus('failed');
+      setErrorMessage('The password and confirmation do not match.');
+      return;
+    }
+
+    try {
+      const session = await verifyPasswordOtpAndUpdatePassword(normalizedEmail, normalizedCode, urlOtpType, newPassword);
+      setPasswordUpdateStatus('updated');
+      setEmailCode('');
+      setNewPassword('');
+      setConfirmPassword('');
+
+      if (session?.access_token) {
+        const resolvedPortal = await resolveSignedInPortal(session.access_token, portal);
+        navigate(`/${resolvedPortal}`, { replace: true });
+        return;
+      }
+
+      setNoticeMessage('Password updated. Sign in with your new password to continue.');
+    } catch (error) {
+      setPasswordUpdateStatus('failed');
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to verify the email code.');
     }
   }
 
@@ -183,9 +238,90 @@ export function LoginPage() {
               Please wait while we verify your password setup link.
             </StateBlock>
           ) : isPasswordActionRoute && !canSetPassword ? (
-            <StateBlock title="Password link expired" tone="warning">
-              This password setup link is invalid or has expired. Request a new password link from the login screen.
-            </StateBlock>
+            <div className="auth-recovery-request">
+              <StateBlock title={portal === 'student' ? 'Use your email code' : 'Password link expired'} tone="warning">
+                {portal === 'student'
+                  ? 'Enter the one-time code from your latest password email. Use your exact registered LMS email. If the code fails, send a fresh password email and use only the newest code.'
+                  : 'This password setup link is invalid, expired, or could not create a secure session. Request a fresh link with your registered email.'}
+              </StateBlock>
+
+              {portal === 'student' ? (
+                <form className="auth-form" onSubmit={handleEmailCodePasswordUpdate}>
+                  <FieldLabel htmlFor="fresh-password-email" label="Registered LMS email" help="Use the same email address added to your LMS student profile." />
+                  <div className="auth-input-shell">
+                    <Mail size={17} />
+                    <input
+                      id="fresh-password-email"
+                      type="email"
+                      value={email}
+                      disabled={!isConfigured || requestStatus === 'sending' || passwordUpdateStatus === 'updating'}
+                      required
+                      onChange={(event) => setEmail(event.target.value)}
+                      placeholder="Enter your registered email"
+                    />
+                  </div>
+
+                  <FieldLabel htmlFor="email-code" label="One-time email code" help="Use the code from your latest password email. Request a fresh email if the code is old." />
+                  <div className="auth-input-shell">
+                    <KeyRound size={17} />
+                    <input
+                      id="email-code"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      value={emailCode}
+                      disabled={!isConfigured || passwordUpdateStatus === 'updating'}
+                      required
+                      maxLength={12}
+                      onChange={(event) => setEmailCode(event.target.value)}
+                      placeholder="Enter email code"
+                    />
+                  </div>
+
+                  <FieldLabel htmlFor="otp-new-password" label="New password" help="Create a password with at least 8 characters." />
+                  <PasswordInput
+                    disabled={!isConfigured || passwordUpdateStatus === 'updating'}
+                    icon={<LockKeyhole size={17} />}
+                    id="otp-new-password"
+                    onToggle={() => setShowNewPassword((value) => !value)}
+                    placeholder="Create a secure password"
+                    show={showNewPassword}
+                    value={newPassword}
+                    onChange={setNewPassword}
+                  />
+
+                  <FieldLabel htmlFor="otp-confirm-password" label="Confirm password" help="Re-enter the same password to avoid typing mistakes." />
+                  <PasswordInput
+                    disabled={!isConfigured || passwordUpdateStatus === 'updating'}
+                    icon={<ShieldCheck size={17} />}
+                    id="otp-confirm-password"
+                    onToggle={() => setShowConfirmPassword((value) => !value)}
+                    placeholder="Confirm your new password"
+                    show={showConfirmPassword}
+                    value={confirmPassword}
+                    onChange={setConfirmPassword}
+                  />
+
+                  <button className="auth-submit" type="submit" disabled={!isConfigured || passwordUpdateStatus === 'updating'}>
+                    {passwordUpdateStatus === 'updating' ? (
+                      <>
+                        Verifying code
+                        <Loader2 className="auth-spin" size={17} />
+                      </>
+                    ) : (
+                      <>
+                        Verify code and save password
+                        <ArrowRight size={17} />
+                      </>
+                    )}
+                  </button>
+
+                  <button className="auth-create-action auth-create-action--compact" type="button" disabled={!isConfigured || requestStatus === 'sending'} onClick={() => void handlePasswordEmail(urlIntent)}>
+                    {requestStatus === 'sending' ? 'Sending fresh password email' : 'Send fresh password email'}
+                  </button>
+                </form>
+              ) : null}
+            </div>
           ) : canSetPassword && passwordUpdateStatus !== 'updated' ? (
             <form className="auth-form" onSubmit={handlePasswordUpdate}>
               <FieldLabel htmlFor="new-password" label="New password" help="Create a password with at least 8 characters." />
@@ -277,12 +413,12 @@ export function LoginPage() {
             {portal === 'student' ? (
               <p>
                 <HelpCircle size={16} />
-                First-time users can create a password with their registered LMS email.
+                Use the exact email registered in LMS. Alternate or mistyped emails cannot create your password.
               </p>
             ) : null}
             <p>
               <CheckCircle2 size={16} />
-              Secure password links expire automatically for your account protection.
+              Only use the latest password email. Older links and codes can expire after a fresh email is sent.
             </p>
           </div>
 

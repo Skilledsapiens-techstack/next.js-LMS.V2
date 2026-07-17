@@ -1,0 +1,11 @@
+Skilled Sapiens LMS deployment package
+Build date: 2026-07-16
+
+Scope:
+- Improves Admin Students Paste Table row editor layout.
+- Makes the right-side row editor taller and independently scrollable.
+- Keeps upload/paste/import workflow logic unchanged.
+
+Verification:
+- npm run lint
+- npm run build

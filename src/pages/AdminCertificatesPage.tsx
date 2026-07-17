@@ -29,6 +29,7 @@ import {
   useSaveCertificateProgramSetting
 } from '../features/admin/useAdminCertificates';
 import { AdminProgram, useAdminPrograms } from '../features/admin/useAdminPrograms';
+import { AdminProjectRole, useAdminProjectRoles } from '../features/admin/useAdminProjects';
 import { AdminStudent, useAdminStudents } from '../features/admin/useAdminStudents';
 
 const certificateStatusOptions: Array<AdminCertificateStatus | 'all'> = ['all', 'draft', 'issued', 'revoked'];
@@ -488,6 +489,7 @@ function ManualCertificateIssueForm({
   programKey,
   programName,
   programs,
+  projectRoles,
   selectedStudentId,
   setCertificateType,
   setDurationWeeks,
@@ -519,6 +521,7 @@ function ManualCertificateIssueForm({
   programKey: string;
   programName: string;
   programs: AdminProgram[];
+  projectRoles: AdminProjectRole[];
   selectedStudentId: string;
   setCertificateType: (value: AdminCertificateType) => void;
   setDurationWeeks: (value: number) => void;
@@ -543,6 +546,7 @@ function ManualCertificateIssueForm({
 }) {
   const selectedProgram = programs.find((program) => program.programKey === programKey);
   const resolvedProgramName = selectedProgram?.name ?? programName;
+  const sortedProjectRoles = useMemo(() => [...projectRoles].sort((a, b) => a.name.localeCompare(b.name)), [projectRoles]);
   const hasStudent = studentSource === 'manual' ? manualStudentName.trim() && manualStudentEmail.trim() : selectedStudentId;
   const canSubmit =
     Boolean(hasStudent) &&
@@ -641,7 +645,14 @@ function ManualCertificateIssueForm({
             </label>
             <label className="certificate-field">
               <span>Project role *</span>
-              <input onChange={(event) => setProjectRole(event.target.value)} placeholder="Example: Marketing, Finance, HR" value={values.projectRole} />
+              <select value={values.projectRole} onChange={(event) => setProjectRole(event.target.value)}>
+                <option value="">Select active project role</option>
+                {sortedProjectRoles.map((role) => (
+                  <option key={role.id} value={role.name}>
+                    {[role.name, role.category].filter(Boolean).join(' · ')}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="certificate-field">
               <span>Start date *</span>
@@ -733,6 +744,7 @@ export function AdminCertificatesPage() {
   const revokeCertificateMutation = useRevokeAdminCertificate();
   const saveSettingMutation = useSaveCertificateProgramSetting();
   const programsQuery = useAdminPrograms({ limit: 100, page: 1, status: 'active' });
+  const projectRolesQuery = useAdminProjectRoles({ enabled: canIssueCertificates && activeTab === 'manual' && manualCertificateType === 'live_project', limit: 500, page: 1, status: 'active' });
   const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, status: 'all' });
   const cohortsPageTwoQuery = useAdminCohorts({ enabled: cohortsPageOneQuery.data?.hasNextPage === true, limit: 100, page: 2, status: 'all' });
   const cohortsPageThreeQuery = useAdminCohorts({ enabled: cohortsPageTwoQuery.data?.hasNextPage === true, limit: 100, page: 3, status: 'all' });
@@ -746,6 +758,7 @@ export function AdminCertificatesPage() {
   });
 
   const programs = programsQuery.data?.items ?? [];
+  const projectRoles = projectRolesQuery.data?.items ?? [];
   const allCohorts = useMemo(
     () => dedupeCohorts([cohortsPageOneQuery.data?.items, cohortsPageTwoQuery.data?.items, cohortsPageThreeQuery.data?.items]),
     [cohortsPageOneQuery.data?.items, cohortsPageTwoQuery.data?.items, cohortsPageThreeQuery.data?.items]
@@ -1143,6 +1156,7 @@ export function AdminCertificatesPage() {
           programKey={manualProgramKey}
           programName={manualProgramName}
           programs={programs}
+          projectRoles={projectRoles}
           selectedStudentId={manualSelectedStudentId}
           setCertificateType={setManualCertificateType}
           setDurationWeeks={setManualDurationWeeks}

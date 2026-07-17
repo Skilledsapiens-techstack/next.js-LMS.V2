@@ -1,0 +1,21 @@
+Hostinger deployment package - Recording Sequence section-level fix
+Build date: 16 Jul 2026
+
+Changes included:
+- Fixed Add sequence for section-based sequencing.
+- Sequence uniqueness is now Program + Section + Seq #.
+- Seq 1 can now be used separately in Induction, Core Modules, Placement Mentorship, and Other Workshops.
+- Sequence save feedback now appears directly under the Add sequence CTA.
+
+Supabase migration applied:
+- 20260716103324_recording_sequence_section_unique.sql
+
+QA completed:
+- npm run lint
+- npm run build
+- npm test -- --runInBand
+- Remote DB index verified with supabase db query --linked
+
+Deploy:
+- Upload/extract this folder contents into Hostinger public_html.
+- Keep the included .htaccess file.

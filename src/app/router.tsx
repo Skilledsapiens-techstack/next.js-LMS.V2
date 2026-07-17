@@ -10,6 +10,7 @@ import { adminNavItems, studentNavItems } from './routeConfig';
 const AdminDashboardPage = lazy(() => import('../pages/AdminDashboardPage').then((module) => ({ default: module.AdminDashboardPage })));
 const AdminAnnouncementsPage = lazy(() => import('../pages/AdminAnnouncementsPage').then((module) => ({ default: module.AdminAnnouncementsPage })));
 const AdminStudentsPage = lazy(() => import('../pages/AdminStudentsPage').then((module) => ({ default: module.AdminStudentsPage })));
+const AdminStudentPreviewPage = lazy(() => import('../pages/AdminStudentPreviewPage').then((module) => ({ default: module.AdminStudentPreviewPage })));
 const AdminCohortsPage = lazy(() => import('../pages/AdminCohortsPage').then((module) => ({ default: module.AdminCohortsPage })));
 const AdminProgramsPage = lazy(() => import('../pages/AdminProgramsPage').then((module) => ({ default: module.AdminProgramsPage })));
 const AdminProjectsPage = lazy(() => import('../pages/AdminProjectsPage').then((module) => ({ default: module.AdminProjectsPage })));
@@ -300,6 +301,16 @@ export const router = createBrowserRouter([
               <PageLoader>
                 <AdminFeaturePage moduleId="students">
                   <AdminStudentsPage />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'student-preview/:studentId',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="students">
+                  <AdminStudentPreviewPage />
                 </AdminFeaturePage>
               </PageLoader>
             )

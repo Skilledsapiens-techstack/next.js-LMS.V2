@@ -15,6 +15,7 @@ type AuthContextValue = {
   signOut: () => Promise<void>;
   status: AuthStatus;
   updatePassword: (password: string) => Promise<void>;
+  verifyPasswordOtpAndUpdatePassword: (email: string, token: string, preferredType: 'invite' | 'recovery', password: string) => Promise<Session | null>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -237,6 +238,51 @@ export function AuthProvider({ children }: AuthProviderProps) {
     [supabase]
   );
 
+  const verifyPasswordOtpAndUpdatePassword = useCallback(
+    async (email: string, token: string, preferredType: 'invite' | 'recovery', password: string) => {
+      if (!supabase) {
+        throw new Error('Portal authentication is not configured for this environment.');
+      }
+
+      const types: Array<'invite' | 'recovery'> = preferredType === 'invite' ? ['invite', 'recovery'] : ['recovery', 'invite'];
+      let lastError: unknown = null;
+      let nextSession: Session | null = null;
+
+      for (const type of types) {
+        const { data, error } = await supabase.auth.verifyOtp({
+          email,
+          token,
+          type
+        });
+
+        if (!error) {
+          nextSession = data.session;
+          break;
+        }
+
+        lastError = error;
+      }
+
+      if (!nextSession) {
+        throw lastError instanceof Error ? lastError : new Error('The email code is invalid or expired. Request a fresh password email and try again.');
+      }
+
+      setSession(nextSession);
+      setStatus('authenticated');
+      setIsPasswordRecovery(true);
+
+      const { error: updateError } = await supabase.auth.updateUser({ password });
+      if (updateError) {
+        throw updateError;
+      }
+
+      setIsPasswordRecovery(false);
+      forgetPasswordActionSession();
+      return nextSession;
+    },
+    [supabase]
+  );
+
   const signOut = useCallback(async () => {
     if (!supabase) {
       return;
@@ -257,9 +303,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
       signInWithPassword,
       signOut,
       status,
-      updatePassword
+      updatePassword,
+      verifyPasswordOtpAndUpdatePassword
     }),
-    [isConfigured, isPasswordRecovery, resetPasswordForEmail, session, signInWithPassword, signOut, status, updatePassword]
+    [isConfigured, isPasswordRecovery, resetPasswordForEmail, session, signInWithPassword, signOut, status, updatePassword, verifyPasswordOtpAndUpdatePassword]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

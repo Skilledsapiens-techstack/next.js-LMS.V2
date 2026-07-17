@@ -1,0 +1,18 @@
+Hostinger deployment package - Recording resources save fix
+
+Deploy by extracting this package into the Hostinger public_html directory.
+
+Included fix:
+- Admin Recording > Published > Resources selections now persist.
+- Student Watch Recordings related resources can render after admin linking.
+- Recording-resource matching now checks both recording id and workshopId for safer student-side linking.
+
+Supabase migration applied remotely:
+- 20260715084934_grant_recording_resource_policy_helpers.sql
+
+Verification completed:
+- Supabase RLS insert test passed inside a rolled-back transaction.
+- npm run lint
+- git diff --check
+- npm test -- --runInBand
+- npm run build
