@@ -1,19 +1,24 @@
-import { Ban, BookOpen, Eye, Layers3, Pencil, Plus, RefreshCw, Search, ShieldCheck, X } from 'lucide-react';
-import type { FormEvent } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Ban, BookOpen, Bold, Eye, Italic, Layers3, Link as LinkIcon, List, Pencil, Plus, RefreshCw, Save, Search, ShieldCheck, Underline, X } from 'lucide-react';
+import type { FormEvent, MouseEvent as ReactMouseEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { DataColumn, DataPanel } from '../components/DataPanel';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
+import { ProjectRichText } from '../components/ProjectRichText';
 import { StatusBadge } from '../components/StatusBadge';
 import {
   AdminProgram,
   AdminProgramImpact,
   AdminProgramStatus,
   AdminProgramWritePayload,
+  AdminStudentGuidanceContent,
+  AdminStudentGuidanceContentStatus,
   useAdminProgramImpact,
   useAdminPrograms,
+  useAdminStudentGuidanceContent,
   useCreateAdminProgram,
+  useUpdateAdminStudentGuidanceContent,
   useUpdateAdminProgram,
   useUpdateAdminProgramStatus
 } from '../features/admin/useAdminPrograms';
@@ -435,6 +440,227 @@ function ProgramStatusModal({
   );
 }
 
+function cleanGuidanceHtml(value: string) {
+  return value
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, '')
+    .replace(/\s(on\w+)=("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s(href)=("|')\s*javascript:[^"']*\2/gi, ' href="#"')
+    .trim();
+}
+
+function GuidanceRichTextEditor({
+  html,
+  onChange
+}: {
+  html: string;
+  onChange: (html: string) => void;
+}) {
+  const editorRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (editor && editor.innerHTML !== html) {
+      editor.innerHTML = html;
+    }
+  }, [html]);
+
+  function syncContent() {
+    onChange(cleanGuidanceHtml(editorRef.current?.innerHTML ?? ''));
+  }
+
+  function runCommand(event: ReactMouseEvent<HTMLButtonElement>, command: string, value?: string) {
+    event.preventDefault();
+    editorRef.current?.focus();
+    document.execCommand(command, false, value);
+    syncContent();
+  }
+
+  function addLink(event: ReactMouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    const url = window.prompt('Paste a full https:// link');
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url.trim())) {
+      window.alert('Use a full http:// or https:// link.');
+      return;
+    }
+    runCommand(event, 'createLink', url.trim());
+  }
+
+  return (
+    <div className="guidance-rich-text">
+      <div className="guidance-rich-text__toolbar" aria-label="Guidance formatting tools" role="toolbar">
+        <button aria-label="Bold" onMouseDown={(event) => runCommand(event, 'bold')} type="button">
+          <Bold size={16} />
+        </button>
+        <button aria-label="Italic" onMouseDown={(event) => runCommand(event, 'italic')} type="button">
+          <Italic size={16} />
+        </button>
+        <button aria-label="Underline" onMouseDown={(event) => runCommand(event, 'underline')} type="button">
+          <Underline size={16} />
+        </button>
+        <button aria-label="Bullet list" onMouseDown={(event) => runCommand(event, 'insertUnorderedList')} type="button">
+          <List size={16} />
+        </button>
+        <button aria-label="Add link" onMouseDown={addLink} type="button">
+          <LinkIcon size={16} />
+        </button>
+      </div>
+      <div
+        aria-label="Guidance reader content"
+        className="guidance-rich-text__editor"
+        contentEditable
+        onBlur={syncContent}
+        onInput={syncContent}
+        ref={editorRef}
+        role="textbox"
+        suppressContentEditableWarning
+      />
+    </div>
+  );
+}
+
+function GuidanceContentCard({
+  item,
+  onSaved
+}: {
+  item: AdminStudentGuidanceContent;
+  onSaved: (message: string) => void;
+}) {
+  const updateGuidance = useUpdateAdminStudentGuidanceContent();
+  const [title, setTitle] = useState(item.title);
+  const [summary, setSummary] = useState(item.summary ?? '');
+  const [content, setContent] = useState(item.content ?? '');
+  const [status, setStatus] = useState<AdminStudentGuidanceContentStatus>(item.status);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setTitle(item.title);
+    setSummary(item.summary ?? '');
+    setContent(item.content ?? '');
+    setStatus(item.status);
+    setError('');
+  }, [item]);
+
+  const isDirty = title !== item.title || summary !== (item.summary ?? '') || content !== (item.content ?? '') || status !== item.status;
+  const label = item.contentKey === 'program_structure' ? 'Program structure reader' : 'Certificate reader';
+
+  function resetForm() {
+    setTitle(item.title);
+    setSummary(item.summary ?? '');
+    setContent(item.content ?? '');
+    setStatus(item.status);
+    setError('');
+  }
+
+  async function saveGuidance() {
+    const nextTitle = title.trim();
+    if (!nextTitle) {
+      setError('Title is required.');
+      return;
+    }
+
+    try {
+      setError('');
+      await updateGuidance.mutateAsync({
+        body: {
+          audience: 'leadership',
+          content: cleanGuidanceHtml(content),
+          sortOrder: item.sortOrder,
+          status,
+          summary: summary.trim() || null,
+          title: nextTitle
+        },
+        contentId: item.id
+      });
+      onSaved(`${label} updated successfully.`);
+    } catch (saveError) {
+      setError(readableError(saveError, `${label} could not be saved.`));
+    }
+  }
+
+  return (
+    <article className="program-guidance-card">
+      <header className="program-guidance-card__header">
+        <div>
+          <span className="program-modal-eyebrow">{label}</span>
+          <h3>{item.title}</h3>
+        </div>
+        <StatusBadge tone={status === 'active' ? 'safe' : 'warning'}>{status}</StatusBadge>
+      </header>
+      {error ? <div className="auth-alert auth-alert--error">{error}</div> : null}
+      <div className="program-guidance-form">
+        <label>
+          <span>CTA title</span>
+          <input value={title} onChange={(event) => setTitle(event.target.value)} />
+        </label>
+        <label>
+          <span>Short description</span>
+          <input value={summary} onChange={(event) => setSummary(event.target.value)} />
+        </label>
+        <label>
+          <span>Status</span>
+          <select value={status} onChange={(event) => setStatus(event.target.value as AdminStudentGuidanceContentStatus)}>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </label>
+        <div className="program-guidance-form__wide">
+          <span>Full-screen reader content</span>
+          <GuidanceRichTextEditor html={content} onChange={setContent} />
+        </div>
+      </div>
+      <div className="program-guidance-preview">
+        <span>Student preview</span>
+        <ProjectRichText className="program-guidance-preview__copy" html={content} />
+      </div>
+      <footer className="program-guidance-card__footer">
+        <button className="segmented-button" disabled={!isDirty || updateGuidance.isPending} onClick={resetForm} type="button">
+          Reset
+        </button>
+        <button className="segmented-button segmented-button--danger" disabled={!isDirty || updateGuidance.isPending} onClick={() => void saveGuidance()} type="button">
+          <Save size={15} />
+          {updateGuidance.isPending ? 'Saving...' : 'Save guidance'}
+        </button>
+      </footer>
+    </article>
+  );
+}
+
+function ProgramGuidanceSection({ onNotice }: { onNotice: (message: string) => void }) {
+  const guidanceQuery = useAdminStudentGuidanceContent();
+  const items = guidanceQuery.data?.items ?? [];
+
+  return (
+    <section className="program-guidance-panel">
+      <header className="program-guidance-panel__header">
+        <div>
+          <span className="program-modal-eyebrow">Student clarity</span>
+          <h2>Leadership program guidance</h2>
+          <p>Controls the two full-screen explainers shown to leadership program students on the dashboard.</p>
+        </div>
+        <button className="segmented-button" disabled={guidanceQuery.isFetching} onClick={() => void guidanceQuery.refetch()} type="button">
+          <RefreshCw size={15} />
+          {guidanceQuery.isFetching ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </header>
+      {guidanceQuery.isError ? (
+        <div className="auth-alert auth-alert--error">Guidance content could not be loaded. Program records are unchanged.</div>
+      ) : guidanceQuery.isLoading ? (
+        <LoadingState />
+      ) : items.length > 0 ? (
+        <div className="program-guidance-grid">
+          {items.map((item) => (
+            <GuidanceContentCard item={item} key={item.id} onSaved={onNotice} />
+          ))}
+        </div>
+      ) : (
+        <div className="auth-alert auth-alert--warning">Guidance content has not been seeded yet.</div>
+      )}
+    </section>
+  );
+}
+
 export function AdminProgramsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const page = asPositiveInteger(searchParams.get('page'), 1);
@@ -590,6 +816,8 @@ export function AdminProgramsPage() {
           <strong>{domainCount}</strong>
         </article>
       </div>
+
+      <ProgramGuidanceSection onNotice={setNotice} />
 
       <section className="filter-bar admin-program-filter-bar" aria-label="Program admin filters">
         <form className="filter-search filter-search--form admin-program-search" onSubmit={(event) => event.preventDefault()}>

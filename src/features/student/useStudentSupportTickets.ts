@@ -79,6 +79,15 @@ export type StudentSupportTicketReplyInput = {
   ticketId: string;
 };
 
+export type StudentSupportContactSettings = {
+  settingKey: string;
+  status: 'active' | 'inactive';
+  supportContactNote: string;
+  supportContactTitle: string;
+  supportEmail: string;
+  updatedAt?: string | null;
+};
+
 export type StudentSupportTicketsQuery = {
   limit?: number;
   page?: number;
@@ -136,6 +145,20 @@ export function useStudentSupportFaqs() {
         query: { limit: 100 }
       }),
     queryKey: ['student-support-faqs', accessToken],
+    staleTime: 5 * 60_000
+  });
+}
+
+export function useStudentSupportSettings() {
+  const { accessToken } = useAuth();
+
+  return useQuery({
+    enabled: Boolean(accessToken),
+    queryFn: () =>
+      apiGet<StudentSupportContactSettings>('/students/me/support-settings', {
+        accessToken: accessToken ?? undefined
+      }),
+    queryKey: ['student-support-settings', accessToken],
     staleTime: 5 * 60_000
   });
 }

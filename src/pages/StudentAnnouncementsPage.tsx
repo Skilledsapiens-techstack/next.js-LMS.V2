@@ -88,9 +88,6 @@ function matchesFilters(announcement: StudentAnnouncement, filters: FilterState)
 }
 
 function AnnouncementCard({ announcement }: { announcement: StudentAnnouncement }) {
-  const cohorts = announcement.cohortNames.length > 0 ? announcement.cohortNames.join(', ') : '';
-  const programKeys = announcement.programKeys.length > 0 ? announcement.programKeys.join(', ') : '';
-  const audience = [cohorts, programKeys].filter(Boolean).join(' · ');
   const dateWindow =
     announcement.startDate || announcement.endDate ? `${formatDate(announcement.startDate)} - ${formatDate(announcement.endDate)}` : formatDate(announcement.updatedAt);
 
@@ -110,7 +107,6 @@ function AnnouncementCard({ announcement }: { announcement: StudentAnnouncement 
         <AnnouncementRichText text={announcement.message} />
         <div className="announcement-card__footer">
           <span>{dateWindow}</span>
-          {audience ? <span>{audience}</span> : null}
         </div>
       </div>
 

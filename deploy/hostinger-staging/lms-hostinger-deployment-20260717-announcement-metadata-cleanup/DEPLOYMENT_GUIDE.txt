@@ -1,0 +1,27 @@
+Skilled Sapiens LMS - Hostinger Deployment Package
+Date: 17 Jul 2026
+Package: lms-hostinger-deployment-20260717-announcement-metadata-cleanup
+
+What to upload to Hostinger
+1. Open the public_html folder inside this package.
+2. Upload/extract the CONTENTS of public_html into the Hostinger public_html directory.
+3. Do not upload this guide file, supabase-functions, or supabase-migrations into public_html.
+
+Included frontend updates
+- Student announcements no longer show cohort/program metadata codes to students.
+- Announcement targeting and filters remain unchanged.
+- Includes the latest student dashboard, recordings, schedule, resources, and guidance UI changes already built into the current production bundle.
+
+Supabase notes
+- The supabase-functions folder includes the current certificate-issuance function source for traceability.
+- The certificate-issuance function was already deployed separately to Supabase for the "Download Your Certificate" email link label.
+- The supabase-migrations folder is included for deployment tracking only.
+- Do not upload Supabase files to Hostinger public_html.
+
+Verification completed before packaging
+- npm run lint: passed
+- npm run build: passed
+
+Rollback note
+- Keep a backup of the currently live Hostinger public_html before replacing files.
+- If rollback is needed, restore the previous public_html backup.

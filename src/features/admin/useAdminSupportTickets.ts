@@ -85,6 +85,16 @@ export type AdminSupportTicketReplyInput = {
   visibility: AdminSupportMessageVisibility;
 };
 
+export type AdminSupportContactSettings = {
+  settingKey: string;
+  status: 'active' | 'inactive';
+  supportContactNote: string;
+  supportContactTitle: string;
+  supportEmail: string;
+  updatedAt?: string | null;
+  updatedBy?: string | null;
+};
+
 export type AdminSupportTicketsQuery = {
   category?: string;
   limit?: number;
@@ -142,6 +152,40 @@ export function useAdminSupportFaqs() {
       }),
     queryKey: ['admin-support-faqs', accessToken],
     staleTime: 5 * 60_000
+  });
+}
+
+export function useAdminSupportSettings() {
+  const { accessToken } = useAuth();
+
+  return useQuery({
+    enabled: Boolean(accessToken),
+    queryFn: () =>
+      apiGet<AdminSupportContactSettings>('/admins/support-settings', {
+        accessToken: accessToken ?? undefined
+      }),
+    queryKey: ['admin-support-settings', accessToken],
+    staleTime: 5 * 60_000
+  });
+}
+
+export function useUpdateAdminSupportSettings() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: Partial<Pick<AdminSupportContactSettings, 'supportContactNote' | 'supportContactTitle' | 'supportEmail'>>) =>
+      apiPatch<{ message: string; settings: AdminSupportContactSettings }, Partial<Pick<AdminSupportContactSettings, 'supportContactNote' | 'supportContactTitle' | 'supportEmail'>>>(
+        '/admins/support-settings/student-contact',
+        {
+          accessToken: accessToken ?? undefined,
+          body
+        }
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-support-settings'] });
+      void queryClient.invalidateQueries({ queryKey: ['student-support-settings'] });
+    }
   });
 }
 

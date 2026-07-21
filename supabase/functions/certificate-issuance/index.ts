@@ -14,6 +14,7 @@ const TEMPLATE_BUCKET = 'certificate-templates';
 const TEMP_BUCKET = 'temporary-certificates';
 const PDF_TTL_HOURS = 24;
 const REGENERATION_COOLDOWN_MINUTES = 15;
+const STUDENT_REGENERATION_COOLDOWN_MINUTES = 24 * 60;
 const VERIFY_BASE_URL = Deno.env.get('CERTIFICATE_VERIFY_BASE_URL') ?? 'https://skilledsapiens.com/verify-your-certificate/';
 const SLIDES_WEBAPP_URL = Deno.env.get('CERTIFICATE_SLIDES_WEBAPP_URL') ?? '';
 const SLIDES_SECRET = Deno.env.get('CERTIFICATE_SLIDES_SECRET') ?? '';
@@ -49,6 +50,24 @@ function richPlainTextToHtml(value: string) {
     .filter(Boolean)
     .map((paragraph) => `<p>${escHtml(paragraph).replace(/\n/g, '<br>')}</p>`)
     .join('\n');
+}
+
+function labelCertificateDownloadLink(html: string, signedUrl: string) {
+  const escapedUrl = escHtml(signedUrl);
+  if (!escapedUrl) return html;
+  const downloadLink = `<a href="${escapedUrl}" target="_blank" rel="noopener noreferrer">Download Your Certificate</a>`;
+  return html.split(escapedUrl).join(downloadLink);
+}
+
+function shouldMarkGenerationFailed(error: unknown) {
+  const message = error instanceof Error ? error.message : '';
+  return ![
+    'A fresh certificate PDF was already generated in the last 24 hours.',
+    'Certificate issuance permission is required.',
+    'Certificate was not found.',
+    'Revoked certificates cannot be regenerated.',
+    'You do not have access to this certificate.'
+  ].some((safeMessage) => message.startsWith(safeMessage));
 }
 
 function htmlToPlainText(value: string) {
@@ -341,7 +360,7 @@ Verify anytime: {{verification_url}}
 
 Regards,
 Skilled Sapiens Team`;
-  const html = richPlainTextToHtml(fillVars(text(template?.body) || bodyFallback, vars));
+  const html = labelCertificateDownloadLink(richPlainTextToHtml(fillVars(text(template?.body) || bodyFallback, vars)), signedUrl);
   const attachment = bytesToBase64(pdfBytes);
   const response = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
@@ -387,10 +406,11 @@ async function generateOne(supabase: ReturnType<typeof createClient>, certificat
 
   const adminAccess = await getAdminAccess(supabase, actor);
   const actorCanViewAsAdmin = canViewCertificates(adminAccess);
+  const actorCanIssueAsAdmin = canIssueCertificates(adminAccess);
   if (!actorCanViewAsAdmin && text(certificate.student_email).toLowerCase() !== actor.email) {
     throw new Error('You do not have access to this certificate.');
   }
-  if ((options.force || options.sendEmail) && !canIssueCertificates(adminAccess)) {
+  if ((options.force || options.sendEmail) && !actorCanIssueAsAdmin) {
     throw new Error('Certificate issuance permission is required.');
   }
 
@@ -421,6 +441,10 @@ async function generateOne(supabase: ReturnType<typeof createClient>, certificat
       updated_at: reusedCertificate.updated_at
     }).eq('id', certificateId);
     return { certificate: reusedCertificate, expiresAt: certificate.pdf_expires_at, signedUrl: signed.signedUrl, status: 'reused' };
+  }
+
+  if (!actorCanIssueAsAdmin && !options.force && minutesAgo(certificate.pdf_generated_at) < STUDENT_REGENERATION_COOLDOWN_MINUTES) {
+    throw new Error('A fresh certificate PDF was already generated in the last 24 hours. Please try again later or contact your program coordinator.');
   }
 
   if (options.force && minutesAgo(certificate.pdf_generated_at) < REGENERATION_COOLDOWN_MINUTES) {
@@ -535,11 +559,13 @@ Deno.serve(async (request) => {
           sendEmail: body.sendEmail === true
         }));
       } catch (error) {
-        await supabase.from('certificates').update({
-          generation_error: error instanceof Error ? error.message : 'Certificate generation failed.',
-          generation_status: 'failed',
-          updated_at: new Date().toISOString()
-        }).eq('id', certificateId);
+        if (shouldMarkGenerationFailed(error)) {
+          await supabase.from('certificates').update({
+            generation_error: error instanceof Error ? error.message : 'Certificate generation failed.',
+            generation_status: 'failed',
+            updated_at: new Date().toISOString()
+          }).eq('id', certificateId);
+        }
         results.push({ certificateId, error: error instanceof Error ? error.message : 'Certificate generation failed.', status: 'failed' });
       }
     }

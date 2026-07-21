@@ -1,4 +1,4 @@
-import { BookOpenCheck, HelpCircle, LifeBuoy, MessageSquareText, RefreshCw, Send, ShieldCheck } from 'lucide-react';
+import { BookOpenCheck, HelpCircle, LifeBuoy, Mail, MessageSquareText, RefreshCw, Send, ShieldCheck } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ErrorState, LoadingState } from '../components/ScreenStates';
@@ -12,6 +12,7 @@ import {
   useCreateStudentSupportTicket,
   useStudentSupportCategories,
   useStudentSupportFaqs,
+  useStudentSupportSettings,
   useStudentSupportTickets
 } from '../features/student/useStudentSupportTickets';
 
@@ -139,6 +140,34 @@ function SupportFaqs({ faqs, isLoading }: { faqs: StudentSupportFaq[]; isLoading
           </div>
         </article>
       )}
+    </section>
+  );
+}
+
+function SupportContactCard() {
+  const settingsQuery = useStudentSupportSettings();
+  const settings = settingsQuery.data;
+  const supportEmail = settings?.supportEmail.trim() ?? '';
+  const contactTitle = settings?.supportContactTitle.trim() || 'Need help from the support team?';
+  const contactNote = settings?.supportContactNote.trim() || 'Email us with your registered LMS email, module name, and the issue you are facing.';
+
+  if (!supportEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail)) return null;
+
+  return (
+    <section className="support-contact-card" aria-label="Support contact email">
+      <div className="support-contact-card__icon">
+        <Mail size={20} />
+      </div>
+      <div className="support-contact-card__copy">
+        <span className="eyebrow">Direct support</span>
+        <h2>{contactTitle}</h2>
+        <p>{contactNote}</p>
+        <strong>{supportEmail}</strong>
+      </div>
+      <a className="student-action student-action--secondary support-contact-card__action" href={`mailto:${supportEmail}`}>
+        <Mail size={16} />
+        Email support
+      </a>
     </section>
   );
 }
@@ -292,6 +321,7 @@ export function StudentSupportPage() {
         eyebrow="Student help desk"
         title="Support"
       />
+      <SupportContactCard />
 
       <section className="support-desk-grid" aria-label="Support desk">
         <article className="support-panel support-panel--primary">

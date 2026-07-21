@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, BookOpen, CalendarDays, ExternalLink, FolderKanban, Layers3, Link as LinkIcon, Send, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BookOpen, CalendarDays, ChevronDown, ExternalLink, FolderKanban, Layers3, Link as LinkIcon, Send, X } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { ProjectRichText, sanitizeProjectHtml } from '../components/ProjectRichText';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
@@ -45,6 +45,90 @@ const PROJECT_SUBMISSION_DECLARATIONS = [
     label: 'I understand that approval depends on review quality, completeness, and the Skilled Sapiens review process.'
   }
 ] as const;
+
+const CV_POINTS_TOOLKIT_ID = 'cv_points_approval';
+
+type CvPointsContent = {
+  finance: string;
+  management: string;
+};
+
+function normalizeToolkitId(value: string | undefined) {
+  return String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_').replace(/[^a-z0-9_]/g, '');
+}
+
+function decodeJsonEntities(value: string) {
+  return value
+    .replace(/&amp;quot;/g, '"')
+    .replace(/&amp;#34;/g, '"')
+    .replace(/&quot;/g, '"')
+    .replace(/&#34;/g, '"');
+}
+
+function readCvPointsPayload(value: string) {
+  const candidates = [value, decodeJsonEntities(value)];
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as Partial<CvPointsContent> | string;
+      if (typeof parsed === 'string') {
+        const nested = JSON.parse(parsed) as Partial<CvPointsContent>;
+        if (nested && typeof nested === 'object') return nested;
+      }
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch {
+      // Try the next representation before falling back to legacy plain content.
+    }
+  }
+
+  return null;
+}
+
+function looksLikeCvPointsPayload(value: string | undefined) {
+  const rawValue = String(value ?? '').trim();
+  if (!rawValue.startsWith('{')) return false;
+  return /"?finance"?\s*:|"?management"?\s*:|&quot;finance&quot;\s*:|&quot;management&quot;\s*:/.test(rawValue);
+}
+
+function isCvPointsToolkitItem(item: Pick<StudentProjectToolkitItem, 'content' | 'title' | 'toolkitId'>) {
+  return (
+    normalizeToolkitId(item.toolkitId) === CV_POINTS_TOOLKIT_ID ||
+    looksLikeCvPointsPayload(item.content) ||
+    item.title.trim().toLowerCase().includes('cv points')
+  );
+}
+
+function parseCvPointsContent(value: string | undefined): CvPointsContent {
+  const rawValue = String(value ?? '').trim();
+  if (!rawValue) return { finance: '', management: '' };
+
+  const parsed = readCvPointsPayload(rawValue);
+  if (parsed) {
+    return {
+      finance: sanitizeProjectHtml(typeof parsed.finance === 'string' ? parsed.finance : ''),
+      management: sanitizeProjectHtml(typeof parsed.management === 'string' ? parsed.management : '')
+    };
+  }
+
+  return {
+    finance: '',
+    management: looksLikeCvPointsPayload(rawValue) ? '' : sanitizeProjectHtml(rawValue)
+  };
+}
+
+function cvPointsSections(item: StudentProjectToolkitItem) {
+  if (!isCvPointsToolkitItem(item)) return [];
+  const content = parseCvPointsContent(item.content);
+  return [
+    { body: content.management, title: 'Management Tracks' },
+    { body: content.finance, title: 'Finance Tracks' }
+  ].filter((section) => sanitizeProjectHtml(section.body).trim());
+}
+
+function isVisibleToolkitItem(item: StudentProjectToolkitItem) {
+  if (!isCvPointsToolkitItem(item)) return true;
+  return cvPointsSections(item).length > 0;
+}
 
 function formatDate(value: string | undefined) {
   if (!value) {
@@ -126,6 +210,11 @@ function latestSubmissionForProjectCohort(submissions: StudentProjectSubmission[
   )[0];
 }
 
+function latestSubmissionForProject(submissions: StudentProjectSubmission[], project: StudentProject) {
+  const stableProjectId = projectStableId(project);
+  return sortSubmissionsByAttempt(submissions.filter((submission) => submission.projectId === stableProjectId))[0];
+}
+
 function eligibleCohorts(project: StudentProject, cohorts: StudentCohort[], submissions: StudentProjectSubmission[]) {
   const programKeys = projectProgramKeys(project);
 
@@ -189,6 +278,45 @@ function SubmissionTimeline({ submissions }: { submissions: StudentProjectSubmis
           </div>
         </article>
       ))}
+    </div>
+  );
+}
+
+function submissionStatusCopy(submission: StudentProjectSubmission) {
+  if (submission.status === 'approved') {
+    return {
+      body: 'Your project report has been approved.',
+      title: 'Project approved',
+      tone: 'success'
+    };
+  }
+
+  if (submission.status === 'changes_requested' || submission.status === 'rejected') {
+    return {
+      body: 'Please review the admin feedback and submit your updated report.',
+      title: 'Revision required',
+      tone: 'warning'
+    };
+  }
+
+  return {
+    body: 'Your project report has been submitted and is currently under admin review.',
+    title: 'Project report submitted',
+    tone: 'review'
+  };
+}
+
+function SubmissionStatusCard({ submission }: { submission: StudentProjectSubmission }) {
+  const copy = submissionStatusCopy(submission);
+
+  return (
+    <div className={`live-project-submission-status live-project-submission-status--${copy.tone}`}>
+      <strong>{copy.title}</strong>
+      <p>{copy.body}</p>
+      <small>
+        Attempt {submission.attemptNumber}
+        {submission.cohortName ? ` · ${submission.cohortName}` : ''}
+      </small>
     </div>
   );
 }
@@ -364,12 +492,13 @@ function ProjectSubmissionModal({
 
 function ProjectToolkitSection({ items }: { items: StudentProjectToolkitItem[] }) {
   const [selectedItem, setSelectedItem] = useState<StudentProjectToolkitItem | null>(null);
+  const visibleItems = useMemo(() => items.filter(isVisibleToolkitItem), [items]);
 
   useEffect(() => {
-    if (selectedItem && !items.some((item) => item.id === selectedItem.id)) {
+    if (selectedItem && !visibleItems.some((item) => item.id === selectedItem.id)) {
       setSelectedItem(null);
     }
-  }, [items, selectedItem]);
+  }, [selectedItem, visibleItems]);
 
   useEffect(() => {
     if (!selectedItem) return undefined;
@@ -390,7 +519,7 @@ function ProjectToolkitSection({ items }: { items: StudentProjectToolkitItem[] }
     };
   }, [selectedItem]);
 
-  if (items.length === 0) return null;
+  if (visibleItems.length === 0) return null;
 
   return (
     <>
@@ -403,7 +532,7 @@ function ProjectToolkitSection({ items }: { items: StudentProjectToolkitItem[] }
           <p>Guidelines, SOW references, and project-start framework shared by the program team.</p>
         </header>
         <div className="live-project-toolkit__grid">
-          {items.map((item) => (
+          {visibleItems.map((item) => (
             <article className="live-project-toolkit-card" key={item.id}>
               <button aria-haspopup="dialog" className="live-project-toolkit-card__button" onClick={() => setSelectedItem(item)} type="button">
                 <span>
@@ -428,6 +557,8 @@ function ProjectToolkitSection({ items }: { items: StudentProjectToolkitItem[] }
 
 function ProjectToolkitReader({ item, onClose }: { item: StudentProjectToolkitItem; onClose: () => void }) {
   const hasLink = Boolean(item.linkUrl);
+  const cvSections = cvPointsSections(item);
+  const isCvPointsItem = isCvPointsToolkitItem(item);
 
   return (
     <section aria-labelledby="project-toolkit-reader-title" aria-modal="true" className="live-project-toolkit-reader" role="dialog">
@@ -445,7 +576,23 @@ function ProjectToolkitReader({ item, onClose }: { item: StudentProjectToolkitIt
 
         <div className="live-project-toolkit-reader__body">
           <article className="live-project-toolkit-reader__page">
-            {item.content ? (
+            {isCvPointsItem ? (
+              cvSections.length > 0 ? (
+                <div className="live-project-cv-accordion-list">
+                  {cvSections.map((section) => (
+                    <details className="live-project-cv-accordion" key={section.title}>
+                      <summary>
+                        <span>{section.title}</span>
+                        <ChevronDown size={18} />
+                      </summary>
+                      <ProjectRichText className="project-rich-text live-project-reading-copy live-project-cv-accordion__copy" html={section.body} />
+                    </details>
+                  ))}
+                </div>
+              ) : (
+                <p className="live-project-empty">Content will appear here once the admin team updates this toolkit section.</p>
+              )
+            ) : item.content ? (
               <ProjectRichText className="project-rich-text live-project-reading-copy live-project-toolkit-reader__copy" html={item.content} />
             ) : (
               <p className="live-project-empty">Content will appear here once the admin team updates this toolkit section.</p>
@@ -474,6 +621,10 @@ function LiveProjectDetail({ allSubmissions, cohorts, project }: { allSubmission
   const [modalOpen, setModalOpen] = useState(false);
   const [submitMessage, setSubmitMessage] = useState('');
   const availableCohorts = useMemo(() => eligibleCohorts(project, cohorts, allSubmissions), [allSubmissions, cohorts, project]);
+  const latestSubmission = useMemo(
+    () => latestSubmissionForProject([...submissions, ...allSubmissions], project),
+    [allSubmissions, project, submissions]
+  );
   const deadlinePassed = isPastDeadline(project.deadline);
   const intro = introductionTask(project.tasks);
   const customSections = customReadingTasks(project.tasks);
@@ -575,6 +726,8 @@ function LiveProjectDetail({ allSubmissions, cohorts, project }: { allSubmission
             <Send size={18} />
             Submit Report
           </button>
+        ) : latestSubmission ? (
+          <SubmissionStatusCard submission={latestSubmission} />
         ) : (
           <span className="live-project-submit live-project-submit--disabled">No eligible cohort available for submission</span>
         )}

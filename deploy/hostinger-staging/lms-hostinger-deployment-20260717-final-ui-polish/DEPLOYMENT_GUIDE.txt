@@ -1,0 +1,30 @@
+Skilled Sapiens LMS - Hostinger Deployment Package
+Date: 17 Jul 2026
+Package: lms-hostinger-deployment-20260717-final-ui-polish
+
+What to upload to Hostinger
+1. Open the public_html folder inside this package.
+2. Upload/extract the CONTENTS of public_html into the Hostinger public_html directory.
+3. Do not upload this guide file or the supabase-migrations folder into public_html.
+
+Included frontend updates
+- Student dashboard learner profile UI polish.
+- Live Project Role shown as the primary profile heading.
+- Tagged Cohort(s) and Corporate Training Cohort Category shown as simple comma-separated text.
+- Active access moved into the identity strip.
+- Student recordings Step 1 / Step 2 labels shown only inside Induction & Live Project Overview.
+- Student upcoming workshop metadata cleanup.
+- Student resource library metadata cleanup.
+
+Supabase notes
+- The supabase-migrations folder is included for deployment tracking.
+- Apply database migrations separately using the Supabase deployment process, if not already applied.
+- Do not upload SQL migration files to Hostinger public_html.
+
+Verification completed before packaging
+- npm run lint: passed
+- npm run build: passed
+
+Rollback note
+- Keep the currently live Hostinger public_html backup before replacing files.
+- If a rollback is required, restore the previous public_html backup.

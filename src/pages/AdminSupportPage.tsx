@@ -1,4 +1,4 @@
-import { ChevronDown, Edit3, Info, Loader2, RefreshCw, Save, Trash2, X } from 'lucide-react';
+import { ChevronDown, Edit3, Info, Loader2, Mail, RefreshCw, Save, Trash2, X } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
@@ -16,9 +16,11 @@ import {
   useDeleteAdminSupportFaq,
   useAdminSupportCategories,
   useAdminSupportFaqs,
+  useAdminSupportSettings,
   useAdminSupportTicketDetail,
   useAdminSupportTickets,
   useReopenAdminSupportTicket,
+  useUpdateAdminSupportSettings,
   useUpdateAdminSupportCategory,
   useUpdateAdminSupportFaq,
   useUpdateAdminSupportTicket
@@ -595,6 +597,45 @@ function SupportCategoryManager({ categories, isLoading }: { categories: AdminSu
 }
 
 function SupportEmailSettings() {
+  const settingsQuery = useAdminSupportSettings();
+  const updateSettings = useUpdateAdminSupportSettings();
+  const settings = settingsQuery.data;
+  const [supportEmail, setSupportEmail] = useState('');
+  const [contactTitle, setContactTitle] = useState('');
+  const [contactNote, setContactNote] = useState('');
+  const [message, setMessage] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
+
+  useEffect(() => {
+    setSupportEmail(settings?.supportEmail ?? '');
+    setContactTitle(settings?.supportContactTitle ?? 'Need help from the support team?');
+    setContactNote(settings?.supportContactNote ?? 'Email us with your registered LMS email, module name, and the issue you are facing.');
+    setMessage(null);
+  }, [settings]);
+
+  async function handleSave() {
+    setMessage(null);
+    const cleanEmail = supportEmail.trim();
+
+    if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setMessage({ tone: 'error', text: 'Enter a valid support email address.' });
+      return;
+    }
+
+    try {
+      await updateSettings.mutateAsync({
+        supportContactNote: contactNote.trim(),
+        supportContactTitle: contactTitle.trim(),
+        supportEmail: cleanEmail
+      });
+      setMessage({ tone: 'success', text: 'Support contact details updated.' });
+    } catch (error) {
+      setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Support contact details could not be saved.' });
+    }
+  }
+
+  const isSaving = updateSettings.isPending;
+  const isLoading = settingsQuery.isLoading;
+
   return (
     <section className="admin-support-panel">
       <header className="admin-panel-header">
@@ -602,13 +643,45 @@ function SupportEmailSettings() {
         <h2>Support Email Settings</h2>
       </header>
       <div className="admin-support-panel__body">
+        {message ? <div className={message.tone === 'success' ? 'auth-alert auth-alert--success' : 'auth-alert auth-alert--error'}>{message.text}</div> : null}
+        <div className="admin-support-contact-preview">
+          <Mail size={18} />
+          <div>
+            <strong>{contactTitle.trim() || 'Need help from the support team?'}</strong>
+            <span>{supportEmail.trim() || 'No student-facing support email set'}</span>
+          </div>
+        </div>
         <label className="admin-support-field">
-          <span>Admin Notification Emails</span>
-          <textarea disabled value="skilledsapiens@gmail.com" />
+          <span>Student-facing support email</span>
+          <input
+            disabled={isLoading || isSaving}
+            onChange={(event) => setSupportEmail(event.target.value)}
+            placeholder="programcoordinator@skilledsapiens.com"
+            type="email"
+            value={supportEmail}
+          />
         </label>
-        <p className="admin-support-help">Every new ticket and student reply is sent here. Leave blank to notify active LMS admins.</p>
-        <button className="announcement-primary-button announcement-primary-button--wide" disabled type="button">
-          Save Support Settings
+        <label className="admin-support-field">
+          <span>Student card title</span>
+          <input
+            disabled={isLoading || isSaving}
+            onChange={(event) => setContactTitle(event.target.value)}
+            placeholder="Need help from the support team?"
+            value={contactTitle}
+          />
+        </label>
+        <label className="admin-support-field">
+          <span>Student help note</span>
+          <textarea
+            disabled={isLoading || isSaving}
+            onChange={(event) => setContactNote(event.target.value)}
+            placeholder="Tell students what to include while emailing support."
+            value={contactNote}
+          />
+        </label>
+        <p className="admin-support-help">These details appear on the student Support page. Ticket creation and WhatsApp contact behavior stay unchanged.</p>
+        <button className="announcement-primary-button announcement-primary-button--wide" disabled={isLoading || isSaving} onClick={() => void handleSave()} type="button">
+          {isSaving ? 'Saving...' : 'Save Support Settings'}
         </button>
       </div>
     </section>

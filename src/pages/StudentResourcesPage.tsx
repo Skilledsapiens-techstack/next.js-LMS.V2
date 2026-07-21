@@ -165,8 +165,6 @@ function ResourceCard({
           {resource.updatedAt ? <StatusBadge>{formatDate(resource.updatedAt)}</StatusBadge> : null}
         </div>
 
-        {resource.programKeys.length > 0 ? <p className="resource-card__audience">{resource.programKeys.map((key) => key.toUpperCase()).join(', ')}</p> : null}
-
         <aside className={`resource-card__commerce resource-card__commerce--${commerceTone}`} aria-label="Resource action">
           <span className="resource-card__commerce-label">{resource.accessType === 'paid' ? 'Paid resource' : 'Resource access'}</span>
           <strong>{commerceTitle}</strong>
