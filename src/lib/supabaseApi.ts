@@ -4,6 +4,12 @@ import { webEnv } from '../config/env';
 import { getEffectiveAdminPermissions, hasAdminPermission, normalizeAdminRole, type AdminPermission } from '../auth/adminPermissions';
 
 const CERTIFICATE_VERIFY_BASE_URL = 'https://skilledsapiens.com/verify-your-certificate/';
+const STUDENT_SUPPORT_CONTACT_SETTING_KEY = 'student_contact';
+const DEFAULT_STUDENT_SUPPORT_CONTACT = {
+  supportContactNote: 'Email us with your registered LMS email, module name, and the issue you are facing.',
+  supportContactTitle: 'Need help from the support team?',
+  supportEmail: ''
+};
 
 export type ApiClientOptions = {
   accessToken?: string;
@@ -74,6 +80,7 @@ const ADMIN_READ_PERMISSIONS_BY_PATH: Record<string, AdminPermission> = {
   '/admins/paid-access': 'admin.paid_access.view',
   '/admins/payment-orders': 'admin.payments.view',
   '/admins/programs': 'admin.programs.view',
+  '/admins/student-guidance-content': 'admin.programs.view',
   '/admins/project-roles': 'admin.projects.view',
   '/admins/project-toolkit': 'admin.projects.view',
   '/admins/project-submissions': 'admin.submissions.view',
@@ -86,6 +93,7 @@ const ADMIN_READ_PERMISSIONS_BY_PATH: Record<string, AdminPermission> = {
   '/admins/students/college-options': 'admin.students.view',
   '/admins/support-categories': 'admin.support.view',
   '/admins/support-faqs': 'admin.support.view',
+  '/admins/support-settings': 'admin.support.view',
   '/admins/support-tickets': 'admin.support.view',
   '/admins/workshops': 'admin.meetings.view'
 };
@@ -207,6 +215,18 @@ const PROGRAM_WRITE_COLUMNS = new Set([
   'short_name',
   'status'
 ]);
+
+const STUDENT_GUIDANCE_CONTENT_WRITE_COLUMNS = new Set([
+  'audience',
+  'content',
+  'content_key',
+  'sort_order',
+  'status',
+  'summary',
+  'title'
+]);
+
+const LEADERSHIP_PROGRAM_KEYS = new Set(['mclp', 'smlp', 'hrlp', 'flp_er', 'flp_qf', 'pmlp']);
 
 const PROJECT_ROLE_WRITE_COLUMNS = new Set([
   'program_key',
@@ -383,6 +403,12 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/paid-access': { table: 'paid_access', searchColumns: ['student_email', 'item_id', 'item_type'] },
   '/admins/payment-orders': { table: 'payment_orders', searchColumns: ['student_email', 'item_id', 'item_type', 'razorpay_order_id'] },
   '/admins/programs': { table: 'programs', filterColumns: { domain: 'domain_label' }, searchColumns: ['program_key', 'name', 'short_name', 'domain_label'] },
+  '/admins/student-guidance-content': {
+    table: 'student_guidance_content',
+    filterColumns: { status: 'status' },
+    searchColumns: ['content_key', 'title', 'summary'],
+    sortColumns: { order: { column: 'sort_order', ascending: true }, updated: { column: 'updated_at', ascending: false } }
+  },
   '/admins/project-roles': { table: 'role_master', filterColumns: { category: 'role_category' }, searchColumns: ['role_name', 'program_key', 'role_category'] },
   '/admins/project-toolkit': {
     table: 'project_toolkit_items',
@@ -479,6 +505,12 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     table: 'programs',
     validateBody: validateProgramWriteBody
   },
+  student_guidance_content: {
+    columns: STUDENT_GUIDANCE_CONTENT_WRITE_COLUMNS,
+    normalizeBody: normalizeStudentGuidanceContentWriteBody,
+    table: 'student_guidance_content',
+    validateBody: validateStudentGuidanceContentWriteBody
+  },
   projects: {
     columns: PROJECT_WRITE_COLUMNS,
     normalizeBody: normalizeProjectWriteBody,
@@ -538,9 +570,11 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/admins/certificate-requests') return getLiveProjectCertificateRequests(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/announcements/recipient-count') return getAnnouncementRecipientCount(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/support/categories') return getSupportCategories(context, options.query, false) as Promise<TResponse>;
+  if (cleanPath === '/students/me/support-settings') return getSupportContactSettings(context, false) as Promise<TResponse>;
   if (cleanPath === '/students/me/support-faqs') return getStudentSupportFaqs(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/support-categories') return getSupportCategories(context, options.query, true) as Promise<TResponse>;
   if (cleanPath === '/admins/support-faqs') return getAdminSupportFaqs(context, options.query) as Promise<TResponse>;
+  if (cleanPath === '/admins/support-settings') return getSupportContactSettings(context, true) as Promise<TResponse>;
 
   const studentAttempts = cleanPath.match(/^\/admins\/students\/([^/]+)\/lp-attempts$/);
   if (studentAttempts) return getStudentAttemptLimit(context, decodeURIComponent(studentAttempts[1])) as Promise<TResponse>;
@@ -575,6 +609,12 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/students/me/recordings') {
     return getStudentRecordingsList(context, options.query) as Promise<TResponse>;
   }
+
+  if (cleanPath === '/students/me/recording-progress') {
+    return getStudentRecordingProgress(context, options.query) as Promise<TResponse>;
+  }
+
+  if (cleanPath === '/students/me/guidance-content') return getStudentGuidanceContent(context, options.query) as Promise<TResponse>;
 
   if (cleanPath === '/students/me/project-toolkit') return getStudentProjectToolkit(context, options.query) as Promise<TResponse>;
 
@@ -702,6 +742,9 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
   const programUpdate = cleanPath.match(/^\/admins\/programs\/([^/]+)$/);
   if (programUpdate) return updateById(context, 'programs', decodeURIComponent(programUpdate[1]), options.body, 'updated') as Promise<TResponse>;
 
+  const studentGuidanceContentUpdate = cleanPath.match(/^\/admins\/student-guidance-content\/([^/]+)$/);
+  if (studentGuidanceContentUpdate) return updateById(context, 'student_guidance_content', decodeURIComponent(studentGuidanceContentUpdate[1]), options.body, 'updated') as Promise<TResponse>;
+
   const projectRoleStatus = cleanPath.match(/^\/admins\/project-roles\/([^/]+)\/status$/);
   if (projectRoleStatus) return updateById(context, 'role_master', decodeURIComponent(projectRoleStatus[1]), options.body, 'status_changed') as Promise<TResponse>;
 
@@ -734,6 +777,8 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
 
   const adminSupportFaqUpdate = cleanPath.match(/^\/admins\/support-faqs\/([^/]+)$/);
   if (adminSupportFaqUpdate) return updateSupportFaq(context, decodeURIComponent(adminSupportFaqUpdate[1]), options.body) as Promise<TResponse>;
+
+  if (cleanPath === '/admins/support-settings/student-contact') return updateSupportContactSettings(context, options.body) as Promise<TResponse>;
 
   const adminSupportTicketClose = cleanPath.match(/^\/admins\/support-tickets\/([^/]+)\/close$/);
   if (adminSupportTicketClose) return updateSupportTicket(context, decodeURIComponent(adminSupportTicketClose[1]), { status: 'closed' }) as Promise<TResponse>;
@@ -804,6 +849,8 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/certificates/live-project') return issueLiveProjectCertificate(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/certificates/manual') return issueManualCertificate(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/students/me/presence') return updateStudentPresence(context) as Promise<TResponse>;
+  const studentRecordingProgress = cleanPath.match(/^\/students\/me\/recordings\/([^/]+)\/progress$/);
+  if (studentRecordingProgress) return markStudentRecordingComplete(context, decodeURIComponent(studentRecordingProgress[1])) as Promise<TResponse>;
   if (cleanPath === '/students/me/project-submissions') return submitStudentProjectReport(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/students/me/support-tickets') return createStudentSupportTicket(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/support-categories') return createSupportCategory(context, options.body) as Promise<TResponse>;
@@ -870,6 +917,7 @@ function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'pos
 
   if (path === '/admins/cohorts' || path.match(/^\/admins\/cohorts\/[^/]+/)) return 'admin.cohorts.manage';
   if (path === '/admins/programs' || path.match(/^\/admins\/programs\/[^/]+/)) return 'admin.programs.manage';
+  if (path === '/admins/student-guidance-content' || path.match(/^\/admins\/student-guidance-content\/[^/]+/)) return 'admin.programs.manage';
   if (
     path === '/admins/projects' ||
     path === '/admins/project-roles' ||
@@ -890,7 +938,7 @@ function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'pos
   if (path === '/admins/feature-controls' || path.match(/^\/admins\/feature-controls\/[^/]+/)) return 'admin.feature_control.manage';
   if (path === '/admins/certificate-program-settings' || path === '/admins/certificates/leadership' || path === '/admins/certificates/live-project' || path === '/admins/certificates/manual') return 'admin.certificates.issue';
   if (path.match(/^\/admins\/certificates\/[^/]+\/revoke$/)) return 'admin.certificates.issue';
-  if (path === '/admins/support-categories' || path === '/admins/support-faqs') return 'admin.support.manage';
+  if (path === '/admins/support-categories' || path === '/admins/support-faqs' || path === '/admins/support-settings/student-contact') return 'admin.support.manage';
   if (path.match(/^\/admins\/support-(categories|faqs)\/[^/]+/)) return 'admin.support.manage';
   if (path.match(/^\/admins\/support-tickets\/[^/]+/)) return 'admin.support.manage';
 
@@ -1030,14 +1078,55 @@ async function requireAdminPermission(context: Awaited<ReturnType<typeof createC
 
 async function getStudentDashboard(context: Awaited<ReturnType<typeof createContext>>) {
   const student = await getStudentProfile(context);
-  const [dashboard, resources, projects, certificates] = await Promise.all([
+  const [dashboard, resources, projects, certificates, guidanceContent] = await Promise.all([
     callRpc(context, 'student_dashboard_bundle', { p_student_email: context.email }),
     callRpc(context, 'student_resources_view', { p_student_email: context.email }),
     callRpc(context, 'student_projects_bundle', { p_student_email: context.email }),
-    callRpc(context, 'student_certificates_bundle', { p_student_email: context.email })
+    callRpc(context, 'student_certificates_bundle', { p_student_email: context.email }),
+    getStudentGuidanceContent(context, { limit: 10, page: 1 }).catch(() => paginate([], { limit: 10, page: 1 }))
   ]);
 
-  return { certificates, dashboard, projects, resources, student };
+  return { certificates, dashboard, guidanceContent, projects, resources, student };
+}
+
+async function getStudentGuidanceContent(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const student = await getStudentProfile(context);
+  const studentId = String((student as Record<string, unknown>).id ?? '');
+  const directProgramValues = [
+    ...asStringArray((student as Record<string, unknown>).trackRoleIds),
+    ...String((student as Record<string, unknown>).programName ?? '').split(',')
+  ];
+
+  const { data: programRows, error: programError } = studentId
+    ? await context.supabase
+      .from('student_programs')
+      .select('program_key')
+      .eq('student_id', studentId)
+      .limit(500)
+    : { data: [], error: null };
+  const linkedProgramRows = programError ? [] : (programRows ?? []);
+
+  const programKeys = uniqueStrings([
+    ...directProgramValues,
+    ...linkedProgramRows.map((row) => String(row.program_key ?? ''))
+  ].map((value) => slugifyKey(value)).filter(Boolean));
+  const hasLeadershipProgram = programKeys.some((key) => LEADERSHIP_PROGRAM_KEYS.has(key)) || /leadership program/i.test(String((student as Record<string, unknown>).programName ?? ''));
+
+  if (!hasLeadershipProgram) {
+    return paginate([], query);
+  }
+
+  const { data, error } = await context.supabase
+    .from('student_guidance_content')
+    .select('*')
+    .eq('status', 'active')
+    .eq('audience', 'leadership')
+    .order('sort_order', { ascending: true })
+    .order('title', { ascending: true })
+    .limit(20);
+  if (error) return paginate([], query);
+
+  return paginate((data ?? []).map(enrichRow).map(camelize), query);
 }
 
 async function enrichStudentCohortProgramNames(context: Awaited<ReturnType<typeof createContext>>, items: unknown[]) {
@@ -1399,6 +1488,128 @@ async function getStudentRecordingsList(context: Awaited<ReturnType<typeof creat
   const limit = Math.min(Number(query?.limit ?? 25), 500);
   const start = (page - 1) * limit;
   return createPaginatedResponse(filtered.slice(start, start + limit), filtered.length, page, limit);
+}
+
+async function getStudentRecordingProgress(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const student = (await getStudentProfile(context)) as Record<string, unknown>;
+  const studentId = String(student.id ?? '').trim();
+  if (!studentId) throw new ApiClientError('Student profile is unavailable.', 404);
+
+  const recordingIds = uniqueStrings(splitCommaValues(query?.recordingIds ?? query?.recording_ids).slice(0, 500))
+    .map((recordingId) => recordingId.trim())
+    .filter(Boolean);
+
+  let request = context.supabase
+    .from('student_recording_progress')
+    .select('recording_id,completed_at')
+    .eq('student_id', studentId)
+    .order('completed_at', { ascending: false })
+    .limit(500);
+
+  if (recordingIds.length > 0) {
+    request = request.in('recording_id', recordingIds);
+  }
+
+  const { data, error } = await request;
+  if (error) {
+    if (isMissingSchemaError(error)) {
+      return { items: [] };
+    }
+    throw new ApiClientError(error.message, 503);
+  }
+
+  return {
+    items: (data ?? []).map((row) => ({
+      completedAt: row.completed_at,
+      recordingId: row.recording_id
+    }))
+  };
+}
+
+function isStudentRecordingCompletable(recording: unknown) {
+  if (!isRecord(recording)) return false;
+  const recordingUrl = String(recording.recordingUrl ?? recording.recording_url ?? '').trim();
+  return Boolean(recordingUrl) && recording.locked !== true && recording.hasAccess !== false;
+}
+
+async function ensureStudentCanCompleteRecording(context: Awaited<ReturnType<typeof createContext>>, recordingId: string) {
+  const list = await getStudentRecordingsList(context, { limit: 500, page: 1 });
+  const items = Array.isArray(list.items) ? list.items : [];
+  const recording = items.find((item) => isRecord(item) && String(item.id ?? item.workshopId ?? item.workshop_id ?? '') === recordingId);
+  if (!recording) throw new ApiClientError('Recording is not visible to this student.', 404);
+  if (!isStudentRecordingCompletable(recording)) throw new ApiClientError('Only accessible recordings can be marked complete.', 403);
+  return recording;
+}
+
+async function markStudentRecordingComplete(context: Awaited<ReturnType<typeof createContext>>, recordingId: string) {
+  const cleanRecordingId = recordingId.trim();
+  if (!cleanRecordingId) throw new ApiClientError('Recording ID is required.', 400);
+
+  const student = (await getStudentProfile(context)) as Record<string, unknown>;
+  const studentId = String(student.id ?? '').trim();
+  if (!studentId) throw new ApiClientError('Student profile is unavailable.', 404);
+  await ensureStudentCanCompleteRecording(context, cleanRecordingId);
+
+  const { data: existing, error: existingError } = await context.supabase
+    .from('student_recording_progress')
+    .select('recording_id,completed_at')
+    .eq('student_id', studentId)
+    .eq('recording_id', cleanRecordingId)
+    .maybeSingle();
+
+  if (existingError) {
+    if (isMissingSchemaError(existingError)) {
+      throw new ApiClientError('Recording progress is not available yet.', 503);
+    }
+    throw new ApiClientError(existingError.message, 503);
+  }
+
+  if (existing) {
+    return {
+      completedAt: existing.completed_at,
+      recordingId: existing.recording_id
+    };
+  }
+
+  const now = new Date().toISOString();
+  const { data, error } = await context.supabase
+    .from('student_recording_progress')
+    .insert(
+      {
+        completed_at: now,
+        recording_id: cleanRecordingId,
+        student_id: studentId,
+        updated_at: now
+      }
+    )
+    .select('recording_id,completed_at')
+    .single();
+
+  if (error) {
+    if (isMissingSchemaError(error)) {
+      throw new ApiClientError('Recording progress is not available yet.', 503);
+    }
+    if (error.code === '23505') {
+      const { data: completed, error: completedError } = await context.supabase
+        .from('student_recording_progress')
+        .select('recording_id,completed_at')
+        .eq('student_id', studentId)
+        .eq('recording_id', cleanRecordingId)
+        .single();
+      if (!completedError && completed) {
+        return {
+          completedAt: completed.completed_at,
+          recordingId: completed.recording_id
+        };
+      }
+    }
+    throw new ApiClientError(error.message, 503);
+  }
+
+  return {
+    completedAt: data.completed_at,
+    recordingId: data.recording_id
+  };
 }
 
 async function getAdminRecordingResourceLinks(context: Awaited<ReturnType<typeof createContext>>, recordingId: string) {
@@ -2065,6 +2276,86 @@ async function getSupportTicketDetail(context: Awaited<ReturnType<typeof createC
     messageLimit: 100,
     messages: (messages ?? []).slice(0, 100).map(camelize),
     ticket: camelize(ticket)
+  };
+}
+
+function mapSupportContactSettings(row: Record<string, unknown> | null | undefined) {
+  const rawSettings = isRecord(row?.setting_value) ? row.setting_value : {};
+  const supportEmail = typeof rawSettings.support_email === 'string' ? rawSettings.support_email.trim() : DEFAULT_STUDENT_SUPPORT_CONTACT.supportEmail;
+  const supportContactTitle =
+    typeof rawSettings.support_contact_title === 'string' && rawSettings.support_contact_title.trim()
+      ? rawSettings.support_contact_title.trim()
+      : DEFAULT_STUDENT_SUPPORT_CONTACT.supportContactTitle;
+  const supportContactNote =
+    typeof rawSettings.support_contact_note === 'string' && rawSettings.support_contact_note.trim()
+      ? rawSettings.support_contact_note.trim()
+      : DEFAULT_STUDENT_SUPPORT_CONTACT.supportContactNote;
+
+  return {
+    settingKey: String(row?.setting_key ?? STUDENT_SUPPORT_CONTACT_SETTING_KEY),
+    status: row?.status === 'inactive' ? 'inactive' : 'active',
+    supportContactNote,
+    supportContactTitle,
+    supportEmail,
+    updatedAt: typeof row?.updated_at === 'string' ? row.updated_at : null,
+    updatedBy: typeof row?.updated_by === 'string' ? row.updated_by : null
+  };
+}
+
+async function getSupportContactSettings(context: Awaited<ReturnType<typeof createContext>>, admin: boolean) {
+  if (admin) await getAdminProfile(context);
+
+  let request = context.supabase.from('support_settings').select('*').eq('setting_key', STUDENT_SUPPORT_CONTACT_SETTING_KEY);
+  if (!admin) request = request.eq('status', 'active');
+
+  const { data, error } = await request.maybeSingle();
+  if (error) throw new ApiClientError(error.message, 503);
+  return mapSupportContactSettings(data as Record<string, unknown> | null);
+}
+
+function normalizeSupportContactSettingsPayload(body: unknown) {
+  if (!isRecord(body)) throw new ApiClientError('Support settings payload must be an object.', 400);
+
+  const supportEmail = String(body.supportEmail ?? body.support_email ?? '').trim().toLowerCase();
+  if (supportEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail)) {
+    throw new ApiClientError('Enter a valid support email address.', 400);
+  }
+
+  const supportContactTitle = String(body.supportContactTitle ?? body.support_contact_title ?? DEFAULT_STUDENT_SUPPORT_CONTACT.supportContactTitle).trim();
+  const supportContactNote = String(body.supportContactNote ?? body.support_contact_note ?? DEFAULT_STUDENT_SUPPORT_CONTACT.supportContactNote).trim();
+  if (supportContactTitle.length > 140) throw new ApiClientError('Support card title must be 140 characters or less.', 400);
+  if (supportContactNote.length > 800) throw new ApiClientError('Support help note must be 800 characters or less.', 400);
+
+  return {
+    support_contact_note: supportContactNote || DEFAULT_STUDENT_SUPPORT_CONTACT.supportContactNote,
+    support_contact_title: supportContactTitle || DEFAULT_STUDENT_SUPPORT_CONTACT.supportContactTitle,
+    support_email: supportEmail
+  };
+}
+
+async function updateSupportContactSettings(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  await getAdminProfile(context);
+  const settingValue = normalizeSupportContactSettingsPayload(body);
+  const now = new Date().toISOString();
+  const { data, error } = await context.supabase
+    .from('support_settings')
+    .upsert(
+      {
+        setting_key: STUDENT_SUPPORT_CONTACT_SETTING_KEY,
+        setting_value: settingValue,
+        status: 'active',
+        updated_at: now,
+        updated_by: context.email
+      },
+      { onConflict: 'setting_key' }
+    )
+    .select('*')
+    .single();
+
+  if (error) throw mutationError(error, 'support_settings');
+  return {
+    message: 'Support contact details updated.',
+    settings: mapSupportContactSettings(data as Record<string, unknown>)
   };
 }
 
@@ -4445,6 +4736,20 @@ function normalizeProgramWriteBody(payload: Record<string, unknown>) {
   };
 }
 
+function normalizeStudentGuidanceContentWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  return {
+    ...payload,
+    audience: has('audience') && typeof payload.audience === 'string' ? payload.audience.trim().toLowerCase() : payload.audience,
+    content: has('content') && typeof payload.content === 'string' ? payload.content.trim() : payload.content,
+    content_key: has('content_key') && typeof payload.content_key === 'string' ? payload.content_key.trim().toLowerCase() : payload.content_key,
+    sort_order: has('sort_order') && payload.sort_order !== '' && payload.sort_order !== null ? Number(payload.sort_order) : payload.sort_order,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    summary: has('summary') ? String(payload.summary ?? '').trim() || null : payload.summary,
+    title: has('title') && typeof payload.title === 'string' ? payload.title.trim() : payload.title
+  };
+}
+
 function normalizeProjectRoleWriteBody(payload: Record<string, unknown>) {
   return {
     ...payload,
@@ -4670,6 +4975,29 @@ function validateProgramWriteBody(payload: Record<string, unknown>, inserting: b
   }
   if (status && !['active', 'inactive'].includes(status)) {
     throw new ApiClientError('Program status is invalid.', 400);
+  }
+}
+
+function validateStudentGuidanceContentWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const contentKey = typeof payload.content_key === 'string' ? payload.content_key.trim() : '';
+  const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  const audience = typeof payload.audience === 'string' ? payload.audience : undefined;
+  const sortOrder = payload.sort_order;
+
+  if (inserting && !contentKey) throw new ApiClientError('Guidance content key is required.', 400);
+  if (contentKey && !['program_structure', 'certificate_structure'].includes(contentKey)) {
+    throw new ApiClientError('Guidance content key is not supported for this version.', 400);
+  }
+  if (inserting && !title) throw new ApiClientError('Guidance title is required.', 400);
+  if (status && !['active', 'inactive'].includes(status)) {
+    throw new ApiClientError('Guidance status is invalid.', 400);
+  }
+  if (audience && audience !== 'leadership') {
+    throw new ApiClientError('Guidance audience is invalid.', 400);
+  }
+  if (sortOrder !== undefined && sortOrder !== null && (!Number.isInteger(Number(sortOrder)) || Number(sortOrder) < 0)) {
+    throw new ApiClientError('Guidance sort order must be zero or a positive whole number.', 400);
   }
 }
 
@@ -4942,7 +5270,8 @@ async function writeAuditLog(
     table !== 'role_master' &&
     table !== 'certificates' &&
     table !== 'feature_controls' &&
-    table !== 'email_templates'
+    table !== 'email_templates' &&
+    table !== 'student_guidance_content'
   ) return;
   const entityType =
     table === 'cohorts'
@@ -4965,7 +5294,9 @@ async function writeAuditLog(
                       ? 'feature_control'
                       : table === 'email_templates'
                         ? 'email_template'
-                        : 'student';
+                        : table === 'student_guidance_content'
+                          ? 'student_guidance_content'
+                          : 'student';
 
   const auditRow = {
     action: `admin_${entityType}_${action}`,
@@ -4980,7 +5311,7 @@ async function writeAuditLog(
   const { error } = await context.supabase.from('audit_logs').insert(auditRow);
   if (error) {
     throw new ApiClientError(
-      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_toolkit_item' ? 'Project toolkit item' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : entityType === 'feature_control' ? 'Feature control' : entityType === 'email_template' ? 'Email template' : 'Student'} was saved, but audit logging failed: ${error.message}`,
+      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_toolkit_item' ? 'Project toolkit item' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : entityType === 'feature_control' ? 'Feature control' : entityType === 'email_template' ? 'Email template' : entityType === 'student_guidance_content' ? 'Student guidance content' : 'Student'} was saved, but audit logging failed: ${error.message}`,
       503
     );
   }
@@ -5065,6 +5396,15 @@ function buildAuditDetails(table: string, row: Record<string, unknown>, payload:
       status: row.status,
       templateKey: row.template_key,
       templateName: row.template_name
+    };
+  }
+
+  if (table === 'student_guidance_content') {
+    return {
+      ...base,
+      contentKey: row.content_key,
+      status: row.status,
+      title: row.title
     };
   }
 

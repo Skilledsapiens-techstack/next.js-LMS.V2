@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthProvider';
-import { apiGet } from '../../lib/supabaseApi';
+import { apiGet, apiPost } from '../../lib/supabaseApi';
 import { PaginatedResponse } from './useStudentAnnouncements';
 
 export type StudentRecordingAccessType = 'free' | 'paid';
@@ -57,6 +57,15 @@ export type StudentRecordingResourcesResponse = {
   resources: StudentRecordingResource[];
 };
 
+export type StudentRecordingProgressItem = {
+  completedAt: string;
+  recordingId: string;
+};
+
+export type StudentRecordingProgressResponse = {
+  items: StudentRecordingProgressItem[];
+};
+
 export function useStudentRecordings(query: StudentRecordingsQuery) {
   const { accessToken } = useAuth();
   const accessType = query.accessType ?? 'all';
@@ -82,6 +91,49 @@ export function useStudentRecordings(query: StudentRecordingsQuery) {
     refetchOnMount: 'always',
     staleTime: 0
   });
+}
+
+export function useStudentRecordingProgress(recordingIds: string[]) {
+  const { accessToken } = useAuth();
+  const cleanRecordingIds = Array.from(new Set(recordingIds.map((recordingId) => recordingId.trim()).filter(Boolean))).sort();
+
+  return useQuery({
+    enabled: Boolean(accessToken && cleanRecordingIds.length > 0),
+    queryFn: () =>
+      apiGet<StudentRecordingProgressResponse>('/students/me/recording-progress', {
+        accessToken: accessToken ?? undefined,
+        query: {
+          recordingIds: cleanRecordingIds.join(',')
+        }
+      }),
+    queryKey: ['student-recording-progress', accessToken, cleanRecordingIds.join(',')],
+    refetchOnMount: 'always',
+    staleTime: 0
+  });
+}
+
+export function useStudentRecordingProgressActions(recordingIds: string[]) {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+  const cleanRecordingIds = Array.from(new Set(recordingIds.map((recordingId) => recordingId.trim()).filter(Boolean))).sort();
+  const progressQueryKey = ['student-recording-progress', accessToken, cleanRecordingIds.join(',')];
+
+  const markComplete = useMutation({
+    mutationFn: (recordingId: string) =>
+      apiPost<StudentRecordingProgressItem>(`/students/me/recordings/${encodeURIComponent(recordingId)}/progress`, {
+        accessToken: accessToken ?? undefined
+      }),
+    onSuccess: (item) => {
+      queryClient.setQueryData<StudentRecordingProgressResponse>(progressQueryKey, (current) => {
+        const items = current?.items ?? [];
+        const nextItems = items.filter((progressItem) => progressItem.recordingId !== item.recordingId);
+        return { items: [item, ...nextItems] };
+      });
+      void queryClient.invalidateQueries({ queryKey: progressQueryKey });
+    }
+  });
+
+  return { markComplete };
 }
 
 export function useStudentRecordingResources(recordingId: string | undefined, enabled = true) {

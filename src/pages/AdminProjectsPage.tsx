@@ -72,6 +72,8 @@ type ProjectImportantLink = {
 
 type ToolkitFormState = {
   content: string;
+  cvFinanceContent: string;
+  cvManagementContent: string;
   itemType: AdminProjectToolkitType;
   linkLabel: string;
   linkUrl: string;
@@ -94,6 +96,84 @@ function normalizeKey(value: string) {
   return value.trim().toLowerCase().replace(/[\s-]+/g, '_').replace(/[^a-z0-9_]/g, '');
 }
 
+const CV_POINTS_TOOLKIT_ID = 'cv_points_approval';
+
+type CvPointsContent = {
+  finance: string;
+  management: string;
+};
+
+function emptyCvPointsContent(): CvPointsContent {
+  return { finance: '', management: '' };
+}
+
+function decodeJsonEntities(value: string) {
+  return value
+    .replace(/&amp;quot;/g, '"')
+    .replace(/&amp;#34;/g, '"')
+    .replace(/&quot;/g, '"')
+    .replace(/&#34;/g, '"');
+}
+
+function readCvPointsPayload(value: string) {
+  const candidates = [value, decodeJsonEntities(value)];
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as Partial<CvPointsContent> | string;
+      if (typeof parsed === 'string') {
+        const nested = JSON.parse(parsed) as Partial<CvPointsContent>;
+        if (nested && typeof nested === 'object') return nested;
+      }
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch {
+      // Try the next representation before falling back to legacy plain content.
+    }
+  }
+
+  return null;
+}
+
+function looksLikeCvPointsPayload(value: string | undefined) {
+  const rawValue = String(value ?? '').trim();
+  if (!rawValue.startsWith('{')) return false;
+  return /"?finance"?\s*:|"?management"?\s*:|&quot;finance&quot;\s*:|&quot;management&quot;\s*:/.test(rawValue);
+}
+
+function isCvPointsToolkitId(value: string | undefined) {
+  return normalizeKey(value ?? '') === CV_POINTS_TOOLKIT_ID;
+}
+
+function isCvPointsToolkitItem(item?: Pick<AdminProjectToolkitItem, 'content' | 'title' | 'toolkitId'>) {
+  if (!item) return false;
+  return isCvPointsToolkitId(item.toolkitId) || looksLikeCvPointsPayload(item.content) || item.title.trim().toLowerCase().includes('cv points');
+}
+
+function parseCvPointsContent(value: string | undefined): CvPointsContent {
+  const rawValue = String(value ?? '').trim();
+  if (!rawValue) return emptyCvPointsContent();
+
+  const parsed = readCvPointsPayload(rawValue);
+  if (parsed) {
+    return {
+      finance: sanitizeProjectHtml(typeof parsed.finance === 'string' ? parsed.finance : ''),
+      management: sanitizeProjectHtml(typeof parsed.management === 'string' ? parsed.management : '')
+    };
+  }
+
+  return {
+    finance: '',
+    management: looksLikeCvPointsPayload(rawValue) ? '' : sanitizeProjectHtml(rawValue)
+  };
+}
+
+function serializeCvPointsContent(content: CvPointsContent) {
+  return JSON.stringify({
+    finance: sanitizeProjectHtml(content.finance),
+    management: sanitizeProjectHtml(content.management)
+  });
+}
+
 function roleKey(role: AdminProjectRole) {
   return role.roleId ?? role.id;
 }
@@ -113,8 +193,11 @@ function formFromRole(role?: AdminProjectRole): RoleFormState {
 }
 
 function formFromToolkitItem(item?: AdminProjectToolkitItem): ToolkitFormState {
+  const cvContent = isCvPointsToolkitItem(item) ? parseCvPointsContent(item?.content) : emptyCvPointsContent();
   return {
     content: richTextFromValue(item?.content ?? ''),
+    cvFinanceContent: cvContent.finance,
+    cvManagementContent: cvContent.management,
     itemType: item?.itemType ?? 'custom',
     linkLabel: item?.linkLabel ?? '',
     linkUrl: item?.linkUrl ?? '',
@@ -829,9 +912,15 @@ function ToolkitEditor({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
+    const isCvPointsItem = isCvPointsToolkitId(form.toolkitId);
 
     const payload: AdminProjectToolkitWritePayload = {
-      content: sanitizeProjectHtml(form.content),
+      content: isCvPointsItem
+        ? serializeCvPointsContent({
+            finance: form.cvFinanceContent,
+            management: form.cvManagementContent
+          })
+        : sanitizeProjectHtml(form.content),
       itemType: form.itemType,
       linkLabel: form.linkLabel.trim() || null,
       linkUrl: form.linkUrl.trim() || null,
@@ -936,12 +1025,33 @@ function ToolkitEditor({
         </div>
         <p className="admin-project-empty-note">No selected program means visible to all eligible students.</p>
       </fieldset>
-      <ProjectRichTextEditor
-        label="Toolkit content"
-        onChange={(value) => updateField('content', value)}
-        placeholder="Add formatted guidance, bullets, links, or framework details."
-        value={form.content}
-      />
+      {isCvPointsToolkitId(form.toolkitId) ? (
+        <div className="admin-project-cv-editor admin-project-form__wide">
+          <div className="admin-project-cv-editor__intro">
+            <span className="section-eyebrow">CV points approval</span>
+            <p>Students will see these as two accordions in the full-screen reader. Blank accordions stay hidden.</p>
+          </div>
+          <ProjectRichTextEditor
+            label="Management Tracks"
+            onChange={(value) => updateField('cvManagementContent', value)}
+            placeholder="Add approval guidance for Management Consulting, Sales & Marketing, Product, HR, or related management tracks."
+            value={form.cvManagementContent}
+          />
+          <ProjectRichTextEditor
+            label="Finance Tracks"
+            onChange={(value) => updateField('cvFinanceContent', value)}
+            placeholder="Add approval guidance for Equity Research, Quant Finance, PEVC, and other finance tracks."
+            value={form.cvFinanceContent}
+          />
+        </div>
+      ) : (
+        <ProjectRichTextEditor
+          label="Toolkit content"
+          onChange={(value) => updateField('content', value)}
+          placeholder="Add formatted guidance, bullets, links, or framework details."
+          value={form.content}
+        />
+      )}
       <div className="admin-project-link-row admin-project-form__wide">
         <label>
           <span>Link label</span>

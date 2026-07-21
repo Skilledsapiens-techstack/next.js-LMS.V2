@@ -21,6 +21,7 @@ export type StudentProfile = {
 export type StudentDashboard = {
   certificates: JsonRecord;
   dashboard: JsonRecord;
+  guidanceContent?: JsonRecord;
   projects: JsonRecord;
   resources: JsonRecord;
   student: StudentProfile;

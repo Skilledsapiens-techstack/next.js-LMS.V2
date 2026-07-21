@@ -33,6 +33,30 @@ export type AdminProgramWritePayload = {
   status: AdminProgramStatus;
 };
 
+export type AdminStudentGuidanceContentStatus = 'active' | 'inactive';
+
+export type AdminStudentGuidanceContent = {
+  audience: 'leadership';
+  content: string;
+  contentKey: 'program_structure' | 'certificate_structure';
+  createdAt?: string;
+  id: string;
+  sortOrder: number;
+  status: AdminStudentGuidanceContentStatus;
+  summary?: string;
+  title: string;
+  updatedAt?: string;
+};
+
+export type AdminStudentGuidanceContentWritePayload = {
+  audience?: 'leadership';
+  content?: string;
+  sortOrder?: number;
+  status?: AdminStudentGuidanceContentStatus;
+  summary?: string | null;
+  title?: string;
+};
+
 export type AdminProgramImpact = {
   auditLogs: Array<{ action: string; actorEmail?: string; createdAt?: string; id: string; status?: string }>;
   cohorts: number;
@@ -111,6 +135,21 @@ export function useAdminProgramImpact(program?: Pick<AdminProgram, 'id' | 'progr
   });
 }
 
+export function useAdminStudentGuidanceContent() {
+  const { accessToken } = useAuth();
+
+  return useQuery({
+    enabled: Boolean(accessToken),
+    queryFn: () =>
+      apiGet<PaginatedResponse<AdminStudentGuidanceContent>>('/admins/student-guidance-content', {
+        accessToken: accessToken ?? undefined,
+        query: { limit: 10, page: 1, sort: 'order', status: 'all' }
+      }),
+    queryKey: ['admin-student-guidance-content', accessToken],
+    staleTime: 60_000
+  });
+}
+
 export function useCreateAdminProgram() {
   const { accessToken } = useAuth();
   const queryClient = useQueryClient();
@@ -138,6 +177,23 @@ export function useUpdateAdminProgram() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-programs'] });
       queryClient.invalidateQueries({ queryKey: ['admin-program-impact'] });
+    }
+  });
+}
+
+export function useUpdateAdminStudentGuidanceContent() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ body, contentId }: { body: AdminStudentGuidanceContentWritePayload; contentId: string }) =>
+      apiPatch<AdminStudentGuidanceContent, AdminStudentGuidanceContentWritePayload>(`/admins/student-guidance-content/${contentId}`, {
+        accessToken: accessToken ?? undefined,
+        body
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-student-guidance-content'] });
+      queryClient.invalidateQueries({ queryKey: ['student-dashboard'] });
     }
   });
 }

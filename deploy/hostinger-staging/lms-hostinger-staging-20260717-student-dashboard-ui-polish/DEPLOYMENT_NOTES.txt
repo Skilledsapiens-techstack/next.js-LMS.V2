@@ -1,0 +1,17 @@
+Hostinger deployment package
+Date: 17 Jul 2026
+
+Package: lms-hostinger-staging-20260717-student-dashboard-ui-polish
+
+Deploy by extracting the ZIP contents into Hostinger public_html.
+
+Included in this build:
+- Student dashboard learner profile UI polish.
+- Live Project Role remains primary, with tagged cohorts and corporate training cohort category shown as simple text.
+- Student recordings Step 1 / Step 2 labels are limited to Induction & Live Project Overview sections only.
+- Student upcoming workshop metadata cleanup.
+- Student resource library metadata cleanup.
+
+Verification before packaging:
+- npm run lint passed.
+- npm run build passed.

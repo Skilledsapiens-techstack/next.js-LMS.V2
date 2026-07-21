@@ -1,19 +1,25 @@
 import {
   ArrowRight,
   Award,
+  BookOpen,
   CalendarDays,
   Clock3,
   ExternalLink,
   FileCheck2,
+  GraduationCap,
+  Info,
   Library,
   Lock,
   Megaphone,
   PlayCircle,
   Video,
+  X,
   type LucideIcon
 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../components/PageHeader';
+import { ProjectRichText } from '../components/ProjectRichText';
 import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
@@ -41,6 +47,16 @@ type ScopedCounts = {
 };
 
 type UnknownRecord = Record<string, unknown>;
+
+type StudentGuidanceContent = {
+  content: string;
+  contentKey: string;
+  id: string;
+  summary?: string;
+  title: string;
+};
+
+const leadershipProgramKeys = new Set(['mclp', 'smlp', 'hrlp', 'flp_er', 'flp_qf', 'pmlp']);
 
 function asArray(value: unknown) {
   return Array.isArray(value) ? value : [];
@@ -131,6 +147,66 @@ function uniqueNames(names: Array<string | undefined>) {
     });
 }
 
+function normalizeKey(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+function isLeadershipContext(profile: StudentProfile | undefined, trackRoles: string[]) {
+  if (/leadership program/i.test(profile?.programName ?? '')) return true;
+  return trackRoles.some((role) => leadershipProgramKeys.has(normalizeKey(role)));
+}
+
+function mapGuidanceContent(item: unknown): StudentGuidanceContent | null {
+  const id = textValue(item, ['id']);
+  const title = textValue(item, ['title']);
+  if (!id || !title) return null;
+
+  return {
+    content: textValue(item, ['content']) ?? '',
+    contentKey: textValue(item, ['content_key', 'contentKey']) ?? '',
+    id,
+    summary: textValue(item, ['summary']),
+    title
+  };
+}
+
+function GuidanceReader({ item, onClose }: { item: StudentGuidanceContent; onClose: () => void }) {
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKey);
+    return () => {
+      document.body.style.overflow = '';
+      window.removeEventListener('keydown', handleKey);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="student-guidance-reader" role="presentation">
+      <section aria-labelledby="student-guidance-reader-title" aria-modal="true" className="student-guidance-reader__shell" role="dialog">
+        <header className="student-guidance-reader__header">
+          <div>
+            <span className="eyebrow">Student guide</span>
+            <h2 id="student-guidance-reader-title">{item.title}</h2>
+            {item.summary ? <p>{item.summary}</p> : null}
+          </div>
+          <button aria-label="Close guide" className="student-guidance-reader__close segmented-button" onClick={onClose} type="button">
+            <X size={18} />
+            Close
+          </button>
+        </header>
+        <div className="student-guidance-reader__body">
+          <article className="student-guidance-reader__page">
+            <ProjectRichText className="student-guidance-reader__copy" html={item.content} />
+          </article>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function formatDate(value?: string) {
   if (!value) {
     return 'Date pending';
@@ -162,6 +238,15 @@ function formatDateTime(value?: string) {
     day: '2-digit',
     month: 'short'
   }).format(date);
+}
+
+function formatStatusLabel(value?: string) {
+  if (!value) return '';
+  return value
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
 }
 
 function isVisibleAnnouncementNow(item: unknown) {
@@ -386,6 +471,7 @@ function renderItemList<TItem>({
 
 export function StudentDashboardPage() {
   const dashboardQuery = useStudentDashboard();
+  const [selectedGuidance, setSelectedGuidance] = useState<StudentGuidanceContent | null>(null);
   const profile = dashboardQuery.data?.student;
   const isLoading = dashboardQuery.isLoading;
   const isError = dashboardQuery.isError;
@@ -415,14 +501,18 @@ export function StudentDashboardPage() {
   const summaryCards = buildSummaryCards(scopedCounts);
   const trackRoles = asArray(profile?.trackRoleIds).filter((role): role is string => typeof role === 'string');
   const liveProjectRoles = uniqueNames(asArray(profile?.liveProjectRoles).filter((role): role is string => typeof role === 'string'));
+  const guidanceItems = takeMapped(pickArray(dashboardQuery.data?.guidanceContent, ['items']), mapGuidanceContent, 10);
+  const programGuidance = guidanceItems.find((item) => item.contentKey === 'program_structure');
+  const certificateGuidance = guidanceItems.find((item) => item.contentKey === 'certificate_structure');
+  const showLeadershipGuidance = isLeadershipContext(profile, trackRoles);
   const cohortNames = uniqueNames([
     ...pickArray(dashboardQuery.data?.dashboard, ['cohorts', 'studentCohorts']).map((cohort) => textValue(cohort, ['name', 'cohort_name', 'cohortName'])),
     profile?.cohortName
   ]);
+  const trainingProgramNames = uniqueNames(String(profile?.programName ?? '').split(','));
   const scheduleItems = scheduleItemsAll.slice(0, 3);
   const recordingItems = recordingItemsAll.slice(0, 3);
   const resourceItems = resourceItemsAll.slice(0, 3);
-  const lockedResourceItems = resourceItemsAll.filter((resource) => resource.accessType === 'paid' && resource.locked).slice(0, 3);
   const announcementItems = announcementItemsAll.slice(0, 3);
   const nextSession = scheduleItems[0];
   const sessionAction = getSessionAction(nextSession);
@@ -455,42 +545,120 @@ export function StudentDashboardPage() {
 
       <section className="student-home-hero">
         <div className="student-home-hero__main">
-          <span className="eyebrow">Learner profile</span>
-          <h2>{profile?.programName ?? 'Program not assigned'}</h2>
-          <div className="student-profile-strip" aria-label="Student profile details">
-            <span>{profile?.email ?? 'Email not available'}</span>
-            <span>{profile?.studentId ?? 'Student ID pending'}</span>
-            <span>{profile?.collegeName ?? 'College not available'}</span>
-          </div>
-          <div className="student-cohort-list" aria-label="Assigned cohorts">
-            {cohortNames.length ? cohortNames.map((cohortName) => <StatusBadge key={cohortName}>{cohortName}</StatusBadge>) : <StatusBadge>Cohort pending</StatusBadge>}
-            <StatusBadge>{profile?.active ? 'Active access' : 'Inactive access'}</StatusBadge>
-            {trackRoles.slice(0, 2).map((role) => (
-              <StatusBadge key={role}>{role}</StatusBadge>
-            ))}
-          </div>
-          {liveProjectRoles.length > 0 ? (
-            <div className="student-live-project-roles" aria-label="Assigned live project roles">
+          <header className="student-profile-heading">
+            <span className="eyebrow">Learner profile</span>
+            <div className="student-profile-strip" aria-label="Student profile details">
+              <span>{profile?.email ?? 'Email not available'}</span>
+              <span>{profile?.studentId ?? 'Student ID pending'}</span>
+              <span>{profile?.collegeName ?? 'College not available'}</span>
+              <span className="student-profile-strip__access">
+                <StatusBadge>{profile?.active ? 'Active access' : 'Inactive access'}</StatusBadge>
+              </span>
+            </div>
+          </header>
+
+          <div className="student-profile-section student-profile-section--training">
+            <div className="student-profile-field">
               <span>Live Project Role</span>
+              <div className="student-training-programs">
+                {liveProjectRoles.length ? (
+                  liveProjectRoles.map((role) => <strong key={role}>{role}</strong>)
+                ) : (
+                  <strong>Live project role not assigned</strong>
+                )}
+              </div>
+            </div>
+            <div className="student-home-actions" aria-label="Learning shortcuts">
+              <Link className="student-action student-action--primary" to="/student/schedule">
+                <CalendarDays size={18} />
+                View upcoming workshops
+              </Link>
+              <Link className="student-action" to="/student/recordings">
+                <PlayCircle size={18} />
+                Watch recordings
+              </Link>
+            </div>
+          </div>
+
+          {liveProjectRoles.length > 0 ? (
+            <div className="student-profile-section student-profile-section--project">
+              <div className="student-live-project-roles" aria-label="Assigned live project roles">
+                <div className="student-live-project-role-block">
+                  <span>Your Tagged Cohort(s) Name</span>
+                  <p>{cohortNames.length ? cohortNames.join(', ') : 'Cohort pending'}</p>
+                </div>
+                <div className="student-live-project-role-block">
+                  <span>Your Corporate Training Cohort Category</span>
+                  <p>{trainingProgramNames.length ? trainingProgramNames.join(', ') : 'Training cohort category pending'}</p>
+                </div>
+                <p className="student-live-project-roles__note">Your live project role is mapped under this training cohort category for module access.</p>
+              </div>
+            </div>
+          ) : null}
+          {showLeadershipGuidance && (programGuidance || certificateGuidance) ? (
+            <div className="student-profile-section student-profile-section--clarity">
               <div>
-                {liveProjectRoles.map((role) => (
-                  <StatusBadge key={role}>{role}</StatusBadge>
-                ))}
+                <span>Need clarity?</span>
+                <p>Quickly understand how your training, live project, and certificates fit together.</p>
+              </div>
+              <div className="student-guidance-actions" aria-label="Program guidance">
+                {programGuidance ? (
+                  <button className="student-guidance-button" onClick={() => setSelectedGuidance(programGuidance)} type="button">
+                    <Info size={16} />
+                    Understand your program structure
+                  </button>
+                ) : null}
+                {certificateGuidance ? (
+                  <button className="student-guidance-button" onClick={() => setSelectedGuidance(certificateGuidance)} type="button">
+                    <Award size={16} />
+                    How you earn certificates
+                  </button>
+                ) : null}
               </div>
             </div>
           ) : null}
         </div>
-        <div className="student-home-actions">
-          <Link className="student-action student-action--primary" to="/student/schedule">
-            <CalendarDays size={18} />
-            View upcoming workshops
-          </Link>
-          <Link className="student-action" to="/student/recordings">
-            <PlayCircle size={18} />
-            Continue learning
-          </Link>
-        </div>
       </section>
+
+      {showLeadershipGuidance ? (
+        <section className="student-certificate-guide">
+          <header>
+            <div>
+              <span className="eyebrow">Your certificates</span>
+              <h2>What you can earn</h2>
+            </div>
+            {certificateGuidance ? (
+              <button className="student-guidance-button" onClick={() => setSelectedGuidance(certificateGuidance)} type="button">
+                <Info size={16} />
+                Details
+              </button>
+            ) : null}
+          </header>
+          <div className="student-certificate-guide__items">
+            <article>
+              <GraduationCap size={18} />
+              <div>
+                <strong>Training Certificate</strong>
+                <span>Based on leadership program module completion.</span>
+              </div>
+            </article>
+            <article>
+              <FileCheck2 size={18} />
+              <div>
+                <strong>Live Project Certificate</strong>
+                <span>Based on approved project report submission.</span>
+              </div>
+            </article>
+            <article>
+              <BookOpen size={18} />
+              <div>
+                <strong>Placement Mentorship</strong>
+                <span>Career guidance support. No separate certificate.</span>
+              </div>
+            </article>
+          </div>
+        </section>
+      ) : null}
 
       <div className="student-summary-grid">
         {summaryCards.map(({ caption, icon: Icon, label, path, value }) => (
@@ -505,17 +673,16 @@ export function StudentDashboardPage() {
         ))}
       </div>
 
-      <section className="student-home-grid">
+      <section className="student-home-grid student-home-grid--single">
         <article className="student-panel student-next-session">
           <div className="student-panel__header">
             <div>
               <span className="eyebrow">Next up</span>
               <h2>{nextSession?.title ?? 'No live class available'}</h2>
             </div>
-            {nextSession ? <StatusBadge>{nextSession.status}</StatusBadge> : null}
+            {nextSession ? <StatusBadge>{formatStatusLabel(nextSession.status)}</StatusBadge> : null}
           </div>
           <p>{nextSession ? formatScheduleTime(nextSession) : 'When a scheduled or live class is available for your cohort, it will appear here.'}</p>
-          {nextSession?.cohortNames.length ? <span className="student-panel__fineprint">{nextSession.cohortNames.join(', ')}</span> : null}
           <div className="student-panel__footer">
             {'href' in sessionAction ? (
               <a className="student-action student-action--primary" href={sessionAction.href} rel="noreferrer" target="_blank">
@@ -529,29 +696,6 @@ export function StudentDashboardPage() {
               </Link>
             )}
           </div>
-        </article>
-
-        <article className="student-panel">
-          <div className="student-panel__header">
-            <div>
-              <span className="eyebrow">Action required</span>
-              <h2>Items to review</h2>
-            </div>
-            <Lock size={20} />
-          </div>
-          {renderItemList<StudentResource>({
-            emptyText: 'No locked paid resources need your attention right now.',
-            items: lockedResourceItems,
-            renderItem: (resource) => (
-              <Link className="student-learning-row" key={resource.id} to="/student/resources">
-                <div>
-                  <strong>{resource.title}</strong>
-                  <span>{getResourceNote(resource)}</span>
-                </div>
-                <ArrowRight size={16} />
-              </Link>
-            )
-          })}
         </article>
       </section>
 
@@ -654,6 +798,8 @@ export function StudentDashboardPage() {
       <StateBlock title="Need help?">
         Use Support for account, access, resource, project, or certificate questions. Private links and restricted content stay protected for eligible learners.
       </StateBlock>
+
+      {selectedGuidance ? <GuidanceReader item={selectedGuidance} onClose={() => setSelectedGuidance(null)} /> : null}
     </div>
   );
 }

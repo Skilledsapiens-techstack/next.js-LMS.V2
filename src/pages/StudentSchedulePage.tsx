@@ -1,5 +1,5 @@
 import { CalendarDays, ExternalLink, History, Lock, Radio, ShieldCheck } from 'lucide-react';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState, LockedState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
@@ -39,28 +39,12 @@ function formatDuration(value: number | undefined | null) {
   return value == null ? 'Duration not set' : `${value} min`;
 }
 
-function formatPrice(item: StudentScheduleItem) {
-  if (item.price == null) {
-    return item.accessType === 'paid' ? 'Paid' : 'Free';
-  }
-
-  return `${item.currency ?? 'INR'} ${item.price}`;
-}
-
 function statusTone(status: StudentScheduleStatus) {
   return status === 'Live' ? 'warning' : status === 'Upcoming' || status === 'Scheduled' ? 'safe' : 'neutral';
 }
 
 function hasScheduleAccess(item: StudentScheduleItem) {
   return !item.locked && item.hasAccess !== false;
-}
-
-function getProgramLabel(item: StudentScheduleItem) {
-  return item.programKey || item.domainKey;
-}
-
-function getCohortLabel(item: StudentScheduleItem) {
-  return item.cohortNames?.filter(Boolean).join(', ');
 }
 
 function getDedupKey(item: StudentScheduleItem) {
@@ -81,6 +65,31 @@ function getScheduledAt(item: StudentScheduleItem) {
 
   const scheduledAt = new Date(item.date);
   return Number.isNaN(scheduledAt.getTime()) ? null : scheduledAt;
+}
+
+function getDurationMs(item: StudentScheduleItem) {
+  const durationMinutes = Number(item.durationMinutes);
+  return Number.isFinite(durationMinutes) && durationMinutes > 0 ? durationMinutes * 60 * 1000 : 0;
+}
+
+function getScheduledEndAt(item: StudentScheduleItem) {
+  const scheduledAt = getScheduledAt(item);
+  if (!scheduledAt) return null;
+
+  const durationMs = getDurationMs(item);
+  return new Date(scheduledAt.getTime() + durationMs);
+}
+
+function isLiveByTime(item: StudentScheduleItem, now: number) {
+  if (item.status === 'Completed') return false;
+
+  const scheduledAt = getScheduledAt(item);
+  const scheduledEndAt = getScheduledEndAt(item);
+  if (!scheduledAt || !scheduledEndAt) return false;
+
+  const startTime = scheduledAt.getTime();
+  const endTime = scheduledEndAt.getTime();
+  return startTime <= now && now < endTime;
 }
 
 function sortScheduleItems(items: StudentScheduleItem[]) {
@@ -111,8 +120,8 @@ function dedupePastScheduleItems(items: StudentScheduleItem[]) {
 
 function isPastSession(item: StudentScheduleItem, now: number) {
   if (item.status === 'Completed') return true;
-  const scheduledAt = getScheduledAt(item);
-  return Boolean(scheduledAt && scheduledAt.getTime() < now);
+  const scheduledEndAt = getScheduledEndAt(item);
+  return Boolean(scheduledEndAt && scheduledEndAt.getTime() <= now);
 }
 
 function paginateItems<TItem>(items: TItem[], page: number) {
@@ -131,15 +140,14 @@ function buildPageLink(page: number, view: ScheduleView) {
   return `?${params.toString()}`;
 }
 
-function ScheduleRow({ item, variant = 'upcoming' }: { item: StudentScheduleItem; variant?: ScheduleView }) {
+function ScheduleRow({ item, now, variant = 'upcoming' }: { item: StudentScheduleItem; now: number; variant?: ScheduleView }) {
   const canJoin = hasScheduleAccess(item) && Boolean(item.joinUrl);
-  const programLabel = getProgramLabel(item);
-  const cohortLabel = getCohortLabel(item);
   const isPast = variant === 'past';
+  const displayStatus = isLiveByTime(item, now) ? 'Live' : item.status;
 
   return (
     <article className={isPast ? 'student-schedule-row student-schedule-row--expired' : 'student-schedule-row'}>
-      <div className={item.status === 'Live' ? 'student-schedule-row__date student-schedule-row__date--live' : 'student-schedule-row__date'}>
+      <div className={displayStatus === 'Live' ? 'student-schedule-row__date student-schedule-row__date--live' : 'student-schedule-row__date'}>
         <CalendarDays size={17} />
         <strong>{formatShortDate(item.date)}</strong>
         <span>{item.time ? `${item.time} IST` : 'Time not set'}</span>
@@ -148,17 +156,11 @@ function ScheduleRow({ item, variant = 'upcoming' }: { item: StudentScheduleItem
       <div className="student-schedule-row__main">
         <div className="student-schedule-row__title">
           <strong>{item.title}</strong>
-          {isPast ? <StatusBadge tone="neutral">Expired</StatusBadge> : <StatusBadge tone={statusTone(item.status)}>{item.status}</StatusBadge>}
-          {!isPast ? <StatusBadge tone={item.locked ? 'warning' : 'safe'}>{item.locked ? 'Locked' : 'Available'}</StatusBadge> : null}
+          {isPast ? <StatusBadge tone="neutral">Expired</StatusBadge> : <StatusBadge tone={statusTone(displayStatus)}>{displayStatus}</StatusBadge>}
         </div>
         <p>
           {formatDate(item.date)} · {item.time ? `${item.time} IST` : 'Time not set'} · {formatDuration(item.durationMinutes)}
         </p>
-        <div className="student-schedule-row__meta">
-          {!isPast && programLabel ? <span>{programLabel}</span> : null}
-          {!isPast && cohortLabel ? <span>{cohortLabel}</span> : null}
-          {!isPast ? <span>{formatPrice(item)}</span> : null}
-        </div>
         {item.locked && !isPast ? (
           <div className="student-schedule-row__notice">
             <Lock size={15} />
@@ -188,8 +190,14 @@ export function StudentSchedulePage() {
   const [searchParams] = useSearchParams();
   const page = asPositiveInteger(searchParams.get('page'), 1);
   const view = asScheduleView(searchParams.get('view'));
-  const now = Date.now();
+  const [now, setNow] = useState(() => Date.now());
   const scheduleQuery = useStudentSchedule({ includePast: true, limit: 500, page: 1 });
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
   const allScheduleItems = useMemo(() => scheduleQuery.data?.items ?? [], [scheduleQuery.data?.items]);
   const upcomingItems = useMemo(() => sortScheduleItems(allScheduleItems.filter((item) => !isPastSession(item, now))), [allScheduleItems, now]);
   const pastItems = useMemo(
@@ -202,9 +210,9 @@ export function StudentSchedulePage() {
   const safePage = Math.min(page, totalPages);
   const visibleItems = paginateItems(scheduleItems, safePage);
   const lockedCount = useMemo(() => upcomingItems.filter((item) => item.locked).length, [upcomingItems]);
-  const liveCount = useMemo(() => upcomingItems.filter((item) => item.status === 'Live').length, [upcomingItems]);
+  const liveCount = useMemo(() => upcomingItems.filter((item) => isLiveByTime(item, now)).length, [upcomingItems, now]);
   const joinableCount = useMemo(() => upcomingItems.filter((item) => hasScheduleAccess(item) && item.joinUrl).length, [upcomingItems]);
-  const nextSession = upcomingItems.find((item) => item.status === 'Live') ?? upcomingItems[0];
+  const nextSession = upcomingItems.find((item) => isLiveByTime(item, now)) ?? upcomingItems[0];
 
   if (scheduleQuery.isLoading) {
     return (
@@ -297,7 +305,7 @@ export function StudentSchedulePage() {
             </header>
           ) : null}
           {visibleItems.map((item) => (
-            <ScheduleRow item={item} key={item.id} variant={view} />
+            <ScheduleRow item={item} key={item.id} now={now} variant={view} />
           ))}
         </section>
       ) : (

@@ -6,7 +6,14 @@ import { PageHeader } from '../components/PageHeader';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
 import { StudentCohort, useStudentCohorts } from '../features/student/useStudentCohorts';
-import { StudentRecording, StudentRecordingSection, useStudentRecordingResources, useStudentRecordings } from '../features/student/useStudentRecordings';
+import {
+  StudentRecording,
+  StudentRecordingSection,
+  useStudentRecordingProgress,
+  useStudentRecordingProgressActions,
+  useStudentRecordingResources,
+  useStudentRecordings
+} from '../features/student/useStudentRecordings';
 
 const pageSize = 25;
 
@@ -27,6 +34,12 @@ type RecordingSectionGroup = {
   items: StudentRecording[];
   key: StudentRecordingSection;
   label: string;
+};
+
+type RecordingGroupProgress = {
+  completed: number;
+  percent: number;
+  total: number;
 };
 
 const recordingSectionOptions: Array<{ label: string; value: StudentRecordingSection }> = [
@@ -110,6 +123,10 @@ function formatDuration(value: number | undefined | null) {
 
 function hasRecordingAccess(recording: StudentRecording) {
   return !recording.locked && recording.hasAccess !== false;
+}
+
+function canTrackRecordingCompletion(recording: StudentRecording) {
+  return hasRecordingAccess(recording) && Boolean(recording.recordingUrl);
 }
 
 function buildPageLink(page: number, programKey: string) {
@@ -200,8 +217,59 @@ function totalPagesFor(count: number) {
   return Math.max(1, Math.ceil(count / pageSize));
 }
 
-function RecordingRow({ recording }: { recording: StudentRecording }) {
+function recordingsInGroup(group: RecordingDisplayGroup) {
+  return group.sections.flatMap((section) => section.items);
+}
+
+function progressForGroup(group: RecordingDisplayGroup, completedRecordingIds: Set<string>): RecordingGroupProgress {
+  const trackable = recordingsInGroup(group).filter(canTrackRecordingCompletion);
+  const completed = trackable.filter((recording) => completedRecordingIds.has(recording.id)).length;
+  const total = trackable.length;
+  return {
+    completed,
+    percent: total > 0 ? Math.round((completed / total) * 100) : 0,
+    total
+  };
+}
+
+function RecordingProgressCard({ progress }: { progress: RecordingGroupProgress }) {
+  if (progress.total === 0) return null;
+
+  return (
+    <div className="student-recording-progress-card">
+      <div>
+        <span>Training progress</span>
+        <strong>
+          {progress.completed} of {progress.total} completed
+        </strong>
+        <p>Complete all available training recordings to get your training completion certificate.</p>
+      </div>
+      <div className="student-recording-progress-card__meter" aria-label={`Training progress ${progress.percent}%`}>
+        <strong>{progress.percent}%</strong>
+        <span>
+          <i style={{ width: `${progress.percent}%` }} />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function RecordingRow({
+  isCompleted,
+  isProgressPending,
+  onMarkComplete,
+  recording,
+  sectionKey
+}: {
+  isCompleted: boolean;
+  isProgressPending: boolean;
+  onMarkComplete: (recordingId: string) => void;
+  recording: StudentRecording;
+  sectionKey: StudentRecordingSection;
+}) {
   const canOpen = hasRecordingAccess(recording) && Boolean(recording.recordingUrl);
+  const sequenceNumber = recordingSequenceNumber(recording);
+  const showSequenceBadge = sectionKey === 'induction_live_project' && sequenceNumber !== null;
   const [copied, setCopied] = useState(false);
   const [resourcesOpen, setResourcesOpen] = useState(false);
   const initialRelatedResources = recording.relatedResources ?? [];
@@ -224,7 +292,7 @@ function RecordingRow({ recording }: { recording: StudentRecording }) {
       <div className="student-recording-row__main">
         <div className="student-recording-row__title">
           <strong>{recording.title}</strong>
-          {recordingSequenceNumber(recording) !== null ? <StatusBadge tone="safe">{`Step ${recordingSequenceNumber(recording)}`}</StatusBadge> : null}
+          {showSequenceBadge ? <StatusBadge tone="safe">{`Step ${sequenceNumber}`}</StatusBadge> : null}
         </div>
         <p>
           {formatDate(recording.date)} · {recording.time ?? 'Time not set'} · {formatDuration(recording.durationMinutes)}
@@ -256,6 +324,23 @@ function RecordingRow({ recording }: { recording: StudentRecording }) {
             <Lock size={16} />
             Pay to unlock
           </a>
+        ) : null}
+        {canOpen ? (
+          isCompleted ? (
+            <button
+              className="student-recording-complete student-recording-complete--done"
+              disabled
+              type="button"
+            >
+              <Check size={15} />
+              Completed
+            </button>
+          ) : (
+            <button className="student-recording-complete" disabled={isProgressPending} onClick={() => onMarkComplete(recording.id)} type="button">
+              <Check size={15} />
+              {isProgressPending ? 'Saving...' : 'Mark complete'}
+            </button>
+          )
         ) : null}
         {relatedResources.length > 0 ? (
           <button
@@ -293,6 +378,8 @@ function RecordingRow({ recording }: { recording: StudentRecording }) {
 
 export function StudentRecordingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const [pendingProgressRecordingId, setPendingProgressRecordingId] = useState<string | null>(null);
+  const [progressError, setProgressError] = useState('');
   const selectedProgramKey = normalizeProgramKey(searchParams.get('programKey'));
   const page = asPositiveInteger(searchParams.get('page'), 1);
   const recordingsQuery = useStudentRecordings({ limit: 500, page: 1 });
@@ -336,10 +423,25 @@ export function StudentRecordingsPage() {
   const totalPages = totalPagesFor(total);
   const safePage = Math.min(page, totalPages);
   const visibleRecordings = paginateItems(filteredRecordings, safePage);
+  const progressGroups = useMemo(() => buildRecordingDisplayGroups(filteredRecordings, enrolledPrograms, selectedProgram), [enrolledPrograms, filteredRecordings, selectedProgram]);
   const visibleGroups = useMemo(() => buildRecordingDisplayGroups(visibleRecordings, enrolledPrograms, selectedProgram), [enrolledPrograms, selectedProgram, visibleRecordings]);
   const lockedCount = useMemo(() => filteredRecordings.filter((item) => item.locked).length, [filteredRecordings]);
   const availableCount = useMemo(() => filteredRecordings.filter(hasRecordingAccess).length, [filteredRecordings]);
   const latestRecordingDate = useMemo(() => getLatestRecordingDate(filteredRecordings), [filteredRecordings]);
+  const trackableRecordingIds = useMemo(() => filteredRecordings.filter(canTrackRecordingCompletion).map((recording) => recording.id), [filteredRecordings]);
+  const progressQuery = useStudentRecordingProgress(trackableRecordingIds);
+  const progressActions = useStudentRecordingProgressActions(trackableRecordingIds);
+  const completedRecordingIds = useMemo(
+    () => new Set((progressQuery.data?.items ?? []).map((item) => item.recordingId)),
+    [progressQuery.data?.items]
+  );
+  const progressByGroupKey = useMemo(() => {
+    const progressMap = new Map<string, RecordingGroupProgress>();
+    progressGroups.forEach((group) => {
+      progressMap.set(group.key, progressForGroup(group, completedRecordingIds));
+    });
+    return progressMap;
+  }, [completedRecordingIds, progressGroups]);
 
   function updateProgramFilter(nextProgramKey: string) {
     const next = new URLSearchParams();
@@ -348,6 +450,19 @@ export function StudentRecordingsPage() {
       next.set('programKey', nextProgramKey);
     }
     setSearchParams(next);
+  }
+
+  async function markRecordingComplete(recordingId: string) {
+    setProgressError('');
+    setPendingProgressRecordingId(recordingId);
+    try {
+      await progressActions.markComplete.mutateAsync(recordingId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Recording progress could not be updated right now.';
+      setProgressError(message);
+    } finally {
+      setPendingProgressRecordingId(null);
+    }
   }
 
   if (recordingsQuery.isLoading || cohortsQuery.isLoading) {
@@ -422,6 +537,7 @@ export function StudentRecordingsPage() {
           {visibleGroups.map((group) => (
             <div className="student-recording-group" key={group.key}>
               {visibleGroups.length > 1 ? <h2>{group.label}</h2> : null}
+              <RecordingProgressCard progress={progressByGroupKey.get(group.key) ?? progressForGroup(group, completedRecordingIds)} />
               {group.sections.map((section) => (
                 <div className="student-recording-section" key={`${group.key}-${section.key}`}>
                   <div className="student-recording-section-heading">
@@ -429,7 +545,14 @@ export function StudentRecordingsPage() {
                     <strong>{section.items.length}</strong>
                   </div>
                   {section.items.map((recording) => (
-                    <RecordingRow key={recording.id} recording={recording} />
+                    <RecordingRow
+                      isCompleted={completedRecordingIds.has(recording.id)}
+                      isProgressPending={pendingProgressRecordingId === recording.id}
+                      key={recording.id}
+                      onMarkComplete={(recordingId) => void markRecordingComplete(recordingId)}
+                      recording={recording}
+                      sectionKey={section.key}
+                    />
                   ))}
                 </div>
               ))}
@@ -461,6 +584,8 @@ export function StudentRecordingsPage() {
       </nav>
 
       {lockedCount > 0 ? <LockedState /> : null}
+
+      {progressError ? <StateBlock title="Training progress">{progressError}</StateBlock> : null}
 
       <StateBlock title="Recording access">
         Only recordings mapped to your account are shown here. Recording links and paid access stay protected for eligible learners.
