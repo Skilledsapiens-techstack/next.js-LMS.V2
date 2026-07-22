@@ -70,10 +70,15 @@ type ProjectImportantLink = {
   url: string;
 };
 
+type ToolkitAccordionSection = {
+  body: string;
+  id: string;
+  title: string;
+};
+
 type ToolkitFormState = {
   content: string;
-  cvFinanceContent: string;
-  cvManagementContent: string;
+  cvAccordionSections: ToolkitAccordionSection[];
   itemType: AdminProjectToolkitType;
   linkLabel: string;
   linkUrl: string;
@@ -99,12 +104,13 @@ function normalizeKey(value: string) {
 const CV_POINTS_TOOLKIT_ID = 'cv_points_approval';
 
 type CvPointsContent = {
-  finance: string;
-  management: string;
+  accordions?: Array<Partial<ToolkitAccordionSection>>;
+  finance?: string;
+  management?: string;
 };
 
-function emptyCvPointsContent(): CvPointsContent {
-  return { finance: '', management: '' };
+function emptyCvPointsSections(): ToolkitAccordionSection[] {
+  return [];
 }
 
 function decodeJsonEntities(value: string) {
@@ -137,7 +143,7 @@ function readCvPointsPayload(value: string) {
 function looksLikeCvPointsPayload(value: string | undefined) {
   const rawValue = String(value ?? '').trim();
   if (!rawValue.startsWith('{')) return false;
-  return /"?finance"?\s*:|"?management"?\s*:|&quot;finance&quot;\s*:|&quot;management&quot;\s*:/.test(rawValue);
+  return /"?accordions"?\s*:|"?finance"?\s*:|"?management"?\s*:|&quot;accordions&quot;\s*:|&quot;finance&quot;\s*:|&quot;management&quot;\s*:/.test(rawValue);
 }
 
 function isCvPointsToolkitId(value: string | undefined) {
@@ -149,28 +155,40 @@ function isCvPointsToolkitItem(item?: Pick<AdminProjectToolkitItem, 'content' | 
   return isCvPointsToolkitId(item.toolkitId) || looksLikeCvPointsPayload(item.content) || item.title.trim().toLowerCase().includes('cv points');
 }
 
-function parseCvPointsContent(value: string | undefined): CvPointsContent {
+function parseCvPointsSections(value: string | undefined): ToolkitAccordionSection[] {
   const rawValue = String(value ?? '').trim();
-  if (!rawValue) return emptyCvPointsContent();
+  if (!rawValue) return emptyCvPointsSections();
 
   const parsed = readCvPointsPayload(rawValue);
   if (parsed) {
-    return {
-      finance: sanitizeProjectHtml(typeof parsed.finance === 'string' ? parsed.finance : ''),
-      management: sanitizeProjectHtml(typeof parsed.management === 'string' ? parsed.management : '')
-    };
+    if (Array.isArray(parsed.accordions)) {
+      return parsed.accordions
+        .map((section, index) => ({
+          body: sanitizeProjectHtml(typeof section?.body === 'string' ? section.body : ''),
+          id: typeof section?.id === 'string' && section.id.trim() ? section.id : createDraftId('accordion'),
+          title: typeof section?.title === 'string' && section.title.trim() ? section.title.trim() : `Accordion ${index + 1}`
+        }))
+        .filter((section) => section.title || section.body.trim());
+    }
+
+    return [
+      { body: sanitizeProjectHtml(typeof parsed.management === 'string' ? parsed.management : ''), id: createDraftId('accordion-management'), title: 'Management Tracks' },
+      { body: sanitizeProjectHtml(typeof parsed.finance === 'string' ? parsed.finance : ''), id: createDraftId('accordion-finance'), title: 'Finance Tracks' }
+    ].filter((section) => section.body.trim());
   }
 
-  return {
-    finance: '',
-    management: looksLikeCvPointsPayload(rawValue) ? '' : sanitizeProjectHtml(rawValue)
-  };
+  const legacyBody = looksLikeCvPointsPayload(rawValue) ? '' : sanitizeProjectHtml(rawValue);
+  return legacyBody.trim() ? [{ body: legacyBody, id: createDraftId('accordion-legacy'), title: 'Management Tracks' }] : emptyCvPointsSections();
 }
 
-function serializeCvPointsContent(content: CvPointsContent) {
+function serializeCvPointsContent(sections: ToolkitAccordionSection[]) {
   return JSON.stringify({
-    finance: sanitizeProjectHtml(content.finance),
-    management: sanitizeProjectHtml(content.management)
+    accordions: sections
+      .map((section) => ({
+        body: sanitizeProjectHtml(section.body),
+        title: section.title.trim()
+      }))
+      .filter((section) => section.title || section.body.trim())
   });
 }
 
@@ -193,11 +211,10 @@ function formFromRole(role?: AdminProjectRole): RoleFormState {
 }
 
 function formFromToolkitItem(item?: AdminProjectToolkitItem): ToolkitFormState {
-  const cvContent = isCvPointsToolkitItem(item) ? parseCvPointsContent(item?.content) : emptyCvPointsContent();
+  const cvAccordionSections = isCvPointsToolkitItem(item) ? parseCvPointsSections(item?.content) : emptyCvPointsSections();
   return {
     content: richTextFromValue(item?.content ?? ''),
-    cvFinanceContent: cvContent.finance,
-    cvManagementContent: cvContent.management,
+    cvAccordionSections,
     itemType: item?.itemType ?? 'custom',
     linkLabel: item?.linkLabel ?? '',
     linkUrl: item?.linkUrl ?? '',
@@ -909,18 +926,46 @@ function ToolkitEditor({
     });
   }
 
+  function addCvAccordionSection() {
+    setForm((current) => ({
+      ...current,
+      cvAccordionSections: [...current.cvAccordionSections, { body: '', id: createDraftId('accordion'), title: '' }]
+    }));
+  }
+
+  function updateCvAccordionSection(sectionId: string, patch: Partial<ToolkitAccordionSection>) {
+    setForm((current) => ({
+      ...current,
+      cvAccordionSections: current.cvAccordionSections.map((section) => (section.id === sectionId ? { ...section, ...patch } : section))
+    }));
+  }
+
+  function removeCvAccordionSection(sectionId: string) {
+    setForm((current) => ({
+      ...current,
+      cvAccordionSections: current.cvAccordionSections.filter((section) => section.id !== sectionId)
+    }));
+  }
+
+  function moveCvAccordionSection(sectionId: string, direction: -1 | 1) {
+    setForm((current) => {
+      const index = current.cvAccordionSections.findIndex((section) => section.id === sectionId);
+      const targetIndex = index + direction;
+      if (index < 0 || targetIndex < 0 || targetIndex >= current.cvAccordionSections.length) return current;
+      const nextSections = [...current.cvAccordionSections];
+      const [section] = nextSections.splice(index, 1);
+      nextSections.splice(targetIndex, 0, section);
+      return { ...current, cvAccordionSections: nextSections };
+    });
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
     const isCvPointsItem = isCvPointsToolkitId(form.toolkitId);
 
     const payload: AdminProjectToolkitWritePayload = {
-      content: isCvPointsItem
-        ? serializeCvPointsContent({
-            finance: form.cvFinanceContent,
-            management: form.cvManagementContent
-          })
-        : sanitizeProjectHtml(form.content),
+      content: isCvPointsItem ? serializeCvPointsContent(form.cvAccordionSections) : sanitizeProjectHtml(form.content),
       itemType: form.itemType,
       linkLabel: form.linkLabel.trim() || null,
       linkUrl: form.linkUrl.trim() || null,
@@ -934,6 +979,17 @@ function ToolkitEditor({
 
     if (!payload.title) {
       setError('Toolkit title is required.');
+      return;
+    }
+    const incompleteAccordion = isCvPointsItem
+      ? form.cvAccordionSections.find((section) => {
+          const hasTitle = Boolean(section.title.trim());
+          const hasBody = Boolean(sanitizeProjectHtml(section.body).trim());
+          return hasTitle !== hasBody;
+        })
+      : null;
+    if (incompleteAccordion) {
+      setError('Each accordion needs both a title and content.');
       return;
     }
     if (!isEditing && !payload.toolkitId) {
@@ -1028,21 +1084,46 @@ function ToolkitEditor({
       {isCvPointsToolkitId(form.toolkitId) ? (
         <div className="admin-project-cv-editor admin-project-form__wide">
           <div className="admin-project-cv-editor__intro">
-            <span className="section-eyebrow">CV points approval</span>
-            <p>Students will see these as two accordions in the full-screen reader. Blank accordions stay hidden.</p>
+            <div>
+              <span className="section-eyebrow">CV points approval</span>
+              <p>Add as many accordion sections as needed. Students will see them closed by default in the full-screen reader.</p>
+            </div>
+            <button className="segmented-button" onClick={addCvAccordionSection} type="button">
+              <Plus size={15} />
+              Add Accordion
+            </button>
           </div>
-          <ProjectRichTextEditor
-            label="Management Tracks"
-            onChange={(value) => updateField('cvManagementContent', value)}
-            placeholder="Add approval guidance for Management Consulting, Sales & Marketing, Product, HR, or related management tracks."
-            value={form.cvManagementContent}
-          />
-          <ProjectRichTextEditor
-            label="Finance Tracks"
-            onChange={(value) => updateField('cvFinanceContent', value)}
-            placeholder="Add approval guidance for Equity Research, Quant Finance, PEVC, and other finance tracks."
-            value={form.cvFinanceContent}
-          />
+          {form.cvAccordionSections.length > 0 ? (
+            form.cvAccordionSections.map((section, index) => (
+              <article className="admin-project-cv-accordion-editor" key={section.id}>
+                <div className="admin-project-cv-accordion-editor__head">
+                  <label>
+                    <span>Accordion title *</span>
+                    <input value={section.title} onChange={(event) => updateCvAccordionSection(section.id, { title: event.target.value })} placeholder="e.g. Management Tracks" />
+                  </label>
+                  <div className="admin-project-custom-section__actions">
+                    <button aria-label="Move accordion up" className="icon-button" disabled={index === 0} onClick={() => moveCvAccordionSection(section.id, -1)} type="button">
+                      <ArrowUp size={16} />
+                    </button>
+                    <button aria-label="Move accordion down" className="icon-button" disabled={index === form.cvAccordionSections.length - 1} onClick={() => moveCvAccordionSection(section.id, 1)} type="button">
+                      <ArrowDown size={16} />
+                    </button>
+                    <button aria-label="Delete accordion" className="icon-button icon-button--danger" onClick={() => removeCvAccordionSection(section.id)} type="button">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                </div>
+                <ProjectRichTextEditor
+                  label="Accordion content *"
+                  onChange={(value) => updateCvAccordionSection(section.id, { body: value })}
+                  placeholder="Add the guidance students should read after opening this accordion."
+                  value={section.body}
+                />
+              </article>
+            ))
+          ) : (
+            <p className="admin-project-empty-note">No accordions added yet. Add one accordion to show content in the student reader.</p>
+          )}
         </div>
       ) : (
         <ProjectRichTextEditor

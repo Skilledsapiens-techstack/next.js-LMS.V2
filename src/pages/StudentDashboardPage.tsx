@@ -380,6 +380,58 @@ function takeMapped<TItem>(items: unknown[], mapper: (item: unknown) => TItem | 
   return items.map(mapper).filter((item): item is TItem => Boolean(item)).slice(0, limit);
 }
 
+function getScheduledAt(item: StudentScheduleItem) {
+  const dateMatch = item.date?.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const timeMatch = item.time?.match(/^(\d{1,2}):(\d{2})/);
+
+  if (dateMatch) {
+    const [, year, month, day] = dateMatch;
+    const hour = timeMatch ? Number(timeMatch[1]) : 0;
+    const minute = timeMatch ? Number(timeMatch[2]) : 0;
+    const scheduledAt = new Date(Number(year), Number(month) - 1, Number(day), hour, minute);
+    return Number.isNaN(scheduledAt.getTime()) ? null : scheduledAt;
+  }
+
+  const scheduledAt = new Date(item.date);
+  return Number.isNaN(scheduledAt.getTime()) ? null : scheduledAt;
+}
+
+function getDurationMs(item: StudentScheduleItem) {
+  const durationMinutes = Number(item.durationMinutes);
+  return Number.isFinite(durationMinutes) && durationMinutes > 0 ? durationMinutes * 60 * 1000 : 0;
+}
+
+function getScheduledEndAt(item: StudentScheduleItem) {
+  const scheduledAt = getScheduledAt(item);
+  if (!scheduledAt) return null;
+
+  return new Date(scheduledAt.getTime() + getDurationMs(item));
+}
+
+function isLiveByTime(item: StudentScheduleItem, now: number) {
+  if (item.status === 'Completed') return false;
+
+  const scheduledAt = getScheduledAt(item);
+  const scheduledEndAt = getScheduledEndAt(item);
+  if (!scheduledAt || !scheduledEndAt) return false;
+
+  const startTime = scheduledAt.getTime();
+  const endTime = scheduledEndAt.getTime();
+  return startTime <= now && now < endTime;
+}
+
+function isPastSession(item: StudentScheduleItem, now: number) {
+  if (item.status === 'Completed') return true;
+  const scheduledEndAt = getScheduledEndAt(item);
+  return Boolean(scheduledEndAt && scheduledEndAt.getTime() <= now);
+}
+
+function compareScheduleAsc(left: StudentScheduleItem, right: StudentScheduleItem) {
+  const leftTime = getScheduledAt(left)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+  const rightTime = getScheduledAt(right)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+  return leftTime - rightTime;
+}
+
 function formatScheduleTime(item?: StudentScheduleItem) {
   if (!item) {
     return 'Time pending';
@@ -447,7 +499,7 @@ function getSessionAction(item?: StudentScheduleItem) {
   }
 
   if (!item.locked && item.hasAccess !== false && item.joinUrl) {
-    return { href: item.joinUrl, label: item.status === 'Live' ? 'Join live class' : 'Open meeting link' };
+    return { href: item.joinUrl, label: 'Open meeting link' };
   }
 
   return { label: 'View upcoming workshops', path: '/student/schedule' };
@@ -472,18 +524,22 @@ function renderItemList<TItem>({
 export function StudentDashboardPage() {
   const dashboardQuery = useStudentDashboard();
   const [selectedGuidance, setSelectedGuidance] = useState<StudentGuidanceContent | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const profile = dashboardQuery.data?.student;
   const isLoading = dashboardQuery.isLoading;
   const isError = dashboardQuery.isError;
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
   const dashboardItems = pickArray(dashboardQuery.data?.dashboard, ['workshops']);
   const resourceItemsAll = takeMapped(pickArray(dashboardQuery.data?.resources, ['resources', 'items']), mapResource, 500).sort(
     (left, right) => dateTimeValue(right, ['updatedAt']) - dateTimeValue(left, ['updatedAt'])
   );
-  const scheduleItemsAll = takeMapped(dashboardItems, mapScheduleItem, 500).sort((left, right) => {
-    const leftValue = `${left.date ?? ''} ${left.time ?? ''}`;
-    const rightValue = `${right.date ?? ''} ${right.time ?? ''}`;
-    return leftValue.localeCompare(rightValue);
-  });
+  const scheduleItemsAll = takeMapped(dashboardItems, mapScheduleItem, 500);
+  const upcomingScheduleItems = scheduleItemsAll.filter((item) => !isPastSession(item, now)).sort(compareScheduleAsc);
   const recordingItemsAll = takeMapped(dashboardItems, mapRecording, 500);
   const announcementItemsAll = takeMapped(
     pickArray(dashboardQuery.data?.dashboard, ['announcements']).filter(isVisibleAnnouncementNow).sort((left, right) => dateTimeValue(right, ['updated_at', 'updatedAt']) - dateTimeValue(left, ['updated_at', 'updatedAt'])),
@@ -496,7 +552,7 @@ export function StudentDashboardPage() {
     projects: countFromBundle(dashboardQuery.data?.projects, ['projects', 'items']),
     recordings: recordingItemsAll.length,
     resources: resourceItemsAll.length,
-    schedule: scheduleItemsAll.length
+    schedule: upcomingScheduleItems.length
   };
   const summaryCards = buildSummaryCards(scopedCounts);
   const trackRoles = asArray(profile?.trackRoleIds).filter((role): role is string => typeof role === 'string');
@@ -510,12 +566,13 @@ export function StudentDashboardPage() {
     profile?.cohortName
   ]);
   const trainingProgramNames = uniqueNames(String(profile?.programName ?? '').split(','));
-  const scheduleItems = scheduleItemsAll.slice(0, 3);
+  const scheduleItems = upcomingScheduleItems.slice(0, 3);
   const recordingItems = recordingItemsAll.slice(0, 3);
   const resourceItems = resourceItemsAll.slice(0, 3);
   const announcementItems = announcementItemsAll.slice(0, 3);
-  const nextSession = scheduleItems[0];
+  const nextSession = scheduleItems.find((item) => isLiveByTime(item, now)) ?? scheduleItems[0];
   const sessionAction = getSessionAction(nextSession);
+  const nextSessionStatus = nextSession ? (isLiveByTime(nextSession, now) ? 'Live' : nextSession.status) : undefined;
 
   if (isLoading) {
     return (
@@ -673,31 +730,33 @@ export function StudentDashboardPage() {
         ))}
       </div>
 
-      <section className="student-home-grid student-home-grid--single">
-        <article className="student-panel student-next-session">
-          <div className="student-panel__header">
-            <div>
-              <span className="eyebrow">Next up</span>
-              <h2>{nextSession?.title ?? 'No live class available'}</h2>
+      {nextSession ? (
+        <section className="student-home-grid student-home-grid--single">
+          <article className="student-panel student-next-session">
+            <div className="student-panel__header">
+              <div>
+                <span className="eyebrow">Next up</span>
+                <h2>{nextSession.title}</h2>
+              </div>
+              {nextSessionStatus ? <StatusBadge>{formatStatusLabel(nextSessionStatus)}</StatusBadge> : null}
             </div>
-            {nextSession ? <StatusBadge>{formatStatusLabel(nextSession.status)}</StatusBadge> : null}
-          </div>
-          <p>{nextSession ? formatScheduleTime(nextSession) : 'When a scheduled or live class is available for your cohort, it will appear here.'}</p>
-          <div className="student-panel__footer">
-            {'href' in sessionAction ? (
-              <a className="student-action student-action--primary" href={sessionAction.href} rel="noreferrer" target="_blank">
-                <ExternalLink size={18} />
-                {sessionAction.label}
-              </a>
-            ) : (
-              <Link className="student-action student-action--primary" to={sessionAction.path}>
-                <ArrowRight size={18} />
-                {sessionAction.label}
-              </Link>
-            )}
-          </div>
-        </article>
-      </section>
+            <p>{formatScheduleTime(nextSession)}</p>
+            <div className="student-panel__footer">
+              {'href' in sessionAction ? (
+                <a className="student-action student-action--primary" href={sessionAction.href} rel="noreferrer" target="_blank">
+                  <ExternalLink size={18} />
+                  {sessionAction.label}
+                </a>
+              ) : (
+                <Link className="student-action student-action--primary" to={sessionAction.path}>
+                  <ArrowRight size={18} />
+                  {sessionAction.label}
+                </Link>
+              )}
+            </div>
+          </article>
+        </section>
+      ) : null}
 
       <section className="student-home-grid student-home-grid--three">
         <article className="student-panel">

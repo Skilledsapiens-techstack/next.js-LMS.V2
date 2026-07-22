@@ -1,0 +1,19 @@
+Hostinger deployment package - LMS latest build
+
+Release: hostinger-release-20260721-custom-toolkit-accordions
+Prepared: 21 Jul 2026
+
+Upload the contents of this folder directly into Hostinger public_html.
+
+Included:
+- index.html
+- .htaccess
+- favicon.ico
+- favicon-16x16.png
+- favicon-32x32.png
+- apple-touch-icon.png
+- assets/
+
+Important:
+- Keep .htaccess in the public_html root so direct route refreshes work.
+- Do not upload this zip file inside public_html after extraction.

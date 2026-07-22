@@ -85,6 +85,10 @@ function normalizeKey(value: string | undefined) {
   return (value ?? '').trim().toLowerCase().replace(/-/g, '_');
 }
 
+function normalizeEmailValue(value: string | undefined) {
+  return (value ?? '').trim().toLowerCase();
+}
+
 function parseCertificateStatus(value: string | null): AdminCertificateStatus | 'all' {
   return certificateStatusOptions.includes(value as AdminCertificateStatus | 'all') ? (value as AdminCertificateStatus | 'all') : 'all';
 }
@@ -798,6 +802,14 @@ export function AdminCertificatesPage() {
     page: 1,
     status: 'active'
   });
+  const issuedLeadershipCertificatesQuery = useAdminCertificates({
+    certificateType: 'leadership',
+    enabled: canIssueCertificates && activeTab === 'leadership' && Boolean(selectedProgramKey),
+    limit: 500,
+    page: 1,
+    programKey: selectedProgramKey || undefined,
+    status: 'issued'
+  });
   const manualStudentsQuery = useAdminStudents({
     enabled: canIssueCertificates && activeTab === 'manual' && manualStudentSource === 'roster',
     limit: 10,
@@ -818,12 +830,25 @@ export function AdminCertificatesPage() {
   const settingsByProgramKey = useMemo(() => new Map(certificateSettings.map((setting) => [setting.programKey, setting])), [certificateSettings]);
   const filteredCohorts = useMemo(() => allCohorts.filter((cohort) => isCohortForProgram(cohort, selectedProgram)).sort((a, b) => a.name.localeCompare(b.name)), [allCohorts, selectedProgram]);
   const eligibleStudents = studentsQuery.data?.items ?? [];
+  const alreadyIssuedLeadershipByEmail = useMemo(() => {
+    const certificates = issuedLeadershipCertificatesQuery.data?.items ?? [];
+    return new Map(
+      certificates
+        .filter((certificate) => certificate.certificateType === 'leadership' && certificate.programKey === selectedProgramKey && certificate.status !== 'revoked')
+        .map((certificate) => [normalizeEmailValue(certificate.studentEmail), certificate])
+    );
+  }, [issuedLeadershipCertificatesQuery.data?.items, selectedProgramKey]);
   const filteredEligibleStudents = useMemo(() => {
     const term = studentPickerSearch.trim().toLowerCase();
     if (!term) return eligibleStudents;
     return eligibleStudents.filter((student) => `${student.fullName} ${student.email} ${student.studentId ?? ''}`.toLowerCase().includes(term));
   }, [eligibleStudents, studentPickerSearch]);
-  const allFilteredStudentsSelected = filteredEligibleStudents.length > 0 && filteredEligibleStudents.every((student) => selectedStudentIds.has(student.id));
+  const selectableFilteredEligibleStudents = useMemo(
+    () => filteredEligibleStudents.filter((student) => !alreadyIssuedLeadershipByEmail.has(normalizeEmailValue(student.email))),
+    [alreadyIssuedLeadershipByEmail, filteredEligibleStudents]
+  );
+  const alreadyIssuedVisibleCount = filteredEligibleStudents.length - selectableFilteredEligibleStudents.length;
+  const allFilteredStudentsSelected = selectableFilteredEligibleStudents.length > 0 && selectableFilteredEligibleStudents.every((student) => selectedStudentIds.has(student.id));
   const selectedStudentCountExceedsBatchLimit = selectedStudentIds.size > leadershipCertificateBatchLimit;
   const manualStudentOptions = manualStudentsQuery.data?.items ?? [];
   const certificates = certificatesQuery.data;
@@ -833,6 +858,23 @@ export function AdminCertificatesPage() {
   useEffect(() => {
     if (!canIssueCertificates && activeTab !== 'issued') setActiveTab('issued');
   }, [activeTab, canIssueCertificates]);
+
+  useEffect(() => {
+    if (alreadyIssuedLeadershipByEmail.size === 0 || selectedStudentIds.size === 0) return;
+    const studentsById = new Map(eligibleStudents.map((student) => [student.id, student]));
+    setSelectedStudentIds((current) => {
+      let changed = false;
+      const next = new Set(current);
+      for (const studentId of current) {
+        const student = studentsById.get(studentId);
+        if (student && alreadyIssuedLeadershipByEmail.has(normalizeEmailValue(student.email))) {
+          next.delete(studentId);
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [alreadyIssuedLeadershipByEmail, eligibleStudents, selectedStudentIds.size]);
 
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -897,6 +939,8 @@ export function AdminCertificatesPage() {
   }
 
   function toggleStudent(studentId: string) {
+    const student = eligibleStudents.find((item) => item.id === studentId);
+    if (student && alreadyIssuedLeadershipByEmail.has(normalizeEmailValue(student.email))) return;
     setSelectedStudentIds((current) => {
       const next = new Set(current);
       if (next.has(studentId)) {
@@ -911,7 +955,7 @@ export function AdminCertificatesPage() {
   function selectFilteredStudents() {
     setSelectedStudentIds((current) => {
       const next = new Set(current);
-      for (const student of filteredEligibleStudents) next.add(student.id);
+      for (const student of selectableFilteredEligibleStudents) next.add(student.id);
       return next;
     });
   }
@@ -1126,13 +1170,14 @@ export function AdminCertificatesPage() {
                     <h3>Eligible Students</h3>
                     {selectedCohortName && eligibleStudents.length > 0 ? (
                       <p>
-                        {selectedStudentIds.size} selected · {filteredEligibleStudents.length} shown · {eligibleStudents.length} loaded
+                        {selectedStudentIds.size} selected · {selectableFilteredEligibleStudents.length} can issue · {filteredEligibleStudents.length} shown · {eligibleStudents.length} loaded
+                        {alreadyIssuedVisibleCount > 0 ? ` · ${alreadyIssuedVisibleCount} already issued` : ''}
                       </p>
                     ) : null}
                   </div>
                   {eligibleStudents.length > 0 ? (
                     <div className="eligible-student-panel__actions">
-                      <button className="student-action student-action--secondary" disabled={filteredEligibleStudents.length === 0 || allFilteredStudentsSelected} onClick={selectFilteredStudents} type="button">
+                      <button className="student-action student-action--secondary" disabled={selectableFilteredEligibleStudents.length === 0 || allFilteredStudentsSelected} onClick={selectFilteredStudents} type="button">
                         Select filtered
                       </button>
                       <button className="student-action student-action--secondary" disabled={selectedStudentIds.size === 0} onClick={clearSelectedStudents} type="button">
@@ -1152,15 +1197,24 @@ export function AdminCertificatesPage() {
                 ) : null}
                 {eligibleStudents.length > 0 ? (
                   <div className="eligible-student-list">
-                    {filteredEligibleStudents.map((student) => (
-                      <label className="eligible-student-item" key={student.id}>
-                        <input checked={selectedStudentIds.has(student.id)} onChange={() => toggleStudent(student.id)} type="checkbox" />
-                        <span>
-                          <strong>{student.fullName}</strong>
-                          <small>{student.email}</small>
-                        </span>
-                      </label>
-                    ))}
+                    {filteredEligibleStudents.map((student) => {
+                      const existingCertificate = alreadyIssuedLeadershipByEmail.get(normalizeEmailValue(student.email));
+                      const alreadyIssued = Boolean(existingCertificate);
+                      return (
+                        <label className={`eligible-student-item${alreadyIssued ? ' eligible-student-item--disabled' : ''}`} key={student.id}>
+                          <input checked={selectedStudentIds.has(student.id)} disabled={alreadyIssued} onChange={() => toggleStudent(student.id)} type="checkbox" />
+                          <span>
+                            <strong>{student.fullName}</strong>
+                            <small>{student.email}</small>
+                          </span>
+                          {alreadyIssued ? (
+                            <em className="eligible-student-item__status">
+                              Already issued{existingCertificate?.certificateId ? ` · ${existingCertificate.certificateId}` : ''}
+                            </em>
+                          ) : null}
+                        </label>
+                      );
+                    })}
                     {filteredEligibleStudents.length === 0 ? <p>No students match this search.</p> : null}
                   </div>
                 ) : null}

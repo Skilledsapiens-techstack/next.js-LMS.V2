@@ -217,7 +217,9 @@ export function LoginPage() {
       <section className="auth-shell">
         <section className="auth-panel">
           <div className="auth-lockup">
-            <div className="brand-mark">SS</div>
+            <div className="brand-mark brand-mark--logo">
+              <img alt="Skilled Sapiens logo" src="/apple-touch-icon.png" />
+            </div>
             <div>
               <strong>Skilled Sapiens</strong>
               <span>{portal === 'admin' ? 'Admin portal' : 'Learning portal'}</span>
