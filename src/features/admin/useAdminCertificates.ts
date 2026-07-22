@@ -102,7 +102,7 @@ export type IssueLeadershipCertificatesInput = {
 
 export type IssueLeadershipCertificatesResult = {
   certificates: AdminCertificate[];
-  skipped: Array<{ reason: string; studentId?: string }>;
+  skipped: Array<{ certificateId?: string; reason: string; studentId?: string }>;
   message: string;
 };
 
@@ -146,9 +146,11 @@ export type SaveCertificateProgramSettingInput = {
 
 export type AdminCertificatesQuery = {
   certificateType?: AdminCertificateType | 'all';
+  enabled?: boolean;
   generationStatus?: AdminCertificateGenerationStatus | 'all';
   limit?: number;
   page?: number;
+  programKey?: string;
   search?: string;
   status?: AdminCertificateStatus | 'all';
 };
@@ -167,11 +169,12 @@ export function useAdminCertificates(query: AdminCertificatesQuery) {
   const generationStatus = query.generationStatus ?? 'all';
   const limit = query.limit ?? 25;
   const page = query.page ?? 1;
+  const programKey = query.programKey?.trim();
   const search = query.search?.trim();
   const status = query.status ?? 'all';
 
   return useQuery({
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && (query.enabled ?? true),
     queryFn: () =>
       apiGet<PaginatedResponse<AdminCertificate>>('/admins/certificates', {
         accessToken: accessToken ?? undefined,
@@ -180,11 +183,12 @@ export function useAdminCertificates(query: AdminCertificatesQuery) {
           generationStatus,
           limit,
           page,
+          programKey,
           search,
           status
         }
       }),
-    queryKey: ['admin-certificates', accessToken, page, limit, status, generationStatus, certificateType, search],
+    queryKey: ['admin-certificates', accessToken, page, limit, status, generationStatus, certificateType, programKey, search],
     staleTime: 60_000
   });
 }

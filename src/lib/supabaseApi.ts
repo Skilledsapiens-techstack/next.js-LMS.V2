@@ -366,7 +366,11 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
     searchColumns: ['program_key', 'status']
   },
   '/admins/certificate-requests': { table: 'certificate_requests', searchColumns: ['student_email', 'student_name', 'program_name'] },
-  '/admins/certificates': { table: 'certificates', searchColumns: ['student_email', 'student_name', 'program_name', 'project_title'] },
+  '/admins/certificates': {
+    table: 'certificates',
+    filterColumns: { certificateType: 'certificate_type', generationStatus: 'generation_status', programKey: 'program_key', status: 'status' },
+    searchColumns: ['student_email', 'student_name', 'program_name', 'project_title']
+  },
   '/admins/cohorts': {
     table: 'cohorts',
     filterColumns: { program: 'program_key' },
@@ -3276,21 +3280,25 @@ async function issueLeadershipCertificates(context: Awaited<ReturnType<typeof cr
   if (studentRows.length === 0) throw new ApiClientError('No active students found for issuance.', 404);
 
   const studentEmails = studentRows.map((student) => String(student.email ?? '').trim()).filter(Boolean);
+  const studentEmailSet = new Set(studentEmails.map(normalizeEmail));
   const { data: existingCertificates, error: existingError } = await context.supabase
     .from('certificates')
     .select('id,certificate_id,student_email')
     .eq('certificate_type', 'leadership')
     .eq('program_key', programKey)
-    .eq('cohort_name', cohortName)
-    .in('student_email', studentEmails)
-    .limit(500);
+    .neq('status', 'revoked')
+    .limit(5000);
 
   if (existingError) throw new ApiClientError(existingError.message, 503);
 
-  const existingEmails = new Set((existingCertificates ?? []).map((certificate) => normalizeEmail(certificate.student_email)));
+  const existingByEmail = new Map(
+    (existingCertificates ?? [])
+      .filter((certificate) => studentEmailSet.has(normalizeEmail(certificate.student_email)))
+      .map((certificate) => [normalizeEmail(certificate.student_email), certificate])
+  );
   const now = new Date();
   const rows = [];
-  const skipped: Array<{ reason: string; studentId?: string }> = [];
+  const skipped: Array<{ reason: string; studentId?: string; certificateId?: string }> = [];
 
   for (const student of studentRows) {
     const studentEmail = String(student.email ?? '').trim();
@@ -3298,8 +3306,13 @@ async function issueLeadershipCertificates(context: Awaited<ReturnType<typeof cr
       skipped.push({ reason: 'Student email is missing.', studentId: String(student.id ?? '') });
       continue;
     }
-    if (existingEmails.has(normalizeEmail(studentEmail))) {
-      skipped.push({ reason: 'Leadership certificate already exists for this student, program, and cohort.', studentId: String(student.id ?? '') });
+    const existingCertificate = existingByEmail.get(normalizeEmail(studentEmail));
+    if (existingCertificate) {
+      skipped.push({
+        certificateId: String(existingCertificate.certificate_id ?? ''),
+        reason: 'Leadership certificate already exists for this student and program.',
+        studentId: String(student.id ?? '')
+      });
       continue;
     }
 
@@ -3336,7 +3349,7 @@ async function issueLeadershipCertificates(context: Awaited<ReturnType<typeof cr
   if (rows.length === 0) {
     return {
       certificates: [],
-      message: `No new certificates issued. ${skipped.length} skipped.`,
+      message: `No new certificates issued. ${skipped.length} selected student${skipped.length === 1 ? '' : 's'} skipped because a certificate already exists or student data is incomplete.`,
       skipped
     };
   }
@@ -3354,7 +3367,7 @@ async function issueLeadershipCertificates(context: Awaited<ReturnType<typeof cr
 
   return {
     certificates: (data ?? []).map(enrichRow).map(camelize),
-    message: `${rows.length} leadership certificate${rows.length === 1 ? '' : 's'} issued.${skipped.length ? ` ${skipped.length} skipped.` : ''}${generationMessage ? ` ${generationMessage}` : ''}`,
+    message: `${rows.length} leadership certificate${rows.length === 1 ? '' : 's'} issued.${skipped.length ? ` ${skipped.length} skipped because a certificate already exists or student data is incomplete.` : ''}${generationMessage ? ` ${generationMessage}` : ''}`,
     skipped
   };
 }
@@ -5430,6 +5443,7 @@ function mutationError(error: { code?: string; message: string }, table: string)
     if (table === 'role_master') return new ApiClientError('A project role with this Role ID already exists.', 409);
     if (table === 'recording_sequence_rules') return new ApiClientError('This sequence number already exists for the selected program and section.', 409);
     if (table === 'project_submission_requests') return new ApiClientError('A project report attempt already exists for this cohort.', 409);
+    if (table === 'certificates') return new ApiClientError('A certificate already exists for this student and program. Refresh the list and issue only eligible students.', 409);
     return new ApiClientError('A record with this unique value already exists.', 409);
   }
 

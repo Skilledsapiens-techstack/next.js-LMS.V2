@@ -180,7 +180,9 @@ export function AppShell({ navItems, portal }: AppShellProps) {
         </button>
 
         <div className="brand-lockup">
-          <div className="brand-mark">SS</div>
+          <div className="brand-mark brand-mark--logo">
+            <img alt="Skilled Sapiens logo" src="/apple-touch-icon.png" />
+          </div>
           <div>
             <strong>Skilled Sapiens</strong>
             <span>{portal === 'student' ? 'Learning portal' : 'Admin portal'}</span>

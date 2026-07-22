@@ -237,15 +237,22 @@ function RecordingProgressCard({ progress }: { progress: RecordingGroupProgress 
 
   return (
     <div className="student-recording-progress-card">
-      <div>
-        <span>Training progress</span>
-        <strong>
-          {progress.completed} of {progress.total} completed
-        </strong>
-        <p>Complete all available training recordings to get your training completion certificate.</p>
+      <div className="student-recording-progress-card__content">
+        <div className="student-recording-progress-card__header">
+          <span>Training progress</span>
+          <strong>
+            {progress.completed} of {progress.total} completed
+          </strong>
+        </div>
+        <p>Complete atleast 75% training modules to get your training completion certificate.</p>
       </div>
       <div className="student-recording-progress-card__meter" aria-label={`Training progress ${progress.percent}%`}>
-        <strong>{progress.percent}%</strong>
+        <strong>
+          <span>
+            {progress.completed} / {progress.total}
+          </span>
+          <span>{progress.percent}%</span>
+        </strong>
         <span>
           <i style={{ width: `${progress.percent}%` }} />
         </span>
@@ -410,15 +417,16 @@ export function StudentRecordingsPage() {
       })
       .sort((left, right) => left.label.localeCompare(right.label));
   }, [enrolledCohorts, recordings]);
-  const selectedProgram = useMemo(() => enrolledPrograms.find((program) => program.value === selectedProgramKey), [enrolledPrograms, selectedProgramKey]);
+  const activeProgramKey = selectedProgramKey || enrolledPrograms[0]?.value || '';
+  const selectedProgram = useMemo(() => enrolledPrograms.find((program) => program.value === activeProgramKey), [activeProgramKey, enrolledPrograms]);
   const filteredRecordings = useMemo(() => {
-    const matched = !selectedProgramKey
-      ? recordings
-      : selectedProgram
+    const matched = activeProgramKey
+      ? selectedProgram
         ? recordings.filter((recording) => recordingMatchesProgram(recording, selectedProgram))
-        : recordings.filter((recording) => primaryProgramKeyForRecording(recording) === selectedProgramKey);
+        : recordings.filter((recording) => primaryProgramKeyForRecording(recording) === activeProgramKey)
+      : recordings;
     return [...matched].sort(compareRecordingsForStudent);
-  }, [recordings, selectedProgram, selectedProgramKey]);
+  }, [activeProgramKey, recordings, selectedProgram]);
   const total = filteredRecordings.length;
   const totalPages = totalPagesFor(total);
   const safePage = Math.min(page, totalPages);
@@ -514,23 +522,21 @@ export function StudentRecordingsPage() {
         </article>
       </div>
 
-      <section className="student-recording-chips" aria-label="Recording program filters">
-        <button className={`student-recording-chip ${selectedProgramKey ? '' : 'student-recording-chip--active'}`} onClick={() => updateProgramFilter('')} type="button">
-          <span>All Recordings</span>
-          <strong>{recordings.length}</strong>
-        </button>
-        {enrolledPrograms.map((program) => (
-          <button
-            className={`student-recording-chip ${selectedProgramKey === program.value ? 'student-recording-chip--active' : ''}`}
-            key={program.value}
-            onClick={() => updateProgramFilter(program.value)}
-            type="button"
-          >
-            <span>{program.label}</span>
-            <strong>{program.count}</strong>
-          </button>
-        ))}
-      </section>
+      {enrolledPrograms.length > 0 ? (
+        <section className="student-recording-chips" aria-label="Recording program filters">
+          {enrolledPrograms.map((program) => (
+            <button
+              className={`student-recording-chip ${activeProgramKey === program.value ? 'student-recording-chip--active' : ''}`}
+              key={program.value}
+              onClick={() => updateProgramFilter(program.value)}
+              type="button"
+            >
+              <span>{program.label}</span>
+              <strong>{program.count}</strong>
+            </button>
+          ))}
+        </section>
+      ) : null}
 
       {visibleRecordings.length > 0 ? (
         <section className="student-recording-list" aria-label="Visible recordings">
@@ -565,7 +571,7 @@ export function StudentRecordingsPage() {
 
       <nav className="pagination-bar" aria-label="Recording pagination">
         {safePage > 1 ? (
-          <Link className="pagination-link" to={buildPageLink(safePage - 1, selectedProgramKey)}>
+          <Link className="pagination-link" to={buildPageLink(safePage - 1, activeProgramKey)}>
             Previous page
           </Link>
         ) : (
@@ -575,7 +581,7 @@ export function StudentRecordingsPage() {
           Page {safePage} of {totalPages} · {total} matching
         </span>
         {safePage < totalPages ? (
-          <Link className="pagination-link" to={buildPageLink(safePage + 1, selectedProgramKey)}>
+          <Link className="pagination-link" to={buildPageLink(safePage + 1, activeProgramKey)}>
             Next page
           </Link>
         ) : (

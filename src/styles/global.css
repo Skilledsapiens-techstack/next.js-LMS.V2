@@ -1818,6 +1818,19 @@ a {
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 8%);
 }
 
+.brand-mark--logo {
+  overflow: hidden;
+  background: transparent;
+  box-shadow: none;
+}
+
+.brand-mark--logo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .brand-lockup--large .brand-mark {
   background: var(--color-brand);
   box-shadow: none;
@@ -3736,16 +3749,16 @@ h1 {
 }
 
 .student-recording-chips {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 8px;
-  align-items: end;
+  align-items: stretch;
 }
 
 .student-recording-chip {
-  display: inline-flex;
+  display: flex;
   min-height: 44px;
-  max-width: 360px;
+  width: 100%;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -3768,8 +3781,9 @@ h1 {
 }
 
 .student-recording-chip:hover {
-  border-color: rgba(224, 44, 38, 0.45);
-  box-shadow: 0 10px 22px rgba(17, 24, 39, 0.08);
+  border-color: rgba(133, 27, 27, 0.36);
+  background: #fff6f6;
+  box-shadow: 0 10px 22px rgba(127, 29, 29, 0.08);
   transform: translateY(-1px);
 }
 
@@ -3779,10 +3793,12 @@ h1 {
 }
 
 .student-recording-chip--active {
-  border-color: rgba(224, 44, 38, 0.55);
-  background: #fff8e1;
+  border-color: rgba(133, 27, 27, 0.48);
+  background: #fff1f1;
   color: var(--color-text);
-  box-shadow: inset 0 3px 0 var(--color-accent-gold);
+  box-shadow:
+    inset 0 3px 0 rgba(185, 28, 28, 0.65),
+    0 10px 22px rgba(127, 29, 29, 0.06);
 }
 
 .student-recording-chip span {
@@ -3890,22 +3906,47 @@ h1 {
 
 .student-recording-progress-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+  gap: 20px;
   align-items: center;
   border-bottom: 1px solid var(--color-border);
   background: #fffdf4;
-  padding: 14px 18px;
+  padding: 18px 22px;
 }
 
-.student-recording-progress-card strong {
+.student-recording-progress-card__content {
+  min-width: 0;
+}
+
+.student-recording-progress-card__header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.student-recording-progress-card__header > span {
   color: var(--color-text);
-  font-size: 15px;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.student-recording-progress-card__header strong {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  border: 1px solid rgb(255 212 0 / 70%);
+  border-radius: 999px;
+  background: #fff5bf;
+  color: var(--color-text);
+  font-size: 14px;
   font-weight: 800;
+  padding: 6px 12px;
+  white-space: nowrap;
 }
 
 .student-recording-progress-card p {
-  margin-top: 4px;
+  margin-top: 8px;
   color: var(--color-text-muted);
   font-size: 13px;
   line-height: 1.45;
@@ -3913,17 +3954,24 @@ h1 {
 
 .student-recording-progress-card__meter {
   display: grid;
-  gap: 7px;
+  gap: 8px;
+  min-width: 0;
 }
 
 .student-recording-progress-card__meter strong {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
   color: var(--color-text-muted);
   font-size: 12px;
   font-weight: 800;
-  text-align: right;
 }
 
-.student-recording-progress-card__meter span {
+.student-recording-progress-card__meter strong span {
+  display: inline;
+}
+
+.student-recording-progress-card__meter > span {
   display: block;
   height: 8px;
   overflow: hidden;
@@ -4795,8 +4843,8 @@ h1 {
 }
 
 .student-schedule-tab:hover {
-  border-color: rgb(255 212 0 / 70%);
-  background: #fffdf1;
+  border-color: rgba(133, 27, 27, 0.34);
+  background: #fff6f6;
   transform: translateY(-1px);
 }
 
@@ -4817,12 +4865,14 @@ h1 {
 }
 
 .student-schedule-tab--active {
-  border-color: rgb(223 49 43 / 28%);
-  background: #fff7d8;
+  border-color: rgba(133, 27, 27, 0.46);
+  background: #fff1f1;
+  box-shadow: inset 0 3px 0 rgba(185, 28, 28, 0.65);
 }
 
 .student-schedule-tab--active strong {
-  background: var(--color-gold);
+  background: #fee2e2;
+  color: #7f1d1d;
 }
 
 .student-schedule-list {
@@ -5766,6 +5816,17 @@ h1 {
   text-transform: none;
 }
 
+.live-project-submit-form .live-project-feedback-count {
+  justify-self: end;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.live-project-submit-form .live-project-feedback-count--ready {
+  color: var(--color-success);
+}
+
 .live-project-submit-form input,
 .live-project-submit-form select,
 .live-project-submit-form textarea {
@@ -6089,6 +6150,12 @@ h1 {
   width: 100%;
 }
 
+.student-project-hub-page .live-project-reader-followups {
+  display: grid;
+  gap: 16px;
+  padding: 0 16px 16px;
+}
+
 .student-project-hub-page .live-project-reading-section {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -6122,6 +6189,12 @@ h1 {
   color: var(--color-text-muted);
   line-height: 1.62;
   overflow-wrap: anywhere;
+}
+
+.student-project-hub-page .live-project-reading-copy,
+.student-project-hub-page .live-project-reading-copy p,
+.student-project-hub-page .live-project-reading-copy li {
+  text-align: justify;
 }
 
 .project-rich-text p {
@@ -6252,8 +6325,8 @@ h1 {
 }
 
 .student-project-hub-page .live-project-toolkit-card:hover {
-  border-color: var(--color-gold);
-  box-shadow: 0 10px 22px rgb(17 17 17 / 8%);
+  border-color: rgba(133, 27, 27, 0.34);
+  box-shadow: 0 10px 22px rgb(127 29 29 / 8%);
   transform: translateY(-1px);
 }
 
@@ -6280,7 +6353,7 @@ h1 {
 }
 
 .student-project-hub-page .live-project-toolkit-card__button:hover {
-  background: linear-gradient(180deg, #fff8db 0%, #ffffff 100%);
+  background: linear-gradient(180deg, #fff1f1 0%, #ffffff 100%);
 }
 
 .student-project-hub-page .live-project-toolkit-card__button strong {
@@ -8107,7 +8180,7 @@ h1 {
 
 .program-overview {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -8144,10 +8217,10 @@ h1 {
 
 .program-card {
   display: grid;
-  grid-template-rows: 178px 112px auto 58px auto minmax(24px, auto);
+  grid-template-rows: auto;
   align-content: start;
   min-width: 0;
-  min-height: 462px;
+  min-height: 410px;
   border: 1px solid var(--color-border);
   border-top: 4px solid var(--color-gold);
   border-radius: 8px;
@@ -8161,7 +8234,7 @@ h1 {
   grid-template-columns: 48px minmax(0, 1fr) auto;
   align-items: start;
   gap: 14px;
-  min-height: 178px;
+  min-height: 170px;
 }
 
 .program-card__icon {
@@ -8185,7 +8258,7 @@ h1 {
 
 .program-card__body {
   min-width: 0;
-  min-height: 112px;
+  min-height: 64px;
 }
 
 .program-card__body h3 {
@@ -8202,6 +8275,23 @@ h1 {
   font-size: 14px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.program-card__body .program-card__cohort-name {
+  color: var(--color-text);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.program-card__body .program-card__cohort-name strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .program-card__chips {
@@ -8225,7 +8315,7 @@ h1 {
 
 .program-card__stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: 0;
 }
@@ -8827,7 +8917,7 @@ h1 {
 
 .eligible-student-item {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   border: 1px solid transparent;
@@ -8844,6 +8934,19 @@ h1 {
   border-color: rgba(227, 46, 42, 0.28);
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
   transform: translateY(-1px);
+}
+
+.eligible-student-item--disabled {
+  border-color: rgba(148, 163, 184, 0.24);
+  background: #f8fafc;
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.eligible-student-item--disabled:hover {
+  border-color: rgba(148, 163, 184, 0.24);
+  box-shadow: none;
+  transform: none;
 }
 
 .eligible-student-item span {
@@ -8864,6 +8967,33 @@ h1 {
   font-size: 12px;
   font-weight: 500;
   overflow-wrap: anywhere;
+}
+
+.eligible-student-item__status {
+  justify-self: end;
+  border-radius: 999px;
+  background: #ecfdf3;
+  color: #14733f;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 750;
+  max-width: 180px;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+@media (max-width: 640px) {
+  .eligible-student-item {
+    grid-template-columns: 18px minmax(0, 1fr);
+  }
+
+  .eligible-student-item__status {
+    grid-column: 2;
+    justify-self: start;
+    max-width: 100%;
+    text-align: left;
+  }
 }
 
 .certificate-form__submit {
@@ -11393,6 +11523,50 @@ h1 {
 .admin-project-toolkit-form .admin-project-rte,
 .admin-project-toolkit-form .admin-project-link-row {
   grid-column: 1 / -1;
+}
+
+.admin-project-cv-editor {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-project-cv-editor__intro {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid #ffd5d1;
+  border-radius: 8px;
+  background: #fff8f7;
+  padding: 14px;
+}
+
+.admin-project-cv-editor__intro p {
+  margin: 4px 0 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.admin-project-cv-accordion-editor {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.admin-project-cv-accordion-editor__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.admin-project-cv-accordion-editor__head label {
+  min-width: 0;
 }
 
 .admin-project-program-list--compact {
@@ -17555,8 +17729,7 @@ h1 {
   }
 
   .student-recording-chips {
-    align-items: stretch;
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
 
   .student-recording-chips .segmented-button,
@@ -18812,7 +18985,6 @@ h1 {
   .admin-resource-card__actions,
   .admin-support-config-actions,
   .student-home-actions,
-  .student-recording-chips,
   .student-schedule-chips,
   .workshop-topic-header-actions {
     align-items: stretch;

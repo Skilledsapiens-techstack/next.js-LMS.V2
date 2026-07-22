@@ -46,12 +46,23 @@ const PROJECT_SUBMISSION_DECLARATIONS = [
   }
 ] as const;
 
+const PROJECT_FEEDBACK_MIN_WORDS = 80;
 const CV_POINTS_TOOLKIT_ID = 'cv_points_approval';
 
 type CvPointsContent = {
-  finance: string;
-  management: string;
+  accordions?: CvPointsSection[];
+  finance?: string;
+  management?: string;
 };
+
+type CvPointsSection = {
+  body: string;
+  title: string;
+};
+
+function countWords(value: string) {
+  return value.trim().split(/\s+/).filter(Boolean).length;
+}
 
 function normalizeToolkitId(value: string | undefined) {
   return String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_').replace(/[^a-z0-9_]/g, '');
@@ -87,7 +98,7 @@ function readCvPointsPayload(value: string) {
 function looksLikeCvPointsPayload(value: string | undefined) {
   const rawValue = String(value ?? '').trim();
   if (!rawValue.startsWith('{')) return false;
-  return /"?finance"?\s*:|"?management"?\s*:|&quot;finance&quot;\s*:|&quot;management&quot;\s*:/.test(rawValue);
+  return /"?accordions"?\s*:|"?finance"?\s*:|"?management"?\s*:|&quot;accordions&quot;\s*:|&quot;finance&quot;\s*:|&quot;management&quot;\s*:/.test(rawValue);
 }
 
 function isCvPointsToolkitItem(item: Pick<StudentProjectToolkitItem, 'content' | 'title' | 'toolkitId'>) {
@@ -98,31 +109,36 @@ function isCvPointsToolkitItem(item: Pick<StudentProjectToolkitItem, 'content' |
   );
 }
 
-function parseCvPointsContent(value: string | undefined): CvPointsContent {
+function parseCvPointsSections(value: string | undefined): CvPointsSection[] {
   const rawValue = String(value ?? '').trim();
-  if (!rawValue) return { finance: '', management: '' };
+  if (!rawValue) return [];
 
   const parsed = readCvPointsPayload(rawValue);
   if (parsed) {
-    return {
-      finance: sanitizeProjectHtml(typeof parsed.finance === 'string' ? parsed.finance : ''),
-      management: sanitizeProjectHtml(typeof parsed.management === 'string' ? parsed.management : '')
-    };
+    if (Array.isArray(parsed.accordions)) {
+      return parsed.accordions
+        .map((section, index) => {
+          if (!section || typeof section !== 'object') return null;
+          const title = typeof section.title === 'string' ? section.title.trim() : `Section ${index + 1}`;
+          const body = sanitizeProjectHtml(typeof section.body === 'string' ? section.body : '');
+          return title && body.trim() ? { body, title } : null;
+        })
+        .filter((section): section is CvPointsSection => Boolean(section));
+    }
+
+    return [
+      { body: sanitizeProjectHtml(typeof parsed.management === 'string' ? parsed.management : ''), title: 'Management Tracks' },
+      { body: sanitizeProjectHtml(typeof parsed.finance === 'string' ? parsed.finance : ''), title: 'Finance Tracks' }
+    ].filter((section) => section.body.trim());
   }
 
-  return {
-    finance: '',
-    management: looksLikeCvPointsPayload(rawValue) ? '' : sanitizeProjectHtml(rawValue)
-  };
+  const legacyBody = looksLikeCvPointsPayload(rawValue) ? '' : sanitizeProjectHtml(rawValue);
+  return legacyBody.trim() ? [{ body: legacyBody, title: 'Management Tracks' }] : [];
 }
 
 function cvPointsSections(item: StudentProjectToolkitItem) {
   if (!isCvPointsToolkitItem(item)) return [];
-  const content = parseCvPointsContent(item.content);
-  return [
-    { body: content.management, title: 'Management Tracks' },
-    { body: content.finance, title: 'Finance Tracks' }
-  ].filter((section) => sanitizeProjectHtml(section.body).trim());
+  return parseCvPointsSections(item.content);
 }
 
 function isVisibleToolkitItem(item: StudentProjectToolkitItem) {
@@ -347,6 +363,8 @@ function ProjectSubmissionModal({
   const [localError, setLocalError] = useState('');
   const programLabels = projectProgramLabels(project);
   const allDeclarationsChecked = checkedDeclarations.length === PROJECT_SUBMISSION_DECLARATIONS.length;
+  const feedbackWordCount = countWords(studentFeedback);
+  const feedbackWordsRemaining = Math.max(PROJECT_FEEDBACK_MIN_WORDS - feedbackWordCount, 0);
 
   useEffect(() => {
     setCohortId(cohorts[0]?.id ?? '');
@@ -359,8 +377,12 @@ function ProjectSubmissionModal({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLocalError('');
-    if (studentFeedback.trim().length < 30) {
-      setLocalError('Add detailed feedback with at least 30 characters before submitting.');
+    if (feedbackWordCount < PROJECT_FEEDBACK_MIN_WORDS) {
+      setLocalError(
+        `Share at least ${PROJECT_FEEDBACK_MIN_WORDS} words in your project feedback before submitting. ${feedbackWordsRemaining} more ${
+          feedbackWordsRemaining === 1 ? 'word is' : 'words are'
+        } needed.`
+      );
       return;
     }
     if (!allDeclarationsChecked) {
@@ -383,7 +405,9 @@ function ProjectSubmissionModal({
         <header className="student-modal__header">
           <div className="live-project-modal__brand">
             <div className="auth-lockup">
-              <div className="brand-mark">SS</div>
+              <div className="brand-mark brand-mark--logo">
+                <img alt="Skilled Sapiens logo" src="/apple-touch-icon.png" />
+              </div>
               <div>
                 <strong>Skilled Sapiens</strong>
                 <span>Learning Portal</span>
@@ -444,16 +468,25 @@ function ProjectSubmissionModal({
 
           <label>
             <span>Share your detailed project feedbacks *</span>
-            <small>Share what you learned, what the project was about, and your experience while completing this live project.</small>
+            <small id="project-feedback-help">
+              Write at least 80 words. Include what the project was about, what you personally learned, how you approached the work, and one or two
+              practical insights or challenges.
+            </small>
             <textarea
+              aria-describedby="project-feedback-help project-feedback-count"
               disabled={isSubmitting}
-              minLength={30}
               onChange={(event) => setStudentFeedback(event.target.value)}
               placeholder="What did you learn, what was this project about, and how was your experience?"
               required
               rows={5}
               value={studentFeedback}
             />
+            <small
+              className={`live-project-feedback-count${feedbackWordCount >= PROJECT_FEEDBACK_MIN_WORDS ? ' live-project-feedback-count--ready' : ''}`}
+              id="project-feedback-count"
+            >
+              {feedbackWordCount} / {PROJECT_FEEDBACK_MIN_WORDS} words
+            </small>
           </label>
 
           <fieldset className="live-project-declaration-group">
@@ -579,8 +612,8 @@ function ProjectToolkitReader({ item, onClose }: { item: StudentProjectToolkitIt
             {isCvPointsItem ? (
               cvSections.length > 0 ? (
                 <div className="live-project-cv-accordion-list">
-                  {cvSections.map((section) => (
-                    <details className="live-project-cv-accordion" key={section.title}>
+                  {cvSections.map((section, index) => (
+                    <details className="live-project-cv-accordion" key={`${section.title}-${index}`}>
                       <summary>
                         <span>{section.title}</span>
                         <ChevronDown size={18} />
@@ -632,10 +665,24 @@ function LiveProjectDetail({ allSubmissions, cohorts, project }: { allSubmission
   const readingSections = [
     { body: intro?.description ?? '', label: 'Introduction' },
     { body: project.objectives ?? '', label: 'Project Objective' },
-    { body: deliverablesReadingHtml(project), label: 'Project Deliverables' },
     { body: project.brief ?? '', label: 'Project Brief' },
+    { body: deliverablesReadingHtml(project), label: 'Project Deliverables' },
     ...customSections.map((section) => ({ body: section.description ?? '', label: section.title }))
   ].filter((section) => section.label.trim() && sanitizeProjectHtml(section.body));
+  const introductionSection = readingSections.find((section) => section.label === 'Introduction') ?? readingSections[0];
+  const fullWidthReadingSections = readingSections.filter((section) => section !== introductionSection);
+
+  const renderReadingSection = (section: { body: string; label: string }) => (
+    <article className="live-project-reading-section" key={section.label}>
+      <div className="live-project-reading-section__icon">
+        <BookOpen size={18} />
+      </div>
+      <div>
+        <h3>{section.label}</h3>
+        <ProjectRichText className="project-rich-text live-project-reading-copy" html={section.body} />
+      </div>
+    </article>
+  );
 
   async function handleSubmit(input: { cohortId: string; declarationAccepted: boolean; declarationConfirmations: string[]; remarks?: string; studentFeedback: string; submissionLink: string }) {
     setSubmitMessage('');
@@ -662,18 +709,8 @@ function LiveProjectDetail({ allSubmissions, cohorts, project }: { allSubmission
 
       <div className={importantLinks.length > 0 ? 'live-project-reader' : 'live-project-reader live-project-reader--full'}>
         <div className="live-project-reader__content">
-          {readingSections.length > 0 ? (
-            readingSections.map((section) => (
-              <article className="live-project-reading-section" key={section.label}>
-                <div className="live-project-reading-section__icon">
-                  <BookOpen size={18} />
-                </div>
-                <div>
-                  <h3>{section.label}</h3>
-                  <ProjectRichText className="project-rich-text live-project-reading-copy" html={section.body} />
-                </div>
-              </article>
-            ))
+          {introductionSection ? (
+            renderReadingSection(introductionSection)
           ) : (
             <article className="live-project-reading-section">
               <div className="live-project-reading-section__icon">
@@ -705,6 +742,12 @@ function LiveProjectDetail({ allSubmissions, cohorts, project }: { allSubmission
           </aside>
         ) : null}
       </div>
+
+      {fullWidthReadingSections.length > 0 ? (
+        <div className="live-project-reader-followups">
+          {fullWidthReadingSections.map((section) => renderReadingSection(section))}
+        </div>
+      ) : null}
 
       <article className="live-project-submission">
         <div>
@@ -840,7 +883,7 @@ export function StudentProjectsPage() {
 
           <section className="live-project-picker" aria-label="Live project selector">
             <label>
-              <span>Project role</span>
+              <span>Select the role you registered for</span>
               <select value={selectedRole} onChange={(event) => handleRoleChange(event.target.value)}>
                 <option value="all">All roles</option>
                 {roleOptions.map((role) => (
@@ -852,7 +895,7 @@ export function StudentProjectsPage() {
             </label>
 
             <label>
-              <span>Project</span>
+              <span>Select any one project of your choice</span>
               <select value={selectedProject?.id ?? ''} onChange={(event) => setSelectedProjectId(event.target.value)}>
                 {filteredProjects.map((project) => (
                   <option key={project.id} value={project.id}>
