@@ -1,0 +1,24 @@
+Hostinger deployment package - Live project duration v3
+Generated on: 2026-07-24
+
+Includes
+- All v2 live-project duration changes for student submission and admin certificate issuance.
+- Manual Live Project certificate form update:
+  - Program and Program name fields are hidden for Manual Live Project certificates.
+  - Project title field is removed for Manual Live Project certificates.
+  - Manual Live Project issuance now uses the selected Project role as the internal project title fallback.
+  - Manual Leadership certificate form remains unchanged.
+
+Database status
+- The included migration has already been applied to the linked Supabase project:
+  supabase-migrations/20260724040750_live_project_submission_duration_dates.sql
+- No new migration is required for this v3 UI/API change.
+
+QA completed
+- npm run typecheck
+- npm run build
+
+Deploy steps
+1. Upload all files in this folder to the Hostinger public web root for the portal.
+2. Keep .htaccess in place so client-side routes continue to resolve to index.html.
+3. No additional Supabase migration run is required if production already has migration 20260724040750.

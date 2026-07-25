@@ -1,0 +1,26 @@
+Hostinger deployment package - LMS guest login feature control
+
+Build date: 2026-07-23
+Package purpose: Static frontend files for Hostinger public_html.
+
+Upload steps:
+1. Upload hostinger-guest-login-toggle-20260723.zip to Hostinger File Manager.
+2. Open public_html.
+3. Extract the zip contents directly inside public_html.
+4. Confirm these files/folders are at the public_html root:
+   - index.html
+   - .htaccess
+   - assets/
+   - favicon files
+5. Clear browser cache or test in an incognito window.
+
+Important:
+- Supabase migration 20260723163058_guest_login_feature_control.sql has already been pushed to live.
+- This package only deploys the frontend bundle to Hostinger.
+- The live Guest Login Entry feature-control status was restored to Show after QA.
+
+Included updates:
+- Admin Feature Control row for Guest Login Entry.
+- Login page show/hide/upcoming behavior for Explore Free Access.
+- Public-safe RLS policy so only the guest-login toggle is readable before login.
+- Professional Program Details PDP updates from the current build are included.

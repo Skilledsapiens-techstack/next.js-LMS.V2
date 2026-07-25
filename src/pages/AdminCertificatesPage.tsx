@@ -169,8 +169,9 @@ function lockedButtonLabel(label: string) {
   return `${label} (locked)`;
 }
 
-const durationOptions = [2, 4, 6, 8];
+const durationOptions = [1, 2, 3, 4, 5, 6];
 const leadershipCertificateBatchLimit = 250;
+type LiveProjectDurationMode = 'custom' | `${number}`;
 
 type CertificateWorkspaceTab = 'leadership' | 'live-projects' | 'manual' | 'issued';
 
@@ -225,24 +226,45 @@ function FinalIssuanceModal({
   onIssue: (input: IssueLiveProjectCertificateInput) => Promise<void>;
   request: AdminCertificateRequest;
 }) {
-  const [durationWeeks, setDurationWeeks] = useState(4);
+  const hasStudentDates = Boolean(request.projectStartDate && request.projectEndDate);
+  const defaultStartDate = request.projectStartDate?.slice(0, 10) ?? request.cohortStartDate?.slice(0, 10) ?? '';
+  const defaultEndDate = request.projectEndDate?.slice(0, 10) ?? addDaysInput(defaultStartDate, 4 * 7 - 1);
+  const [durationMode, setDurationMode] = useState<LiveProjectDurationMode>(hasStudentDates ? 'custom' : '4');
   const [issueDate, setIssueDate] = useState(todayInputValue());
   const [sendEmail, setSendEmail] = useState(true);
-  const [startDate, setStartDate] = useState(request.cohortStartDate?.slice(0, 10) ?? '');
-  const endDate = useMemo(() => addDaysInput(startDate, durationWeeks * 7 - 1), [durationWeeks, startDate]);
-  const missingCohortStartDate = !request.cohortStartDate;
+  const [startDate, setStartDate] = useState(defaultStartDate);
+  const [endDate, setEndDate] = useState(defaultEndDate);
+  const missingStartDate = !defaultStartDate;
 
   useEffect(() => {
-    setDurationWeeks(4);
+    const nextStartDate = request.projectStartDate?.slice(0, 10) ?? request.cohortStartDate?.slice(0, 10) ?? '';
+    const nextHasStudentDates = Boolean(request.projectStartDate && request.projectEndDate);
+    setDurationMode(nextHasStudentDates ? 'custom' : '4');
     setIssueDate(todayInputValue());
     setSendEmail(true);
-    setStartDate(request.cohortStartDate?.slice(0, 10) ?? '');
+    setStartDate(nextStartDate);
+    setEndDate(request.projectEndDate?.slice(0, 10) ?? addDaysInput(nextStartDate, 4 * 7 - 1));
   }, [request]);
+
+  function handleDurationModeChange(nextMode: LiveProjectDurationMode) {
+    setDurationMode(nextMode);
+    if (nextMode !== 'custom') {
+      setEndDate(addDaysInput(startDate, Number(nextMode) * 7 - 1));
+    }
+  }
+
+  function handleStartDateChange(nextStartDate: string) {
+    setStartDate(nextStartDate);
+    if (durationMode !== 'custom') {
+      setEndDate(addDaysInput(nextStartDate, Number(durationMode) * 7 - 1));
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await onIssue({
-      durationWeeks,
+      durationWeeks: durationMode === 'custom' ? undefined : Number(durationMode),
+      endDate,
       issueDate,
       requestId: request.id,
       sendEmail,
@@ -298,10 +320,17 @@ function FinalIssuanceModal({
             </div>
           </div>
 
-          {missingCohortStartDate ? (
+          {hasStudentDates ? (
+            <div className="certificate-muted-card">
+              <ShieldCheck size={17} />
+              <span>Student-submitted project dates are prefilled below. You can edit them or select a duration before issuing.</span>
+            </div>
+          ) : null}
+
+          {missingStartDate ? (
             <div className="certificate-muted-card certificate-muted-card--warning">
               <ShieldCheck size={17} />
-              <span>Cohort start date is missing. Please select the project start date manually before issuing.</span>
+              <span>Project start date is missing. Please select the project start date manually before issuing.</span>
             </div>
           ) : null}
 
@@ -320,21 +349,22 @@ function FinalIssuanceModal({
             </label>
             <label className="certificate-field">
               <span>Duration</span>
-              <select value={durationWeeks} onChange={(event) => setDurationWeeks(Number(event.target.value))}>
+              <select value={durationMode} onChange={(event) => handleDurationModeChange(event.target.value as LiveProjectDurationMode)}>
                 {durationOptions.map((weeks) => (
                   <option key={weeks} value={weeks}>
-                    {weeks} weeks
+                    {weeks} {weeks === 1 ? 'week' : 'weeks'}
                   </option>
                 ))}
+                <option value="custom">Custom dates</option>
               </select>
             </label>
             <label className="certificate-field">
               <span>Start date *</span>
-              <input onChange={(event) => setStartDate(event.target.value)} required type="date" value={startDate} />
+              <input onChange={(event) => handleStartDateChange(event.target.value)} required type="date" value={startDate} />
             </label>
             <label className="certificate-field">
               <span>End date *</span>
-              <input readOnly required type="date" value={endDate} />
+              <input onChange={(event) => setEndDate(event.target.value)} readOnly={durationMode !== 'custom'} required type="date" value={endDate} />
             </label>
             <label className="certificate-field">
               <span>Issue date *</span>
@@ -505,11 +535,11 @@ function ManualCertificateIssueForm({
   projectRoles,
   selectedStudentId,
   setCertificateType,
-  setDurationWeeks,
+  setDurationMode,
   setIssueDate,
+  setProjectEndDate,
   setProjectRole,
   setProjectStartDate,
-  setProjectTitle,
   setSelectedStudentId,
   setSendEmail,
   studentSearch,
@@ -537,11 +567,11 @@ function ManualCertificateIssueForm({
   projectRoles: AdminProjectRole[];
   selectedStudentId: string;
   setCertificateType: (value: AdminCertificateType) => void;
-  setDurationWeeks: (value: number) => void;
+  setDurationMode: (value: LiveProjectDurationMode) => void;
   setIssueDate: (value: string) => void;
+  setProjectEndDate: (value: string) => void;
   setProjectRole: (value: string) => void;
   setProjectStartDate: (value: string) => void;
-  setProjectTitle: (value: string) => void;
   setSelectedStudentId: (value: string) => void;
   setSendEmail: (checked: boolean) => void;
   studentSearch: string;
@@ -549,11 +579,11 @@ function ManualCertificateIssueForm({
   students: AdminStudent[];
   type: AdminCertificateType;
   values: {
-    durationWeeks: number;
+    durationMode: LiveProjectDurationMode;
     issueDate: string;
+    projectEndDate: string;
     projectRole: string;
     projectStartDate: string;
-    projectTitle: string;
     sendEmail: boolean;
   };
 }) {
@@ -563,9 +593,23 @@ function ManualCertificateIssueForm({
   const hasStudent = studentSource === 'manual' ? manualStudentName.trim() && manualStudentEmail.trim() : selectedStudentId;
   const canSubmit =
     Boolean(hasStudent) &&
-    Boolean(resolvedProgramName.trim()) &&
+    (type === 'live_project' || Boolean(resolvedProgramName.trim())) &&
     isValidDateInput(values.issueDate) &&
-    (type === 'leadership' || (values.projectTitle.trim() && values.projectRole.trim() && isValidDateInput(values.projectStartDate)));
+    (type === 'leadership' || (values.projectRole.trim() && isValidDateInput(values.projectStartDate) && isValidDateInput(values.projectEndDate)));
+
+  function handleManualDurationChange(nextMode: LiveProjectDurationMode) {
+    setDurationMode(nextMode);
+    if (nextMode !== 'custom') {
+      setProjectEndDate(addDaysInput(values.projectStartDate, Number(nextMode) * 7 - 1));
+    }
+  }
+
+  function handleManualStartDateChange(nextStartDate: string) {
+    setProjectStartDate(nextStartDate);
+    if (values.durationMode !== 'custom') {
+      setProjectEndDate(addDaysInput(nextStartDate, Number(values.durationMode) * 7 - 1));
+    }
+  }
 
   return (
     <section className="certificate-section">
@@ -628,34 +672,34 @@ function ManualCertificateIssueForm({
           </>
         )}
 
-        <label className="certificate-field">
-          <span>Program</span>
-          <select value={programKey} onChange={(event) => onProgramChange(event.target.value)}>
-            <option value="">Manual program name</option>
-            {programs.map((program) => (
-              <option key={program.id} value={program.programKey}>
-                {program.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="certificate-field">
-          <span>Program name *</span>
-          <input
-            disabled={Boolean(selectedProgram)}
-            onChange={(event) => onProgramNameChange(event.target.value)}
-            placeholder="Certificate program name"
-            readOnly={Boolean(selectedProgram)}
-            value={resolvedProgramName}
-          />
-        </label>
+        {type === 'leadership' ? (
+          <>
+            <label className="certificate-field">
+              <span>Program</span>
+              <select value={programKey} onChange={(event) => onProgramChange(event.target.value)}>
+                <option value="">Manual program name</option>
+                {programs.map((program) => (
+                  <option key={program.id} value={program.programKey}>
+                    {program.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="certificate-field">
+              <span>Program name *</span>
+              <input
+                disabled={Boolean(selectedProgram)}
+                onChange={(event) => onProgramNameChange(event.target.value)}
+                placeholder="Certificate program name"
+                readOnly={Boolean(selectedProgram)}
+                value={resolvedProgramName}
+              />
+            </label>
+          </>
+        ) : null}
 
         {type === 'live_project' ? (
           <>
-            <label className="certificate-field">
-              <span>Project title *</span>
-              <input onChange={(event) => setProjectTitle(event.target.value)} placeholder="Live project title" value={values.projectTitle} />
-            </label>
             <label className="certificate-field">
               <span>Project role *</span>
               <select value={values.projectRole} onChange={(event) => setProjectRole(event.target.value)}>
@@ -669,23 +713,33 @@ function ManualCertificateIssueForm({
             </label>
             <label className="certificate-field">
               <span>Start date *</span>
-              <input onChange={(event) => setProjectStartDate(event.target.value)} type="date" value={values.projectStartDate} />
+              <input onChange={(event) => handleManualStartDateChange(event.target.value)} type="date" value={values.projectStartDate} />
             </label>
             <label className="certificate-field">
               <span>Duration</span>
-              <select value={values.durationWeeks} onChange={(event) => setDurationWeeks(Number(event.target.value))}>
+              <select value={values.durationMode} onChange={(event) => handleManualDurationChange(event.target.value as LiveProjectDurationMode)}>
                 {durationOptions.map((weeks) => (
                   <option key={weeks} value={weeks}>
-                    {weeks} weeks
+                    {weeks} {weeks === 1 ? 'week' : 'weeks'}
                   </option>
                 ))}
+                <option value="custom">Custom dates</option>
               </select>
+            </label>
+            <label className="certificate-field">
+              <span>End date *</span>
+              <input
+                onChange={(event) => setProjectEndDate(event.target.value)}
+                readOnly={values.durationMode !== 'custom'}
+                type="date"
+                value={values.projectEndDate}
+              />
             </label>
           </>
         ) : null}
 
         <label className="certificate-field">
-          <span>Issue date *</span>
+          <span>Certificate Issue Date *</span>
           <input onChange={(event) => setIssueDate(event.target.value)} type="date" value={values.issueDate} />
         </label>
         <label className="certificate-checkbox">
@@ -739,10 +793,10 @@ export function AdminCertificatesPage() {
   const [manualProgramName, setManualProgramName] = useState('');
   const [manualIssueDate, setManualIssueDate] = useState(todayInputValue());
   const [manualSendEmail, setManualSendEmail] = useState(true);
-  const [manualProjectTitle, setManualProjectTitle] = useState('');
   const [manualProjectRole, setManualProjectRole] = useState('');
   const [manualProjectStartDate, setManualProjectStartDate] = useState(todayInputValue());
-  const [manualDurationWeeks, setManualDurationWeeks] = useState(4);
+  const [manualProjectEndDate, setManualProjectEndDate] = useState(addDaysInput(todayInputValue(), 4 * 7 - 1));
+  const [manualDurationMode, setManualDurationMode] = useState<LiveProjectDurationMode>('4');
   const [manualDuplicateOverride, setManualDuplicateOverride] = useState(false);
 
   const adminProfileQuery = useAdminProfile();
@@ -994,16 +1048,16 @@ export function AdminCertificatesPage() {
     const body: IssueManualCertificateInput = {
       acknowledgeDuplicate: manualDuplicateOverride,
       certificateType: manualCertificateType,
-      durationWeeks: manualCertificateType === 'live_project' ? manualDurationWeeks : undefined,
+      durationWeeks: manualCertificateType === 'live_project' && manualDurationMode !== 'custom' ? Number(manualDurationMode) : undefined,
       issueDate: manualIssueDate,
       manualStudentEmail: manualStudentSource === 'manual' ? manualStudentEmail : undefined,
       manualStudentName: manualStudentSource === 'manual' ? manualStudentName : undefined,
       modulesCovered: manualCertificateType === 'leadership' ? modulesCovered : undefined,
-      programKey: manualProgramKey || undefined,
-      programName: (selectedManualProgram?.name ?? manualProgramName).trim(),
+      programKey: manualCertificateType === 'leadership' ? manualProgramKey || undefined : undefined,
+      programName: manualCertificateType === 'leadership' ? (selectedManualProgram?.name ?? manualProgramName).trim() : undefined,
+      projectEndDate: manualCertificateType === 'live_project' ? manualProjectEndDate : undefined,
       projectRole: manualCertificateType === 'live_project' ? manualProjectRole : undefined,
       projectStartDate: manualCertificateType === 'live_project' ? manualProjectStartDate : undefined,
-      projectTitle: manualCertificateType === 'live_project' ? manualProjectTitle : undefined,
       sendEmail: manualSendEmail,
       studentId: manualStudentSource === 'roster' ? manualSelectedStudentId : undefined
     };
@@ -1298,11 +1352,11 @@ export function AdminCertificatesPage() {
           projectRoles={projectRoles}
           selectedStudentId={manualSelectedStudentId}
           setCertificateType={setManualCertificateType}
-          setDurationWeeks={setManualDurationWeeks}
+          setDurationMode={setManualDurationMode}
           setIssueDate={setManualIssueDate}
+          setProjectEndDate={setManualProjectEndDate}
           setProjectRole={setManualProjectRole}
           setProjectStartDate={setManualProjectStartDate}
-          setProjectTitle={setManualProjectTitle}
           setSelectedStudentId={setManualSelectedStudentId}
           setSendEmail={setManualSendEmail}
           studentSearch={manualStudentSearch}
@@ -1310,11 +1364,11 @@ export function AdminCertificatesPage() {
           students={manualStudentOptions}
           type={manualCertificateType}
           values={{
-            durationWeeks: manualDurationWeeks,
+            durationMode: manualDurationMode,
             issueDate: manualIssueDate,
+            projectEndDate: manualProjectEndDate,
             projectRole: manualProjectRole,
             projectStartDate: manualProjectStartDate,
-            projectTitle: manualProjectTitle,
             sendEmail: manualSendEmail
           }}
         />

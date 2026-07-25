@@ -3,9 +3,11 @@ import { ArrowRight, CheckCircle2, Eye, EyeOff, HelpCircle, KeyRound, Loader2, L
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { StateBlock } from '../components/StateBlock';
+import { getFeatureMessage, useGuestLoginFeatureControl, useLoginCreatePasswordFeatureControl } from '../features/useFeatureControls';
 import { apiGet, ApiClientError } from '../lib/supabaseApi';
 
 type LoginPortal = 'admin' | 'student';
+type PortalDestination = LoginPortal | 'guest';
 type AuthIntent = 'forgot' | 'create';
 type RequestStatus = 'idle' | 'sending' | 'sent' | 'failed';
 type PasswordUpdateStatus = 'idle' | 'updating' | 'updated' | 'failed';
@@ -27,15 +29,17 @@ async function canAccessPortal(path: string, accessToken: string) {
   }
 }
 
-async function resolveSignedInPortal(accessToken: string, requestedPortal: LoginPortal): Promise<LoginPortal> {
-  const portalChecks: Array<{ path: string; portal: LoginPortal }> =
+async function resolveSignedInPortal(accessToken: string, requestedPortal: LoginPortal): Promise<PortalDestination> {
+  const portalChecks: Array<{ path: string; portal: PortalDestination }> =
     requestedPortal === 'admin'
       ? [
           { path: '/admins/me', portal: 'admin' },
-          { path: '/students/me', portal: 'student' }
+          { path: '/students/me', portal: 'student' },
+          { path: '/guests/me', portal: 'guest' }
         ]
       : [
           { path: '/students/me', portal: 'student' },
+          { path: '/guests/me', portal: 'guest' },
           { path: '/admins/me', portal: 'admin' }
         ];
 
@@ -72,6 +76,13 @@ export function LoginPage() {
   const [passwordUpdateStatus, setPasswordUpdateStatus] = useState<PasswordUpdateStatus>('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const [noticeMessage, setNoticeMessage] = useState('');
+  const guestLoginControlQuery = useGuestLoginFeatureControl();
+  const guestLoginControl = guestLoginControlQuery.data;
+  const createPasswordControlQuery = useLoginCreatePasswordFeatureControl();
+  const createPasswordControl = createPasswordControlQuery.data;
+  const shouldShowGuestLogin = portal === 'student' && (guestLoginControlQuery.isError || (!guestLoginControlQuery.isLoading && guestLoginControl?.status !== 'hide'));
+  const isGuestLoginUpcoming = guestLoginControl?.status === 'upcoming';
+  const shouldShowCreatePassword = portal === 'student' && (createPasswordControlQuery.isError || (!createPasswordControlQuery.isLoading && createPasswordControl?.status !== 'hide'));
 
   const recoveryTitle = useMemo(() => (urlIntent === 'create' ? 'Create password' : 'Reset password'), [urlIntent]);
 
@@ -97,6 +108,16 @@ export function LoginPage() {
   }
 
   async function handlePasswordEmail(intent: AuthIntent) {
+    if (intent === 'create' && !shouldShowCreatePassword) {
+      setRequestIntent(intent);
+      setRequestStatus('failed');
+      setStatus('idle');
+      setPasswordUpdateStatus('idle');
+      setNoticeMessage('');
+      setErrorMessage(getFeatureMessage(createPasswordControl));
+      return;
+    }
+
     const normalizedEmail = email.trim();
     setRequestIntent(intent);
     setRequestStatus('sending');
@@ -282,6 +303,7 @@ export function LoginPage() {
 
                   <FieldLabel htmlFor="otp-new-password" label="New password" help="Create a password with at least 8 characters." />
                   <PasswordInput
+                    autoComplete="new-password"
                     disabled={!isConfigured || passwordUpdateStatus === 'updating'}
                     icon={<LockKeyhole size={17} />}
                     id="otp-new-password"
@@ -294,6 +316,7 @@ export function LoginPage() {
 
                   <FieldLabel htmlFor="otp-confirm-password" label="Confirm password" help="Re-enter the same password to avoid typing mistakes." />
                   <PasswordInput
+                    autoComplete="new-password"
                     disabled={!isConfigured || passwordUpdateStatus === 'updating'}
                     icon={<ShieldCheck size={17} />}
                     id="otp-confirm-password"
@@ -328,6 +351,7 @@ export function LoginPage() {
             <form className="auth-form" onSubmit={handlePasswordUpdate}>
               <FieldLabel htmlFor="new-password" label="New password" help="Create a password with at least 8 characters." />
               <PasswordInput
+                autoComplete="new-password"
                 disabled={!isConfigured || passwordUpdateStatus === 'updating'}
                 icon={<LockKeyhole size={17} />}
                 id="new-password"
@@ -340,6 +364,7 @@ export function LoginPage() {
 
               <FieldLabel htmlFor="confirm-password" label="Confirm password" help="Re-enter the same password to avoid typing mistakes." />
               <PasswordInput
+                autoComplete="new-password"
                 disabled={!isConfigured || passwordUpdateStatus === 'updating'}
                 icon={<ShieldCheck size={17} />}
                 id="confirm-password"
@@ -374,6 +399,7 @@ export function LoginPage() {
 
               <FieldLabel htmlFor="password" label="Password" help="Enter your LMS password. Use the eye icon to check it before signing in." />
               <PasswordInput
+                autoComplete="current-password"
                 disabled={!isConfigured || status === 'signing-in'}
                 icon={<KeyRound size={17} />}
                 id="password"
@@ -403,24 +429,31 @@ export function LoginPage() {
                 </button>
               </div>
 
-              {portal === 'student' ? (
+              {shouldShowCreatePassword ? (
                 <button className="auth-create-action" type="button" disabled={!isConfigured || requestStatus === 'sending'} onClick={() => handlePasswordEmail('create')}>
                   {requestStatus === 'sending' && requestIntent === 'create' ? 'Sending create link' : 'Create password'}
                 </button>
+              ) : null}
+
+              {shouldShowGuestLogin ? (
+                isGuestLoginUpcoming ? (
+                  <div className="auth-guest-link auth-guest-link--disabled" aria-disabled="true">
+                    {getFeatureMessage(guestLoginControl)}
+                  </div>
+                ) : (
+                  <a className="auth-guest-link" href="/guest-signup">
+                    Explore Free Access
+                    <ArrowRight size={16} />
+                  </a>
+                )
               ) : null}
             </form>
           )}
 
           <div className="auth-helper-copy">
-            {portal === 'student' ? (
-              <p>
-                <HelpCircle size={16} />
-                Use the exact email registered in LMS. Alternate or mistyped emails cannot create your password.
-              </p>
-            ) : null}
             <p>
               <CheckCircle2 size={16} />
-              Only use the latest password email. Older links and codes can expire after a fresh email is sent.
+              Use the exact email registered in the LMS. Alternate or mistyped email addresses cannot be used to sign in or create a password.
             </p>
           </div>
 
@@ -462,6 +495,7 @@ function FieldLabel({ help, htmlFor, label }: { help: string; htmlFor: string; l
 }
 
 function PasswordInput({
+  autoComplete,
   disabled,
   icon,
   id,
@@ -471,6 +505,7 @@ function PasswordInput({
   show,
   value
 }: {
+  autoComplete: 'current-password' | 'new-password';
   disabled: boolean;
   icon: ReactNode;
   id: string;
@@ -483,8 +518,8 @@ function PasswordInput({
   return (
     <div className="auth-input-shell auth-input-shell--password">
       {icon}
-      <input id={id} type={show ? 'text' : 'password'} value={value} disabled={disabled} required onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
-      <button className="auth-password-toggle" type="button" disabled={disabled} onClick={onToggle} aria-label={show ? 'Hide password' : 'Show password'}>
+      <input autoComplete={autoComplete} id={id} type={show ? 'text' : 'password'} value={value} disabled={disabled} required onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />
+      <button className="auth-password-toggle" type="button" disabled={disabled} onClick={onToggle} aria-label={show ? 'Hide password' : 'Show password'} aria-pressed={show} title={show ? 'Hide password' : 'Show password'}>
         {show ? <EyeOff size={18} /> : <Eye size={18} />}
       </button>
     </div>

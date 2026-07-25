@@ -5,15 +5,48 @@ import { PaginatedResponse } from '../student/useStudentAnnouncements';
 
 export type AdminProgramStatus = 'active' | 'inactive';
 
+export type AdminProgramCtaButton = {
+  label: string;
+  url: string;
+  variant?: 'primary' | 'secondary';
+};
+
+export type AdminProgramFaq = {
+  answer: string;
+  question: string;
+};
+
 export type AdminProgram = {
+  bannerUrl?: string | null;
+  careerOutcomes?: string | null;
+  catalogueBadge?: string | null;
+  certificateDetails?: string | null;
+  ctaButtons?: AdminProgramCtaButton[];
   createdAt?: string;
+  curriculum?: string[];
   domainLabel?: string;
+  duration?: string | null;
+  faqs?: AdminProgramFaq[];
+  guestCatalogueEnabled?: boolean;
+  highlights?: string[];
   id: string;
+  liveProjectDetails?: string | null;
+  mentorSupport?: string | null;
   name: string;
+  nextBatchDate?: string | null;
+  outcomes?: string[];
+  overview?: string | null;
+  pricing?: string | null;
   programKey: string;
+  scheduleFormat?: string | null;
+  shortDescription?: string | null;
   shortName?: string;
   status: AdminProgramStatus;
+  thumbnailUrl?: string | null;
+  toolsCovered?: string | null;
   updatedAt?: string;
+  whatYouWillLearn?: string | null;
+  whoShouldJoin?: string | null;
 };
 
 export type AdminProgramsQuery = {
@@ -26,11 +59,33 @@ export type AdminProgramsQuery = {
 };
 
 export type AdminProgramWritePayload = {
+  bannerUrl?: string | null;
+  careerOutcomes?: string | null;
+  catalogueBadge?: string | null;
+  certificateDetails?: string | null;
+  ctaButtons?: AdminProgramCtaButton[];
+  curriculum?: string[];
   domainLabel?: string;
+  duration?: string | null;
+  faqs?: AdminProgramFaq[];
+  guestCatalogueEnabled?: boolean;
+  highlights?: string[];
+  liveProjectDetails?: string | null;
+  mentorSupport?: string | null;
   name: string;
+  nextBatchDate?: string | null;
+  outcomes?: string[];
+  overview?: string | null;
+  pricing?: string | null;
   programKey?: string;
+  scheduleFormat?: string | null;
+  shortDescription?: string | null;
   shortName?: string;
   status: AdminProgramStatus;
+  thumbnailUrl?: string | null;
+  toolsCovered?: string | null;
+  whatYouWillLearn?: string | null;
+  whoShouldJoin?: string | null;
 };
 
 export type AdminStudentGuidanceContentStatus = 'active' | 'inactive';

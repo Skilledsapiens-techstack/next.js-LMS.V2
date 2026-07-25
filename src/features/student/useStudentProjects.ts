@@ -33,6 +33,7 @@ export type StudentProject = {
   id: string;
   objectives?: string;
   projectId?: string;
+  studentProjectStartDate?: string;
   programKey?: string;
   programKeys: string[];
   programName?: string;

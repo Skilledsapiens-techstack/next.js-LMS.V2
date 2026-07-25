@@ -1,0 +1,20 @@
+Hostinger deployment package: Login Create Password feature control
+Date: 2026-07-25
+
+Scope:
+- Adds Admin Feature Control row: Create Password CTA.
+- Student login screen now reads public feature control "login-create-password".
+- If Admin sets this control to Hide, the student login Create password CTA is not rendered.
+- Create-password email request is also guarded in the login UI path when the control is hidden.
+- Existing sign-in, forgot-password, OTP/password setup, and Auth behavior remain unchanged.
+
+Database:
+- Applied migration to linked Supabase:
+  supabase/migrations/20260724202230_login_create_password_feature_control.sql
+- Migration is included in this package under supabase-migrations/.
+
+Validation:
+- npm run typecheck passed.
+- npm run build passed.
+- Verified linked Supabase feature_controls row exists with status show.
+- Verified anon public read policy exists for module_id = login-create-password.

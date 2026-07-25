@@ -26,6 +26,14 @@ type AdminProfile = {
   status: 'active';
 };
 
+type GuestProfile = {
+  deactivatedAt?: string | null;
+  emailVerifiedAt?: string | null;
+  fullName: string;
+  id: string;
+  personalEmail: string;
+};
+
 function getProbePath(portal: Portal) {
   return portal === 'student' ? '/students/me' : '/admins/me';
 }
@@ -90,6 +98,85 @@ export function ProtectedPortalRoute({ portal }: ProtectedPortalRouteProps) {
       <main className="page-frame">
         <StateBlock title="Portal profile check failed" tone="warning">
           The session exists, but the profile check could not complete. Please refresh and try again.
+        </StateBlock>
+      </main>
+    );
+  }
+
+  return <Outlet />;
+}
+
+export function ProtectedGuestRoute() {
+  const location = useLocation();
+  const { accessToken, signOut, status } = useAuth();
+  const profileQuery = useQuery({
+    enabled: status === 'authenticated' && Boolean(accessToken),
+    queryFn: () => apiGet<GuestProfile>('/guests/me', { accessToken: accessToken ?? undefined }),
+    queryKey: ['guest-profile', accessToken],
+    staleTime: 60 * 1000
+  });
+
+  if (status === 'configuration-missing') {
+    return (
+      <main className="page-frame">
+        <StateBlock title="Auth configuration missing" tone="warning">
+          Guest sign-in is not configured for this environment yet.
+        </StateBlock>
+      </main>
+    );
+  }
+
+  if (status === 'loading' || profileQuery.isLoading) {
+    return (
+      <main className="page-frame">
+        <StateBlock title="Checking secure session">Validating your guest access.</StateBlock>
+      </main>
+    );
+  }
+
+  if (status === 'unauthenticated' || !accessToken) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  if (profileQuery.error instanceof ApiClientError && profileQuery.error.status === 401) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  if (profileQuery.error instanceof ApiClientError && profileQuery.error.status === 403) {
+    return (
+      <main className="page-frame">
+        <StateBlock title="Guest access not available yet" tone="warning">
+          Please verify your email from the link sent during signup. If your access was deactivated, contact the Skilled Sapiens team.
+          <span className="state-block-actions">
+            <button className="segmented-button" type="button" onClick={() => void signOut()}>
+              Sign out
+            </button>
+          </span>
+        </StateBlock>
+      </main>
+    );
+  }
+
+  if (profileQuery.error instanceof ApiClientError && profileQuery.error.status === 404) {
+    return (
+      <main className="page-frame">
+        <StateBlock title="Guest profile not found" tone="warning">
+          This login is not linked to a guest profile. Please use the same personal email used during free access signup.
+          <span className="state-block-actions">
+            <button className="segmented-button" type="button" onClick={() => void signOut()}>
+              Sign out
+            </button>
+          </span>
+        </StateBlock>
+      </main>
+    );
+  }
+
+  if (profileQuery.isError) {
+    return (
+      <main className="page-frame">
+        <StateBlock title="Guest profile check failed" tone="warning">
+          The session exists, but the guest profile check could not complete. Please refresh and try again.
         </StateBlock>
       </main>
     );

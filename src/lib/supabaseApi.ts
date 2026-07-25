@@ -64,6 +64,7 @@ const ADMIN_READ_PERMISSIONS_BY_PATH: Record<string, AdminPermission> = {
   '/admins/announcements': 'admin.announcements.view',
   '/admins/announcements/recipient-count': 'admin.announcements.view',
   '/admins/audit-logs': 'admin.observability.view',
+  '/admins/career-readiness-content': 'admin.resources.view',
   '/admins/certificate-program-settings': 'admin.certificates.view',
   '/admins/certificate-requests': 'admin.certificates.view',
   '/admins/certificates': 'admin.certificates.view',
@@ -175,6 +176,11 @@ const WORKSHOP_WRITE_COLUMNS = new Set([
   'date',
   'domain_key',
   'duration_minutes',
+  'guest_access_enabled',
+  'guest_access_expires_at',
+  'guest_cta_label',
+  'guest_cta_url',
+  'guest_registration_required',
   'join_url',
   'payment_link',
   'price',
@@ -197,6 +203,11 @@ const RESOURCE_WRITE_COLUMNS = new Set([
   'currency',
   'description',
   'domain_key',
+  'guest_access_enabled',
+  'guest_access_expires_at',
+  'guest_cta_label',
+  'guest_cta_url',
+  'guest_registration_required',
   'payment_link',
   'price',
   'program_keys',
@@ -209,11 +220,33 @@ const RESOURCE_WRITE_COLUMNS = new Set([
 ]);
 
 const PROGRAM_WRITE_COLUMNS = new Set([
+  'banner_url',
+  'career_outcomes',
+  'catalogue_badge',
+  'certificate_details',
+  'cta_buttons',
+  'curriculum',
   'domain_label',
+  'duration',
+  'faqs',
+  'guest_catalogue_enabled',
+  'highlights',
+  'live_project_details',
+  'mentor_support',
   'name',
+  'next_batch_date',
+  'outcomes',
+  'overview',
+  'pricing',
   'program_key',
+  'schedule_format',
+  'short_description',
   'short_name',
-  'status'
+  'status',
+  'thumbnail_url',
+  'tools_covered',
+  'what_you_will_learn',
+  'who_should_join'
 ]);
 
 const STUDENT_GUIDANCE_CONTENT_WRITE_COLUMNS = new Set([
@@ -224,6 +257,28 @@ const STUDENT_GUIDANCE_CONTENT_WRITE_COLUMNS = new Set([
   'status',
   'summary',
   'title'
+]);
+
+const CAREER_READINESS_CONTENT_WRITE_COLUMNS = new Set([
+  'category',
+  'cohort_names',
+  'content',
+  'created_by',
+  'description',
+  'guest_access_enabled',
+  'guest_access_expires_at',
+  'guest_cta_label',
+  'guest_cta_url',
+  'guest_registration_required',
+  'is_published',
+  'link_buttons',
+  'link_label',
+  'link_url',
+  'program_keys',
+  'section_title',
+  'sort_order',
+  'title',
+  'updated_by'
 ]);
 
 const LEADERSHIP_PROGRAM_KEYS = new Set(['mclp', 'smlp', 'hrlp', 'flp_er', 'flp_qf', 'pmlp']);
@@ -285,14 +340,21 @@ const ANNOUNCEMENT_WRITE_COLUMNS = new Set([
   'created_by',
   'custom_emoji',
   'end_date',
+  'expires_at',
   'link_label',
   'link_url',
   'message',
+  'metadata',
   'pinned',
   'priority',
   'program_keys',
+  'source_id',
+  'source_key',
+  'source_type',
   'start_date',
   'status',
+  'student_emails',
+  'system_generated',
   'title',
   'type',
   'updated_by'
@@ -370,6 +432,13 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
     table: 'certificates',
     filterColumns: { certificateType: 'certificate_type', generationStatus: 'generation_status', programKey: 'program_key', status: 'status' },
     searchColumns: ['student_email', 'student_name', 'program_name', 'project_title']
+  },
+  '/admins/career-readiness-content': {
+    table: 'career_readiness_content',
+    filterColumns: { category: 'category', published: 'is_published' },
+    filterValues: { published: (value) => (value === 'published' ? true : value === 'draft' ? false : undefined) },
+    searchColumns: ['title', 'description', 'content', 'category'],
+    sortColumns: { order: { column: 'sort_order', ascending: true }, updated: { column: 'updated_at', ascending: false } }
   },
   '/admins/cohorts': {
     table: 'cohorts',
@@ -515,6 +584,12 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     table: 'student_guidance_content',
     validateBody: validateStudentGuidanceContentWriteBody
   },
+  career_readiness_content: {
+    columns: CAREER_READINESS_CONTENT_WRITE_COLUMNS,
+    normalizeBody: normalizeCareerReadinessContentWriteBody,
+    table: 'career_readiness_content',
+    validateBody: validateCareerReadinessContentWriteBody
+  },
   projects: {
     columns: PROJECT_WRITE_COLUMNS,
     normalizeBody: normalizeProjectWriteBody,
@@ -560,11 +635,20 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
 };
 
 export async function apiGet<TResponse>(path: string, options: ApiClientOptions = {}): Promise<TResponse> {
-  const context = await createContext(options.accessToken);
   const cleanPath = stripQuery(path);
+  if (cleanPath === '/public/feature-controls/guest-login') return getPublicGuestLoginFeatureControl() as Promise<TResponse>;
+  if (cleanPath === '/public/feature-controls/login-create-password') return getPublicLoginCreatePasswordFeatureControl() as Promise<TResponse>;
+
+  const context = await createContext(options.accessToken);
 
   if (cleanPath === '/students/me') return getStudentProfile(context) as Promise<TResponse>;
   if (cleanPath === '/admins/me') return getAdminProfile(context) as Promise<TResponse>;
+  if (cleanPath === '/guests/me') return getGuestProfile(context) as Promise<TResponse>;
+  if (cleanPath === '/guests/programs') return getGuestProgramCatalogue(context, options.query) as Promise<TResponse>;
+  if (cleanPath === '/guests/resources') return getGuestResources(context, options.query) as Promise<TResponse>;
+  if (cleanPath === '/guests/career-readiness') return getGuestCareerReadiness(context, options.query) as Promise<TResponse>;
+  if (cleanPath === '/guests/schedule') return getGuestWorkshops(context, options.query, 'schedule') as Promise<TResponse>;
+  if (cleanPath === '/guests/recordings') return getGuestWorkshops(context, options.query, 'recordings') as Promise<TResponse>;
   const readPermission = getAdminReadPermission(cleanPath);
   if (readPermission) await requireAdminPermission(context, readPermission);
   if (cleanPath === '/students/me/dashboard') return getStudentDashboard(context) as Promise<TResponse>;
@@ -620,6 +704,8 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
 
   if (cleanPath === '/students/me/guidance-content') return getStudentGuidanceContent(context, options.query) as Promise<TResponse>;
 
+  if (cleanPath === '/students/me/career-readiness') return getStudentCareerReadinessContent(context, options.query) as Promise<TResponse>;
+
   if (cleanPath === '/students/me/project-toolkit') return getStudentProjectToolkit(context, options.query) as Promise<TResponse>;
 
   if (cleanPath === '/students/me/resources') return getStudentResourcesList(context, options.query) as Promise<TResponse>;
@@ -627,6 +713,11 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/admins/students/college-options') return getAdminStudentCollegeOptions(context) as Promise<TResponse>;
 
   if (cleanPath === '/admins/students') return getAdminStudentsList(context, options.query) as Promise<TResponse>;
+
+  if (cleanPath === '/admins/guest-leads') return getAdminGuestLeadsList(context, options.query) as Promise<TResponse>;
+
+  const adminGuestLeadDetail = cleanPath.match(/^\/admins\/guest-leads\/([^/]+)$/);
+  if (adminGuestLeadDetail) return getAdminGuestLeadDetail(context, decodeURIComponent(adminGuestLeadDetail[1])) as Promise<TResponse>;
 
   if (RPC_LIST_ENDPOINTS[cleanPath]) {
     return getRpcList(context, RPC_LIST_ENDPOINTS[cleanPath], options.query) as Promise<TResponse>;
@@ -637,6 +728,57 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   }
 
   throw new ApiClientError(`Unsupported Supabase route: ${cleanPath}`, 404);
+}
+
+async function getPublicGuestLoginFeatureControl() {
+  return getPublicFeatureControl('guest-login', getDefaultGuestLoginFeatureControl);
+}
+
+async function getPublicLoginCreatePasswordFeatureControl() {
+  return getPublicFeatureControl('login-create-password', getDefaultLoginCreatePasswordFeatureControl);
+}
+
+async function getPublicFeatureControl(moduleId: string, getDefaultFeatureControl: () => unknown) {
+  const supabase = getSupabaseClient();
+  if (!supabase) return getDefaultFeatureControl();
+  const { data, error } = await supabase
+    .from('feature_controls')
+    .select('id,module_id,student_label,student_path,status,upcoming_message,is_core,sort_order,settings,created_at,updated_at,updated_by')
+    .eq('module_id', moduleId)
+    .maybeSingle();
+
+  if (error) throw new ApiClientError(error.message, 503);
+  if (!data) return getDefaultFeatureControl();
+
+  return camelize(data);
+}
+
+function getDefaultGuestLoginFeatureControl() {
+  return camelize({
+    id: 'guest-login-default',
+    is_core: false,
+    module_id: 'guest-login',
+    settings: {},
+    sort_order: 140,
+    status: 'show',
+    student_label: 'Guest Login Entry',
+    student_path: '/guest-signup',
+    upcoming_message: 'Guest access is currently unavailable.'
+  });
+}
+
+function getDefaultLoginCreatePasswordFeatureControl() {
+  return camelize({
+    id: 'login-create-password-default',
+    is_core: false,
+    module_id: 'login-create-password',
+    settings: {},
+    sort_order: 150,
+    status: 'show',
+    student_label: 'Create Password CTA',
+    student_path: '/login?portal=student',
+    upcoming_message: 'Create password is currently unavailable.'
+  });
 }
 
 export async function apiPatch<TResponse, TBody = unknown>(path: string, options: ApiMutationOptions<TBody> = {}): Promise<TResponse> {
@@ -657,6 +799,12 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
 
   const studentUpdate = cleanPath.match(/^\/admins\/students\/([^/]+)$/);
   if (studentUpdate) return updateById(context, 'students', studentUpdate[1], options.body, 'updated') as Promise<TResponse>;
+
+  const guestLeadStatus = cleanPath.match(/^\/admins\/guest-leads\/([^/]+)\/status$/);
+  if (guestLeadStatus) return updateGuestLeadStatus(context, decodeURIComponent(guestLeadStatus[1]), options.body) as Promise<TResponse>;
+
+  const guestLeadAccess = cleanPath.match(/^\/admins\/guest-leads\/([^/]+)\/access$/);
+  if (guestLeadAccess) return updateGuestLeadAccess(context, decodeURIComponent(guestLeadAccess[1]), options.body) as Promise<TResponse>;
 
   const projectSubmissionReview = cleanPath.match(/^\/admins\/project-submissions\/([^/]+)\/(approve|reject|changes-requested)$/);
   if (projectSubmissionReview) return reviewProjectSubmission(context, decodeURIComponent(projectSubmissionReview[1]), projectSubmissionReview[2], options.body) as Promise<TResponse>;
@@ -687,6 +835,28 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
 
   const resourceUpdate = cleanPath.match(/^\/admins\/resources\/([^/]+)$/);
   if (resourceUpdate) return updateById(context, 'resources', decodeURIComponent(resourceUpdate[1]), options.body, 'updated') as Promise<TResponse>;
+
+  const careerReadinessStatus = cleanPath.match(/^\/admins\/career-readiness-content\/([^/]+)\/status$/);
+  if (careerReadinessStatus) {
+    return updateById(
+      context,
+      'career_readiness_content',
+      decodeURIComponent(careerReadinessStatus[1]),
+      { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email },
+      'status_changed'
+    ) as Promise<TResponse>;
+  }
+
+  const careerReadinessUpdate = cleanPath.match(/^\/admins\/career-readiness-content\/([^/]+)$/);
+  if (careerReadinessUpdate) {
+    return updateById(
+      context,
+      'career_readiness_content',
+      decodeURIComponent(careerReadinessUpdate[1]),
+      { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email },
+      'updated'
+    ) as Promise<TResponse>;
+  }
 
   const announcementArchive = cleanPath.match(/^\/admins\/announcements\/([^/]+)\/archive$/);
   if (announcementArchive) {
@@ -829,6 +999,18 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/cohorts') return insertRow(context, 'cohorts', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/workshops') return insertRow(context, 'workshops', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/resources') return insertRow(context, 'resources', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/career-readiness-content') {
+    return insertRow(
+      context,
+      'career_readiness_content',
+      {
+        ...(isRecord(options.body) ? options.body : {}),
+        createdBy: context.email,
+        updatedBy: context.email
+      },
+      'created'
+    ) as Promise<TResponse>;
+  }
   if (cleanPath === '/admins/announcements') {
     return insertRow(
       context,
@@ -859,6 +1041,9 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/students/me/support-tickets') return createStudentSupportTicket(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/support-categories') return createSupportCategory(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/support-faqs') return createSupportFaq(context, options.body) as Promise<TResponse>;
+
+  const adminGuestLeadNote = cleanPath.match(/^\/admins\/guest-leads\/([^/]+)\/notes$/);
+  if (adminGuestLeadNote) return createGuestLeadNote(context, decodeURIComponent(adminGuestLeadNote[1]), options.body) as Promise<TResponse>;
 
   const studentSupportReply = cleanPath.match(/^\/students\/me\/support-tickets\/([^/]+)\/messages$/);
   if (studentSupportReply) return createSupportTicketMessage(context, decodeURIComponent(studentSupportReply[1]), options.body, 'student') as Promise<TResponse>;
@@ -905,6 +1090,7 @@ function getAdminReadPermission(path: string): AdminPermission | undefined {
   if (path.match(/^\/admins\/students\/[^/]+\/lp-attempts$/)) return 'admin.students.view';
   if (path.match(/^\/admins\/students\/[^/]+\/access-preview$/)) return 'admin.students.view';
   if (path.match(/^\/admins\/students\/[^/]+\/preview$/)) return 'admin.students.view';
+  if (path === '/admins/guest-leads' || path.match(/^\/admins\/guest-leads\/[^/]+$/)) return 'admin.students.view';
   if (path.match(/^\/admins\/support-tickets\/[^/]+$/)) return 'admin.support.view';
   if (path.match(/^\/admins\/enrollment-requests\/[^/]+$/)) return 'admin.enrollments.view';
   return ADMIN_READ_PERMISSIONS_BY_PATH[path];
@@ -918,10 +1104,12 @@ function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'pos
   if (path === '/admins/students') return 'admin.students.manage';
   if (path.match(/^\/admins\/students\/[^/]+\/lp-attempts$/)) return 'admin.students.manage';
   if (path.match(/^\/admins\/students\/[^/]+/)) return 'admin.students.manage';
+  if (path.match(/^\/admins\/guest-leads\/[^/]+\/(status|access|notes)$/)) return 'admin.students.manage';
 
   if (path === '/admins/cohorts' || path.match(/^\/admins\/cohorts\/[^/]+/)) return 'admin.cohorts.manage';
   if (path === '/admins/programs' || path.match(/^\/admins\/programs\/[^/]+/)) return 'admin.programs.manage';
   if (path === '/admins/student-guidance-content' || path.match(/^\/admins\/student-guidance-content\/[^/]+/)) return 'admin.programs.manage';
+  if (path === '/admins/career-readiness-content' || path.match(/^\/admins\/career-readiness-content\/[^/]+/)) return 'admin.resources.manage';
   if (
     path === '/admins/projects' ||
     path === '/admins/project-roles' ||
@@ -1001,7 +1189,7 @@ async function createContext(accessToken?: string) {
 
   const supabase = getRequestSupabaseClient(accessToken, data.user.id);
   const email = normalizeEmail(data.user.email);
-  return { accessToken, email, supabase, userId: data.user.id };
+  return { accessToken, email, emailVerifiedAt: data.user.email_confirmed_at ?? null, supabase, userId: data.user.id };
 }
 
 async function getStudentProfile(context: Awaited<ReturnType<typeof createContext>>) {
@@ -1042,6 +1230,252 @@ async function getStudentProfile(context: Awaited<ReturnType<typeof createContex
     live_project_role_ids: liveProjectRoleIds,
     live_project_roles: uniqueStrings(liveProjectRoleIds.map((roleId) => liveProjectRoleNameById.get(roleId) ?? roleId))
   });
+}
+
+async function getGuestProfile(context: Awaited<ReturnType<typeof createContext>>) {
+  const { data, error } = await context.supabase
+    .from('guest_leads')
+    .select('*')
+    .or(`auth_user_id.eq.${context.userId},personal_email.eq.${context.email}`)
+    .limit(2);
+
+  if (error) throw new ApiClientError(error.message, 503);
+
+  const row = chooseGuestIdentityRow(data, context);
+  if (!row) throw new ApiClientError('No guest profile is linked to this Supabase user.', 404);
+  if (row.deactivated_at) throw new ApiClientError('Guest access is inactive.', 403);
+  if (!context.emailVerifiedAt && !row.email_verified_at) throw new ApiClientError('Verify your email before opening guest access.', 403);
+
+  return camelize({
+    ...row,
+    access_label: 'Free Access'
+  });
+}
+
+async function getGuestProgramCatalogue(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query'] = {}) {
+  await getGuestProfile(context);
+
+  const search = String(query?.search ?? '').trim();
+  let request = context.supabase
+    .from('programs')
+    .select(
+      'id,program_key,name,short_name,domain_label,status,guest_catalogue_enabled,catalogue_badge,thumbnail_url,banner_url,short_description,overview,who_should_join,what_you_will_learn,live_project_details,tools_covered,career_outcomes,duration,schedule_format,mentor_support,certificate_details,pricing,next_batch_date,highlights,curriculum,outcomes,faqs,cta_buttons,created_at,updated_at',
+      { count: 'exact' }
+    )
+    .eq('status', 'active')
+    .eq('guest_catalogue_enabled', true)
+    .order('name', { ascending: true })
+    .limit(100);
+
+  if (search) {
+    const escaped = search.replace(/[%(),]/g, '');
+    request = request.or(`program_key.ilike.%${escaped}%,name.ilike.%${escaped}%,short_name.ilike.%${escaped}%,domain_label.ilike.%${escaped}%`);
+  }
+
+  const { count, data, error } = await request;
+  if (error) throw new ApiClientError(error.message, 503);
+
+  const items = (data ?? []).map((program) =>
+    camelize({
+      ...program,
+      cta_label: 'Request Access',
+      overview: program.overview,
+      pricing_note: program.pricing || ''
+    })
+  );
+
+  return {
+    hasNextPage: false,
+    items,
+    page: 1,
+    pageSize: 100,
+    total: count ?? items.length,
+    totalPages: 1
+  };
+}
+
+async function getGuestResources(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query'] = {}) {
+  await getGuestProfile(context);
+  const page = Math.max(1, Number(query?.page ?? 1));
+  const limit = Math.min(Math.max(1, Number(query?.limit ?? 25)), 100);
+  const search = String(query?.search ?? '').trim();
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+
+  let request = context.supabase
+    .from('resources')
+    .select('*', { count: 'exact' })
+    .eq('status', 'active')
+    .eq('guest_access_enabled', true)
+    .or(`guest_access_expires_at.is.null,guest_access_expires_at.gte.${new Date().toISOString()}`)
+    .order('updated_at', { ascending: false })
+    .range(from, to);
+
+  if (search) {
+    const escaped = search.replace(/[%(),]/g, '');
+    request = request.or(`title.ilike.%${escaped}%,description.ilike.%${escaped}%,resource_type.ilike.%${escaped}%,resource_mode.ilike.%${escaped}%`);
+  }
+
+  const { count, data, error } = await request;
+  if (error) throw new ApiClientError(error.message, 503);
+  return createPaginatedResponse((data ?? []).map(enrichRow).map(camelize), count ?? 0, page, limit);
+}
+
+async function getGuestCareerReadiness(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query'] = {}) {
+  await getGuestProfile(context);
+  const page = Math.max(1, Number(query?.page ?? 1));
+  const limit = Math.min(Math.max(1, Number(query?.limit ?? 25)), 100);
+  const search = String(query?.search ?? '').trim();
+  const category = String(query?.category ?? '').trim();
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+
+  let request = context.supabase
+    .from('career_readiness_content')
+    .select('*', { count: 'exact' })
+    .eq('is_published', true)
+    .eq('guest_access_enabled', true)
+    .or(`guest_access_expires_at.is.null,guest_access_expires_at.gte.${new Date().toISOString()}`)
+    .order('sort_order', { ascending: true })
+    .order('updated_at', { ascending: false })
+    .range(from, to);
+
+  if (category && category !== 'all') request = request.eq('category', category);
+  if (search) {
+    const escaped = search.replace(/[%(),]/g, '');
+    request = request.or(`title.ilike.%${escaped}%,section_title.ilike.%${escaped}%,description.ilike.%${escaped}%,content.ilike.%${escaped}%`);
+  }
+
+  const { count, data, error } = await request;
+  if (error) throw new ApiClientError(error.message, 503);
+  return createPaginatedResponse((data ?? []).map(camelize), count ?? 0, page, limit);
+}
+
+async function getGuestWorkshops(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query'] = {}, mode: 'recordings' | 'schedule') {
+  await getGuestProfile(context);
+  const page = Math.max(1, Number(query?.page ?? 1));
+  const limit = Math.min(Math.max(1, Number(query?.limit ?? 25)), 100);
+  const search = String(query?.search ?? '').trim();
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+
+  let request = context.supabase
+    .from('workshops')
+    .select('*', { count: 'exact' })
+    .eq('guest_access_enabled', true)
+    .or(`guest_access_expires_at.is.null,guest_access_expires_at.gte.${new Date().toISOString()}`)
+    .order('date', { ascending: mode === 'schedule' })
+    .order('time', { ascending: true })
+    .range(from, to);
+
+  if (mode === 'recordings') {
+    request = request.eq('workshop_status', 'Completed').or('youtube_video_url.not.is.null,zoom_recording_url.not.is.null');
+  } else {
+    request = request.in('workshop_status', ['Upcoming', 'Scheduled', 'Live']).gte('date', new Date().toISOString().slice(0, 10));
+  }
+
+  if (search) {
+    const escaped = search.replace(/[%(),]/g, '');
+    request = request.or(`title.ilike.%${escaped}%,program_key.ilike.%${escaped}%,zoom_label.ilike.%${escaped}%`);
+  }
+
+  const { count, data, error } = await request;
+  if (error) throw new ApiClientError(error.message, 503);
+  return createPaginatedResponse((data ?? []).map(enrichRow).map(camelize), count ?? 0, page, limit);
+}
+
+async function getAdminGuestLeadsList(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query'] = {}) {
+  const page = Math.max(1, Number(query?.page ?? 1));
+  const limit = Math.min(Math.max(1, Number(query?.limit ?? 25)), 100);
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+  const search = String(query?.search ?? '').trim();
+  const leadStatus = String(query?.leadStatus ?? 'all').trim();
+  const audienceType = String(query?.audienceType ?? 'all').trim();
+  const city = String(query?.city ?? '').trim();
+  const interestedRole = String(query?.interestedRole ?? '').trim();
+  const mentor = String(query?.mentor ?? '').trim();
+  const sort = String(query?.sort ?? 'newest').trim();
+
+  let request = context.supabase
+    .from('guest_leads')
+    .select('*', { count: 'exact' })
+    .order(sort === 'last_active' ? 'last_active_at' : 'created_at', { ascending: false, nullsFirst: false })
+    .range(from, to);
+
+  if (leadStatus && leadStatus !== 'all') request = request.eq('lead_status', leadStatus);
+  if (audienceType && audienceType !== 'all') request = request.eq('audience_type', audienceType);
+  if (city) request = request.ilike('current_city', `%${city.replace(/[%(),]/g, '')}%`);
+  if (mentor) request = request.eq('mentor_allocation_interest', mentor);
+  if (interestedRole) request = request.contains('interested_roles', [interestedRole]);
+  if (search) {
+    const escaped = search.replace(/[%(),]/g, '');
+    request = request.or(`full_name.ilike.%${escaped}%,personal_email.ilike.%${escaped}%,official_email.ilike.%${escaped}%,whatsapp_number.ilike.%${escaped}%,college_name.ilike.%${escaped}%,company_name.ilike.%${escaped}%,current_city.ilike.%${escaped}%,interested_program.ilike.%${escaped}%`);
+  }
+
+  const { count, data, error } = await request;
+  if (error) throw new ApiClientError(error.message, 503);
+  return createPaginatedResponse((data ?? []).map(camelize), count ?? 0, page, limit);
+}
+
+async function getAdminGuestLeadDetail(context: Awaited<ReturnType<typeof createContext>>, guestLeadId: string) {
+  const { data, error } = await context.supabase.from('guest_leads').select('*').eq('id', guestLeadId).single();
+  if (error) throw new ApiClientError(error.message, 503);
+
+  const notes = await context.supabase
+    .from('guest_lead_notes')
+    .select('*')
+    .eq('guest_lead_id', guestLeadId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (notes.error) throw new ApiClientError(notes.error.message, 503);
+
+  return camelize({
+    ...data,
+    notes: notes.data ?? []
+  });
+}
+
+async function updateGuestLeadStatus(context: Awaited<ReturnType<typeof createContext>>, guestLeadId: string, body: unknown) {
+  const allowedStatuses = new Set(['new', 'contacted', 'interested', 'converted', 'not_interested']);
+  const leadStatus = isRecord(body) ? String(body.leadStatus ?? body.lead_status ?? '').trim() : '';
+  if (!allowedStatuses.has(leadStatus)) throw new ApiClientError('Select a valid guest lead status.', 400);
+
+  const { data, error } = await context.supabase
+    .from('guest_leads')
+    .update({ lead_status: leadStatus, updated_at: new Date().toISOString() })
+    .eq('id', guestLeadId)
+    .select('*')
+    .single();
+  if (error) throw new ApiClientError(error.message, 503);
+  await writeAuditLog(context, 'guest_leads', 'status_changed', data, { lead_status: leadStatus });
+  return camelize(data);
+}
+
+async function updateGuestLeadAccess(context: Awaited<ReturnType<typeof createContext>>, guestLeadId: string, body: unknown) {
+  const active = isRecord(body) ? body.active === true : false;
+  const payload = active
+    ? { deactivated_at: null, deactivated_by: null, updated_at: new Date().toISOString() }
+    : { deactivated_at: new Date().toISOString(), deactivated_by: context.email, updated_at: new Date().toISOString() };
+  const { data, error } = await context.supabase.from('guest_leads').update(payload).eq('id', guestLeadId).select('*').single();
+  if (error) throw new ApiClientError(error.message, 503);
+  await writeAuditLog(context, 'guest_leads', active ? 'access_reactivated' : 'access_deactivated', data, payload);
+  return camelize(data);
+}
+
+async function createGuestLeadNote(context: Awaited<ReturnType<typeof createContext>>, guestLeadId: string, body: unknown) {
+  const note = isRecord(body) ? String(body.note ?? '').trim() : '';
+  if (!note) throw new ApiClientError('Note is required.', 400);
+  if (note.length > 2000) throw new ApiClientError('Note must be 2000 characters or fewer.', 400);
+
+  const { data, error } = await context.supabase
+    .from('guest_lead_notes')
+    .insert({ created_by: context.email, guest_lead_id: guestLeadId, note })
+    .select('*')
+    .single();
+  if (error) throw new ApiClientError(error.message, 503);
+  await writeAuditLog(context, 'guest_leads', 'note_added', { id: guestLeadId }, { note: note.slice(0, 160) });
+  return camelize(data);
 }
 
 async function updateStudentPresence(context: Awaited<ReturnType<typeof createContext>>) {
@@ -1131,6 +1565,17 @@ async function getStudentGuidanceContent(context: Awaited<ReturnType<typeof crea
   if (error) return paginate([], query);
 
   return paginate((data ?? []).map(enrichRow).map(camelize), query);
+}
+
+async function getStudentCareerReadinessContent(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const data = await callRpc(context, 'student_career_readiness_content', { p_student_email: context.email });
+  const items = Array.isArray(data) ? data.map(enrichRow).map(camelize) : [];
+  const category = String(query?.category ?? '').trim();
+  const search = String(query?.search ?? '').trim().toLowerCase();
+  const filtered = items
+    .filter((item) => !category || (isRecord(item) && String(item.category ?? '') === category))
+    .filter((item) => !search || JSON.stringify(item).toLowerCase().includes(search));
+  return paginate(filtered, query);
 }
 
 async function enrichStudentCohortProgramNames(context: Awaited<ReturnType<typeof createContext>>, items: unknown[]) {
@@ -2024,7 +2469,12 @@ async function getRpcList(context: Awaited<ReturnType<typeof createContext>>, en
     params.p_include_past = true;
   }
   const data = await callRpc(context, endpoint.functionName, params);
-  const items = extractItems(data, endpoint.section ?? ['items']);
+  let items = extractItems(data, endpoint.section ?? ['items']);
+  if (endpoint.functionName === 'student_projects_bundle') {
+    const student = isRecord(data) && isRecord(data.student) ? data.student : {};
+    const projectStartDate = student.project_start_date ?? student.projectStartDate;
+    items = items.map((item) => isRecord(item) ? { ...item, studentProjectStartDate: item.studentProjectStartDate ?? projectStartDate ?? null } : item);
+  }
   return paginate(items, query);
 }
 
@@ -2551,6 +3001,7 @@ async function createSupportTicketMessage(context: Awaited<ReturnType<typeof cre
   if (ticketError) throw mutationError(ticketError, 'support_tickets');
   if (actorRole === 'admin') {
     await writeSupportAuditLog(context, visibility === 'internal' ? 'internal_note_added' : 'replied', updatedTicket, ticketPatch);
+    if (visibility === 'public') await recordSupportTicketSmartPortalUpdate(context, 'support_ticket_answered', updatedTicket, String(message.id));
     if (visibility === 'public' && body.sendEmail === true) await notifySupportTicketEmail(context, 'admin_reply', String(updatedTicket.id), String(message.id), true);
   } else {
     await notifySupportTicketEmail(context, 'student_reply', String(updatedTicket.id), String(message.id), false);
@@ -2582,6 +3033,33 @@ async function notifySupportTicketEmail(
     const message = error?.message ?? (isRecord(data) && typeof data.error === 'string' ? data.error : 'Support email could not be sent.');
     if (required) throw new ApiClientError(message, 503);
   }
+}
+
+async function recordSupportTicketSmartPortalUpdate(
+  context: Awaited<ReturnType<typeof createContext>>,
+  eventType: Extract<SmartPortalUpdateInput['eventType'], 'support_ticket_answered' | 'support_ticket_resolved'>,
+  ticket: Record<string, unknown>,
+  messageId?: string
+) {
+  const studentEmail = normalizeEmail(ticket.student_email);
+  if (!studentEmail) return;
+
+  const ticketId = String(ticket.ticket_id ?? ticket.id ?? '').trim();
+  const subject = String(ticket.subject ?? 'Support ticket').trim() || 'Support ticket';
+  const sourceId = eventType === 'support_ticket_answered' ? messageId || `${ticket.id ?? ticketId}:answer` : String(ticket.id ?? ticketId);
+  const linkUrl = `/student/support/${encodeURIComponent(String(ticket.id ?? ticketId))}`;
+
+  await recordSmartPortalUpdate(context, {
+    eventType,
+    linkLabel: 'Open support ticket',
+    linkUrl,
+    metadata: { ticketId },
+    sourceId,
+    sourceType: 'support_ticket',
+    studentEmails: [studentEmail],
+    summary: eventType === 'support_ticket_answered' ? 'The support team has replied to your ticket.' : 'Your support ticket has been marked resolved.',
+    title: eventType === 'support_ticket_answered' ? `Support reply: ${subject}` : `Support ticket resolved: ${subject}`
+  });
 }
 
 async function createSupportCategory(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
@@ -2653,6 +3131,9 @@ async function updateSupportTicket(context: Awaited<ReturnType<typeof createCont
   if (error) throw mutationError(error, 'support_tickets');
 
   await writeSupportAuditLog(context, 'updated', data, payload);
+  if (payload.status === 'resolved' && String(currentTicket.status ?? '') !== 'resolved') {
+    await recordSupportTicketSmartPortalUpdate(context, 'support_ticket_resolved', data);
+  }
 
   return {
     message: 'Support ticket updated successfully.',
@@ -3201,8 +3682,10 @@ async function getLiveProjectCertificateRequests(context: Awaited<ReturnType<typ
         moderator_status: 'approved',
         program_key: programKey || undefined,
         program_name: programNameByKey.get(programKey.toLowerCase()) ?? (programKey || undefined),
+        project_end_date: submission.project_end_date ?? undefined,
         project_id: String(submission.project_id ?? ''),
         project_role: String(submission.role_name ?? submission.project_role ?? ''),
+        project_start_date: submission.project_start_date ?? undefined,
         project_title: String(submission.project_title ?? submission.project_id ?? ''),
         request_id: requestNumber,
         request_number: requestNumber,
@@ -3363,6 +3846,22 @@ async function issueLeadershipCertificates(context: Awaited<ReturnType<typeof cr
     student_count: rows.length
   });
 
+  await Promise.all(
+    (data ?? []).map((certificate) =>
+      recordSmartPortalUpdate(context, {
+        eventType: 'certificate_issued',
+        linkLabel: 'View certificates',
+        linkUrl: '/student/certificates',
+        metadata: { certificateId: certificate.certificate_id, certificateType: certificate.certificate_type },
+        sourceId: String(certificate.id ?? certificate.certificate_id),
+        sourceType: 'certificate',
+        studentEmails: [String(certificate.student_email ?? '')],
+        summary: `${String(certificate.program_name ?? (programName || programKey))} certificate is now available.`,
+        title: 'Certificate issued'
+      })
+    )
+  );
+
   const generationMessage = await triggerCertificateGeneration(context, (data ?? []).map((certificate) => String(certificate.id)), sendEmail);
 
   return {
@@ -3377,14 +3876,22 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
   const adminEmail = isRecord(admin) ? String(admin.email ?? context.email) : context.email;
   const payload = snakifyMutationBody(body);
   const requestId = String(payload.request_id ?? '').trim();
-  const durationWeeks = Number(payload.duration_weeks ?? 4);
+  const rawDurationWeeks = payload.duration_weeks === undefined || payload.duration_weeks === null || payload.duration_weeks === '' ? undefined : Number(payload.duration_weeks);
   const startDate = String(payload.start_date ?? '').slice(0, 10);
+  const submittedEndDate = String(payload.end_date ?? '').slice(0, 10);
   const issueDate = String(payload.issue_date ?? todayIsoDate()).slice(0, 10);
   const sendEmail = payload.send_email !== false;
 
   if (!requestId) throw new ApiClientError('Certificate request is required.', 400);
-  if (![2, 4, 6, 8].includes(durationWeeks)) throw new ApiClientError('Duration must be 2, 4, 6, or 8 weeks.', 400);
+  if (rawDurationWeeks !== undefined && ![1, 2, 3, 4, 5, 6].includes(rawDurationWeeks)) throw new ApiClientError('Duration must be between 1 and 6 weeks, or use custom dates.', 400);
   if (!isIsoDate(startDate)) throw new ApiClientError('Start date is required before issuing a live project certificate.', 400);
+  const endDate = isIsoDate(submittedEndDate)
+    ? submittedEndDate
+    : rawDurationWeeks
+      ? addDays(startDate, rawDurationWeeks * 7 - 1)
+      : '';
+  if (!isIsoDate(endDate)) throw new ApiClientError('End date is required before issuing a live project certificate.', 400);
+  if (dateInputTime(endDate) < dateInputTime(startDate)) throw new ApiClientError('End date cannot be before the project start date.', 400);
   if (!isIsoDate(issueDate)) throw new ApiClientError('Issue date is required before issuing a live project certificate.', 400);
 
   const { data: submission, error: submissionError } = await context.supabase
@@ -3419,12 +3926,13 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
   const certificateId = `SS-PROJ-${now.getFullYear()}-${randomHex(10).toUpperCase()}`;
   const verificationToken = randomHex(24);
   const verificationUrl = certificateVerificationUrl(certificateId);
-  const endDate = addDays(startDate, durationWeeks * 7 - 1);
+  const durationLabel = rawDurationWeeks ? `${rawDurationWeeks} ${rawDurationWeeks === 1 ? 'week' : 'weeks'}` : 'Custom dates';
   const row = {
     certificate_id: certificateId,
     certificate_payload: {
       cohortName: submission.cohort_name,
-      durationWeeks,
+      durationLabel,
+      durationWeeks: rawDurationWeeks ?? null,
       issueDate,
       projectEndDate: endDate,
       projectStartDate: startDate,
@@ -3434,7 +3942,7 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
     },
     certificate_type: 'live_project',
     cohort_name: submission.cohort_name,
-    duration_label: `${durationWeeks} weeks`,
+    duration_label: durationLabel,
     email_requested: sendEmail,
     generation_status: 'pending',
     issue_date: issueDate,
@@ -3466,6 +3974,18 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
     send_email: sendEmail
   });
 
+  await recordSmartPortalUpdate(context, {
+    eventType: 'certificate_issued',
+    linkLabel: 'View certificates',
+    linkUrl: '/student/certificates',
+    metadata: { certificateId: data.certificate_id, certificateType: data.certificate_type },
+    sourceId: String(data.id ?? data.certificate_id),
+    sourceType: 'certificate',
+    studentEmails: [String(data.student_email ?? '')],
+    summary: `${String(data.project_title ?? 'Live project')} certificate is now available.`,
+    title: 'Certificate issued'
+  });
+
   const generationMessage = await triggerCertificateGeneration(context, [String(data.id)], sendEmail);
 
   return {
@@ -3482,9 +4002,10 @@ async function issueManualCertificate(context: Awaited<ReturnType<typeof createC
   const issueDate = String(payload.issue_date ?? todayIsoDate()).slice(0, 10);
   const sendEmail = payload.send_email !== false;
   const acknowledgeDuplicate = payload.acknowledge_duplicate === true;
-  const durationWeeks = Number(payload.duration_weeks ?? 4);
+  const rawDurationWeeks = payload.duration_weeks === undefined || payload.duration_weeks === null || payload.duration_weeks === '' ? undefined : Number(payload.duration_weeks);
   const projectStartDate = String(payload.project_start_date ?? '').slice(0, 10);
-  const projectTitle = String(payload.project_title ?? '').trim();
+  const submittedProjectEndDate = String(payload.project_end_date ?? '').slice(0, 10);
+  const submittedProjectTitle = String(payload.project_title ?? '').trim();
   const projectRole = String(payload.project_role ?? '').trim();
   const studentId = String(payload.student_id ?? '').trim();
   const programKey = String(payload.program_key ?? '').trim();
@@ -3516,9 +4037,11 @@ async function issueManualCertificate(context: Awaited<ReturnType<typeof createC
 
   if (!studentName) throw new ApiClientError('Student name is required before issuing a manual certificate.', 400);
   if (!isValidEmail(studentEmail)) throw new ApiClientError('A valid student email is required before issuing a manual certificate.', 400);
-  if (!programName && !programKey) throw new ApiClientError('Program is required before issuing a manual certificate.', 400);
+  if (certificateType === 'leadership' && !programName && !programKey) throw new ApiClientError('Program is required before issuing a manual certificate.', 400);
+  if (certificateType === 'live_project' && !programName && !programKey) programName = 'Live Project';
 
   let modulesCovered = asStringArray(payload.modules_covered);
+  const projectTitle = submittedProjectTitle || projectRole;
   const now = new Date();
   const verificationToken = randomHex(24);
   const row: Record<string, unknown> = {
@@ -3579,15 +4102,17 @@ async function issueManualCertificate(context: Awaited<ReturnType<typeof createC
     row.cohort_name = 'Manual Issue';
     row.modules_covered = modulesCovered;
   } else {
-    if (!projectTitle) throw new ApiClientError('Project title is required before issuing a manual live project certificate.', 400);
     if (!projectRole) throw new ApiClientError('Project role is required before issuing a manual live project certificate.', 400);
-    if (![2, 4, 6, 8].includes(durationWeeks)) throw new ApiClientError('Duration must be 2, 4, 6, or 8 weeks.', 400);
+    if (rawDurationWeeks !== undefined && ![1, 2, 3, 4, 5, 6].includes(rawDurationWeeks)) throw new ApiClientError('Duration must be between 1 and 6 weeks, or use custom dates.', 400);
     if (!isIsoDate(projectStartDate)) throw new ApiClientError('Project start date is required before issuing a manual live project certificate.', 400);
-    const projectEndDate = addDays(projectStartDate, durationWeeks * 7 - 1);
+    const projectEndDate = rawDurationWeeks ? addDays(projectStartDate, rawDurationWeeks * 7 - 1) : submittedProjectEndDate;
+    if (!isIsoDate(projectEndDate)) throw new ApiClientError('Project end date is required before issuing a manual live project certificate.', 400);
+    if (dateInputTime(projectEndDate) < dateInputTime(projectStartDate)) throw new ApiClientError('Project end date cannot be before the project start date.', 400);
     const projectId = `MANUAL-${slugifyKey(projectTitle).toUpperCase()}-${now.getFullYear()}-${randomHex(4).toUpperCase()}`;
+    const durationLabel = rawDurationWeeks ? `${rawDurationWeeks} ${rawDurationWeeks === 1 ? 'week' : 'weeks'}` : 'Custom dates';
     row.certificate_id = `SS-PROJ-${now.getFullYear()}-${randomHex(10).toUpperCase()}`;
     row.certificate_payload = {
-      durationWeeks,
+      durationWeeks: rawDurationWeeks ?? null,
       issueDate,
       manualIssue: true,
       projectEndDate,
@@ -3595,7 +4120,7 @@ async function issueManualCertificate(context: Awaited<ReturnType<typeof createC
       projectTitle,
       projectRole
     };
-    row.duration_label = `${durationWeeks} weeks`;
+    row.duration_label = durationLabel;
     row.modules_covered = [projectRole, projectTitle].filter(Boolean);
     row.project_end_date = projectEndDate;
     row.project_id = projectId;
@@ -3617,6 +4142,18 @@ async function issueManualCertificate(context: Awaited<ReturnType<typeof createC
     manual_issue: true,
     send_email: sendEmail,
     student_email: studentEmail
+  });
+
+  await recordSmartPortalUpdate(context, {
+    eventType: 'certificate_issued',
+    linkLabel: 'View certificates',
+    linkUrl: '/student/certificates',
+    metadata: { certificateId: data.certificate_id, certificateType: data.certificate_type },
+    sourceId: String(data.id ?? data.certificate_id),
+    sourceType: 'certificate',
+    studentEmails: [String(data.student_email ?? studentEmail)],
+    summary: `${String(data.program_name ?? data.project_title ?? 'Your')} certificate is now available.`,
+    title: 'Certificate issued'
   });
 
   const generationMessage = await triggerCertificateGeneration(context, [String(data.id)], sendEmail);
@@ -3668,8 +4205,10 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
   const submissionLink = typeof payload.submission_link === 'string' ? payload.submission_link.trim() : '';
   const remarks = typeof payload.remarks === 'string' ? payload.remarks.trim() : '';
   const studentFeedback = typeof payload.student_feedback === 'string' ? payload.student_feedback.trim() : '';
+  const requestedProjectEndDate = String(payload.project_end_date ?? '').slice(0, 10);
   const declarationConfirmations = asStringArray(payload.declaration_confirmations).map((item) => item.trim()).filter(Boolean);
   const declarationAccepted = payload.declaration_accepted === true;
+  const durationConfirmed = payload.duration_confirmed === true;
 
   if (!projectId) throw new ApiClientError('Select a project before submitting.', 400);
   if (!cohortId) throw new ApiClientError('Select the cohort for this submission.', 400);
@@ -3677,6 +4216,7 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
   if (studentFeedback.length < 30) throw new ApiClientError('Add detailed project feedback before submitting.', 400);
   if (!declarationAccepted) throw new ApiClientError('Confirm the project declaration before submitting.', 400);
   if (declarationConfirmations.length < 6) throw new ApiClientError('Confirm all project submission declarations before submitting.', 400);
+  if (!durationConfirmed) throw new ApiClientError('Confirm that you understand your live project duration before submitting.', 400);
 
   const [profile, dashboard, projectBundle] = await Promise.all([
     getStudentProfile(context),
@@ -3687,6 +4227,7 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
   const student = isRecord(profile) ? profile : {};
   const studentId = String(student.id ?? '');
   const studentName = String(student.fullName ?? student.full_name ?? context.email);
+  const projectStartDate = String(student.projectStartDate ?? student.project_start_date ?? '').slice(0, 10);
   const projects = extractItems(projectBundle, ['projects', 'items']).filter(isRecord);
   const cohorts = extractItems(dashboard, ['cohorts', 'studentCohorts']).filter(isRecord);
   const submissions = extractItems(projectBundle, ['projectSubmissionRequests', 'project_submission_requests']).filter(isRecord);
@@ -3696,6 +4237,15 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
   const project = projects.find((item) => String(item.projectId ?? item.project_id ?? item.id) === projectId);
   if (!project) throw new ApiClientError('This project is not available to your account.', 403);
   if (String(project.status ?? '').toLowerCase() !== 'active') throw new ApiClientError('This project is not active for submission.', 403);
+  if (!isIsoDate(projectStartDate)) throw new ApiClientError('Your onboarding date is not available. Please contact the support team before submitting this report.', 400);
+  if (!isIsoDate(requestedProjectEndDate)) throw new ApiClientError('Select your live project end date before submitting.', 400);
+  if (dateInputTime(requestedProjectEndDate) < dateInputTime(projectStartDate)) throw new ApiClientError('End date cannot be before your onboarding date.', 400);
+  if (dateInputTime(requestedProjectEndDate) > dateInputTime(todayLocalDate())) {
+    throw new ApiClientError("Future end dates are not allowed. Please select today's date or an earlier date within your allowed project duration.", 400);
+  }
+  if (dateInputTime(requestedProjectEndDate) > dateInputTime(addMonths(projectStartDate, 1))) {
+    throw new ApiClientError('Live project duration can be a maximum of 1 month. Please select an end date within 1 month of your onboarding date.', 400);
+  }
 
   const projectExternalId = String(project.projectId ?? project.project_id ?? project.id);
   const projectPrograms = uniqueStrings([...asStringArray(project.programKeys ?? project.program_keys), String(project.programKey ?? project.program_key ?? '')]).map((item) => item.toLowerCase());
@@ -3751,6 +4301,8 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
     is_late: isLate,
     program_key: cohortProgramKey,
     project_id: projectExternalId,
+    project_end_date: requestedProjectEndDate,
+    project_start_date: projectStartDate,
     project_title: String(project.title ?? projectExternalId),
     remarks: remarks || null,
     request_id: requestId,
@@ -3781,10 +4333,35 @@ async function updateById(context: Awaited<ReturnType<typeof createContext>>, ta
   const endpoint = getWriteEndpoint(table);
   const metadata = getWriteMetadata(endpoint.table, body);
   const payload = prepareWritePayload(endpoint, body, false);
+  const { data: previousRow, error: previousError } =
+    endpoint.table === 'workshops' || endpoint.table === 'resources' || endpoint.table === 'career_readiness_content'
+      ? await context.supabase.from(endpoint.table).select('*').eq('id', id).limit(1).maybeSingle()
+      : { data: null, error: null };
+  if (previousError) throw mutationError(previousError, endpoint.table);
   const { data, error } = await context.supabase.from(endpoint.table).update(payload).eq('id', id).select('*').single();
   if (error) throw mutationError(error, endpoint.table);
   if (endpoint.table === 'students') await syncStudentAssignments(context, data, metadata);
   if (auditAction) await writeAuditLog(context, endpoint.table, auditAction, data, payload);
+  if (endpoint.table === 'workshops' && !hasPublishedRecording(previousRow) && hasPublishedRecording(data) && hasAudienceScope(data)) {
+    await recordWorkshopSmartPortalUpdate(context, 'recording_published', data);
+  }
+  if (endpoint.table === 'workshops' && hasAudienceScope(data)) {
+    const previousStatus = workshopStatus(previousRow);
+    const currentStatus = workshopStatus(data);
+    if (currentStatus === 'Cancelled' && previousStatus !== 'Cancelled') {
+      await recordWorkshopSmartPortalUpdate(context, 'session_cancelled', data);
+    } else if (currentStatus === 'Completed' && previousStatus !== 'Completed') {
+      await recordWorkshopSmartPortalUpdate(context, 'session_completed', data);
+    } else if (hasWorkshopScheduleChanged(previousRow, data) && isStudentVisibleSession(data)) {
+      await recordWorkshopSmartPortalUpdate(context, 'session_rescheduled', data);
+    }
+  }
+  if (endpoint.table === 'resources' && shouldRecordResourceSmartPortalUpdate(previousRow, data)) {
+    await recordResourceSmartPortalUpdate(context, data);
+  }
+  if (endpoint.table === 'career_readiness_content' && shouldRecordCareerReadinessSmartPortalUpdate(previousRow, data)) {
+    await recordCareerReadinessSmartPortalUpdate(context, data);
+  }
   if (metadata.sendInvite && endpoint.table === 'students') await queueStudentInvite(context, data);
   if (metadata.sendOnboardingMail && endpoint.table === 'students') await queueStudentOnboardingMail(context, data);
   return endpoint.table === 'students' ? (await enrichAdminStudents(context, [data]))[0] : camelize(enrichRow(data));
@@ -3830,6 +4407,19 @@ async function insertRow(context: Awaited<ReturnType<typeof createContext>>, tab
   if (error) throw mutationError(error, endpoint.table);
   if (endpoint.table === 'students') await syncStudentAssignments(context, data, metadata);
   if (auditAction) await writeAuditLog(context, endpoint.table, auditAction, data, insertPayload);
+  if (endpoint.table === 'resources' && hasAudienceScope(data) && String(data.status ?? 'active').toLowerCase() === 'active') {
+    await recordResourceSmartPortalUpdate(context, data);
+  }
+  if (endpoint.table === 'career_readiness_content' && data.is_published === true) {
+    await recordCareerReadinessSmartPortalUpdate(context, data);
+  }
+  if (endpoint.table === 'workshops' && hasAudienceScope(data)) {
+    if (hasPublishedRecording(data)) {
+      await recordWorkshopSmartPortalUpdate(context, 'recording_published', data);
+    } else if (isStudentVisibleSession(data)) {
+      await recordWorkshopSmartPortalUpdate(context, 'session_scheduled', data);
+    }
+  }
   if (metadata.sendInvite && endpoint.table === 'students') await queueStudentInvite(context, data);
   if (metadata.sendOnboardingMail && endpoint.table === 'students') await queueStudentOnboardingMail(context, data, metadata.cohortNames);
   return endpoint.table === 'students' ? (await enrichAdminStudents(context, [data]))[0] : camelize(enrichRow(data));
@@ -4205,10 +4795,57 @@ async function processQueuedStudentEmail(context: Awaited<ReturnType<typeof crea
   }
 }
 
-async function callRpc(context: Awaited<ReturnType<typeof createContext>>, functionName: string, params?: Record<string, boolean | string>) {
+async function callRpc(context: Awaited<ReturnType<typeof createContext>>, functionName: string, params?: Record<string, boolean | string | string[] | Record<string, unknown> | null>) {
   const { data, error } = await context.supabase.rpc(functionName, params);
   if (error) throw new ApiClientError(error.message, 503);
   return camelize(data);
+}
+
+type SmartPortalUpdateInput = {
+  cohortNames?: string[];
+  eventType:
+    | 'career_readiness_added'
+    | 'certificate_issued'
+    | 'recording_published'
+    | 'resource_added'
+    | 'session_cancelled'
+    | 'session_completed'
+    | 'session_rescheduled'
+    | 'session_scheduled'
+    | 'support_ticket_answered'
+    | 'support_ticket_resolved';
+  linkLabel?: string;
+  linkUrl?: string;
+  metadata?: Record<string, unknown>;
+  programKeys?: string[];
+  sourceId: string;
+  sourceType: string;
+  studentEmails?: string[];
+  summary?: string;
+  title: string;
+};
+
+async function recordSmartPortalUpdate(context: Awaited<ReturnType<typeof createContext>>, input: SmartPortalUpdateInput) {
+  try {
+    await callRpc(context, 'record_portal_update_event', {
+      p_cohort_names: uniqueStrings(input.cohortNames ?? []),
+      p_created_by: context.email,
+      p_event_type: input.eventType,
+      p_link_label: input.linkLabel ?? null,
+      p_link_url: input.linkUrl ?? null,
+      p_metadata: input.metadata ?? {},
+      p_program_keys: uniqueStrings((input.programKeys ?? []).map((key) => key.trim().toLowerCase()).filter(Boolean)),
+      p_source_id: input.sourceId,
+      p_source_type: input.sourceType,
+      p_student_emails: uniqueStrings((input.studentEmails ?? []).map(normalizeEmail).filter(Boolean)),
+      p_summary: input.summary ?? null,
+      p_title: input.title
+    });
+  } catch (error) {
+    if (!isMissingSchemaError(error)) {
+      console.warn('Smart portal update digest was skipped:', error);
+    }
+  }
 }
 
 function applyCommonFilters<TQuery extends SupabaseQuery>(request: TQuery, query: ApiClientOptions['query'], endpoint: TableEndpoint): TQuery {
@@ -4301,6 +4938,225 @@ function isStudentRecordingRow(item: unknown) {
   return status === 'Completed' && typeof recordingUrl === 'string' && recordingUrl.trim().length > 0;
 }
 
+function hasPublishedRecording(item: unknown) {
+  return isStudentRecordingRow(item);
+}
+
+function isStudentVisibleSession(item: unknown) {
+  if (!isRecord(item)) return false;
+  const status = String(item.status ?? item.workshop_status ?? item.workshopStatus ?? '');
+  return ['Upcoming', 'Scheduled', 'Live'].includes(status);
+}
+
+function workshopStatus(item: unknown) {
+  if (!isRecord(item)) return '';
+  return String(item.status ?? item.workshop_status ?? item.workshopStatus ?? '').trim();
+}
+
+function hasWorkshopScheduleChanged(previousItem: unknown, nextItem: unknown) {
+  if (!isRecord(previousItem) || !isRecord(nextItem)) return false;
+  return (
+    String(previousItem.date ?? '') !== String(nextItem.date ?? '') ||
+    String(previousItem.time ?? '') !== String(nextItem.time ?? '') ||
+    String(previousItem.duration_minutes ?? previousItem.durationMinutes ?? '') !== String(nextItem.duration_minutes ?? nextItem.durationMinutes ?? '')
+  );
+}
+
+function hasAudienceScope(item: unknown) {
+  if (!isRecord(item)) return false;
+  const primaryProgramKey = String(item.program_key ?? item.programKey ?? '').trim();
+  const programKeys = uniqueStrings([...asStringArray(item.program_keys ?? item.programKeys), primaryProgramKey]);
+  const cohortNames = asStringArray(item.cohort_names ?? item.cohortNames);
+  return programKeys.length > 0 || cohortNames.length > 0;
+}
+
+function isActiveResource(item: unknown) {
+  if (!isRecord(item)) return false;
+  return String(item.status ?? '').trim().toLowerCase() === 'active';
+}
+
+function isPublishedCareerReadiness(item: unknown) {
+  return isRecord(item) && item.is_published === true;
+}
+
+function sortedAudienceValues(values: string[]) {
+  return uniqueStrings(values.map((value) => value.trim().toLowerCase()).filter(Boolean)).sort();
+}
+
+function hasPortalAudienceChanged(previousItem: unknown, nextItem: unknown) {
+  const previousProgramKeys = sortedAudienceValues(itemProgramKeys(previousItem));
+  const nextProgramKeys = sortedAudienceValues(itemProgramKeys(nextItem));
+  const previousCohortNames = sortedAudienceValues(itemCohortNames(previousItem));
+  const nextCohortNames = sortedAudienceValues(itemCohortNames(nextItem));
+  return previousProgramKeys.join('\n') !== nextProgramKeys.join('\n') || previousCohortNames.join('\n') !== nextCohortNames.join('\n');
+}
+
+function shouldRecordResourceSmartPortalUpdate(previousItem: unknown, nextItem: unknown) {
+  return (
+    isActiveResource(nextItem) &&
+    hasAudienceScope(nextItem) &&
+    (!isActiveResource(previousItem) || !hasAudienceScope(previousItem) || hasPortalAudienceChanged(previousItem, nextItem))
+  );
+}
+
+function shouldRecordCareerReadinessSmartPortalUpdate(previousItem: unknown, nextItem: unknown) {
+  return isPublishedCareerReadiness(nextItem) && (!isPublishedCareerReadiness(previousItem) || hasPortalAudienceChanged(previousItem, nextItem));
+}
+
+function itemTitle(item: unknown, fallback: string) {
+  if (!isRecord(item)) return fallback;
+  return String(item.title ?? item.name ?? fallback).trim() || fallback;
+}
+
+function itemSourceId(item: unknown) {
+  if (!isRecord(item)) return '';
+  return String(item.id ?? item.workshop_id ?? item.workshopId ?? item.resource_id ?? item.resourceId ?? '').trim();
+}
+
+function itemProgramKeys(item: unknown) {
+  if (!isRecord(item)) return [];
+  const primaryProgramKey = String(item.program_key ?? item.programKey ?? '').trim();
+  return uniqueStrings([
+    ...asStringArray(item.program_keys ?? item.programKeys),
+    primaryProgramKey
+  ].map((key) => key.trim().toLowerCase()).filter(Boolean));
+}
+
+function itemCohortNames(item: unknown) {
+  if (!isRecord(item)) return [];
+  return uniqueStrings(asStringArray(item.cohort_names ?? item.cohortNames).map((name) => name.trim()).filter(Boolean));
+}
+
+function formatPortalUpdateScheduleSummary(item: unknown) {
+  if (!isRecord(item)) return undefined;
+  const date = String(item.date ?? '').trim();
+  const time = String(item.time ?? '').trim();
+  const duration = item.duration_minutes ?? item.durationMinutes;
+  return [date, time, duration ? `${duration} min` : undefined].filter(Boolean).join(' · ') || undefined;
+}
+
+function workshopPortalUpdateCopy(
+  eventType: Extract<SmartPortalUpdateInput['eventType'], 'recording_published' | 'session_cancelled' | 'session_completed' | 'session_rescheduled' | 'session_scheduled'>,
+  item: unknown
+) {
+  const title = itemTitle(item, 'Workshop');
+  const schedule = formatPortalUpdateScheduleSummary(item) ?? 'A new session has been added to your schedule.';
+
+  if (eventType === 'recording_published') {
+    return {
+      linkLabel: 'Watch recording',
+      linkUrl: '/student/recordings',
+      sourceType: 'workshop_recording',
+      summary: 'The session recording is now available.',
+      title: `Recording published: ${title}`
+    };
+  }
+
+  if (eventType === 'session_rescheduled') {
+    return {
+      linkLabel: 'View schedule',
+      linkUrl: '/student/schedule',
+      sourceType: 'workshop_session',
+      summary: `The session schedule has been updated: ${schedule}.`,
+      title: `Workshop rescheduled: ${title}`
+    };
+  }
+
+  if (eventType === 'session_cancelled') {
+    return {
+      linkLabel: 'View schedule',
+      linkUrl: '/student/schedule',
+      sourceType: 'workshop_session',
+      summary: 'This session has been cancelled.',
+      title: `Workshop cancelled: ${title}`
+    };
+  }
+
+  if (eventType === 'session_completed') {
+    return {
+      linkLabel: 'View schedule',
+      linkUrl: '/student/schedule',
+      sourceType: 'workshop_session',
+      summary: 'This session has been marked completed.',
+      title: `Workshop completed: ${title}`
+    };
+  }
+
+  return {
+    linkLabel: 'View schedule',
+    linkUrl: '/student/schedule',
+    sourceType: 'workshop_session',
+    summary: schedule,
+    title: `New session scheduled: ${title}`
+  };
+}
+
+async function recordWorkshopSmartPortalUpdate(
+  context: Awaited<ReturnType<typeof createContext>>,
+  eventType: Extract<SmartPortalUpdateInput['eventType'], 'recording_published' | 'session_cancelled' | 'session_completed' | 'session_rescheduled' | 'session_scheduled'>,
+  item: unknown
+) {
+  const copy = workshopPortalUpdateCopy(eventType, item);
+  await recordSmartPortalUpdate(context, {
+    cohortNames: itemCohortNames(item),
+    eventType,
+    linkLabel: copy.linkLabel,
+    linkUrl: copy.linkUrl,
+    metadata: { workshopId: isRecord(item) ? item.workshop_id ?? item.workshopId ?? item.id : undefined },
+    programKeys: itemProgramKeys(item),
+    sourceId: itemSourceId(item),
+    sourceType: copy.sourceType,
+    summary: copy.summary,
+    title: copy.title
+  });
+}
+
+async function recordResourceSmartPortalUpdate(context: Awaited<ReturnType<typeof createContext>>, item: unknown) {
+  await recordSmartPortalUpdate(context, {
+    cohortNames: itemCohortNames(item),
+    eventType: 'resource_added',
+    linkLabel: 'Open resources',
+    linkUrl: '/student/resources',
+    metadata: { resourceId: isRecord(item) ? item.resource_id ?? item.resourceId ?? item.id : undefined },
+    programKeys: itemProgramKeys(item),
+    sourceId: itemSourceId(item),
+    sourceType: 'resource',
+    summary: 'A new item is available in your Resource Library.',
+    title: `New resource added: ${itemTitle(item, 'Resource')}`
+  });
+}
+
+async function recordCareerReadinessSmartPortalUpdate(context: Awaited<ReturnType<typeof createContext>>, item: unknown) {
+  const programKeys = itemProgramKeys(item);
+  const cohortNames = itemCohortNames(item);
+  const studentEmails = programKeys.length === 0 && cohortNames.length === 0 ? await getActiveStudentEmails(context) : [];
+
+  await recordSmartPortalUpdate(context, {
+    cohortNames,
+    eventType: 'career_readiness_added',
+    linkLabel: 'Open career readiness',
+    linkUrl: '/student/career-readiness',
+    metadata: { contentId: isRecord(item) ? item.id : undefined },
+    programKeys,
+    sourceId: itemSourceId(item),
+    sourceType: 'career_readiness_content',
+    studentEmails,
+    summary: 'New career readiness content is available.',
+    title: `New career readiness content: ${itemTitle(item, 'Career readiness')}`
+  });
+}
+
+async function getActiveStudentEmails(context: Awaited<ReturnType<typeof createContext>>) {
+  const { data, error } = await context.supabase
+    .from('students')
+    .select('email')
+    .eq('active', true)
+    .not('email', 'is', null)
+    .limit(10000);
+  if (error) throw mutationError(error, 'students');
+  return uniqueStrings((data ?? []).map((row) => normalizeEmail(row.email)).filter(Boolean));
+}
+
 function createPaginatedResponse(items: unknown[], total: number, page: number, limit: number) {
   const totalPages = Math.max(1, Math.ceil(total / limit));
   return {
@@ -4333,6 +5189,16 @@ function chooseIdentityRow(rows: unknown, context: Awaited<ReturnType<typeof cre
     rows.find((row) => isRecord(row) && row.auth_user_id === context.userId && normalizeEmail(row.email) === context.email) ??
     rows.find((row) => isRecord(row) && row.auth_user_id === context.userId) ??
     rows.find((row) => isRecord(row) && normalizeEmail(row.email) === context.email) ??
+    null
+  );
+}
+
+function chooseGuestIdentityRow(rows: unknown, context: Awaited<ReturnType<typeof createContext>>) {
+  if (!Array.isArray(rows)) return null;
+  return (
+    rows.find((row) => isRecord(row) && row.auth_user_id === context.userId && normalizeEmail(row.personal_email) === context.email) ??
+    rows.find((row) => isRecord(row) && row.auth_user_id === context.userId) ??
+    rows.find((row) => isRecord(row) && normalizeEmail(row.personal_email) === context.email) ??
     null
   );
 }
@@ -4472,11 +5338,14 @@ function isVisibleAnnouncementNow(item: unknown) {
   const now = Date.now();
   const startDate = item.start_date ?? item.startDate;
   const endDate = item.end_date ?? item.endDate;
+  const expiresAt = item.expires_at ?? item.expiresAt;
   const startsAt = typeof startDate === 'string' && startDate.trim() ? new Date(startDate).getTime() : Number.NaN;
   const endsAt = typeof endDate === 'string' && endDate.trim() ? new Date(endDate).getTime() : Number.NaN;
+  const expiresAtTime = typeof expiresAt === 'string' && expiresAt.trim() ? new Date(expiresAt).getTime() : Number.NaN;
 
   if (!Number.isNaN(startsAt) && startsAt > now) return false;
   if (!Number.isNaN(endsAt) && endsAt < now) return false;
+  if (!Number.isNaN(expiresAtTime) && expiresAtTime <= now) return false;
 
   return true;
 }
@@ -4763,6 +5632,40 @@ function normalizeStudentGuidanceContentWriteBody(payload: Record<string, unknow
   };
 }
 
+function normalizeCareerReadinessContentWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  const linkUrl = has('link_url') ? String(payload.link_url ?? '').trim() || null : payload.link_url;
+  const linkButtons = has('link_buttons') ? normalizeCareerReadinessLinkButtons(payload.link_buttons) : payload.link_buttons;
+  return {
+    ...payload,
+    category: has('category') && typeof payload.category === 'string' ? slugifyKey(payload.category).slice(0, 80) : payload.category,
+    cohort_names: has('cohort_names') ? uniqueStrings(asStringArray(payload.cohort_names).map((item) => item.trim()).filter(Boolean)) : payload.cohort_names,
+    content: has('content') ? String(payload.content ?? '').trim() || null : payload.content,
+    description: has('description') ? String(payload.description ?? '').trim() || null : payload.description,
+    is_published: has('is_published') ? payload.is_published === true : payload.is_published,
+    link_buttons: linkButtons,
+    link_label: has('link_label') ? String(payload.link_label ?? '').trim() || null : payload.link_label,
+    link_url: linkUrl,
+    program_keys: has('program_keys') ? uniqueStrings(asStringArray(payload.program_keys).map((item) => slugifyKey(item)).filter(Boolean)) : payload.program_keys,
+    section_title: has('section_title') ? String(payload.section_title ?? '').trim() || 'Custom Section' : payload.section_title,
+    sort_order: has('sort_order') && payload.sort_order !== '' && payload.sort_order !== null ? Number(payload.sort_order) : payload.sort_order,
+    title: has('title') && typeof payload.title === 'string' ? payload.title.trim() : payload.title
+  };
+}
+
+function normalizeCareerReadinessLinkButtons(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!isRecord(item)) return null;
+      const label = String(item.label ?? '').trim();
+      const url = String(item.url ?? '').trim();
+      if (!label && !url) return null;
+      return { label, url };
+    })
+    .filter((item): item is { label: string; url: string } => Boolean(item));
+}
+
 function normalizeProjectRoleWriteBody(payload: Record<string, unknown>) {
   return {
     ...payload,
@@ -4865,6 +5768,7 @@ function normalizeAnnouncementWriteBody(payload: Record<string, unknown>) {
   const customEmoji = normalizeOptionalText('custom_emoji');
   const cohortNames = has('cohort_names') ? uniqueStrings(asStringArray(payload.cohort_names)) : undefined;
   const programKeys = has('program_keys') ? uniqueStrings(asStringArray(payload.program_keys).map((key) => key.trim().toLowerCase()).filter(Boolean)) : undefined;
+  const studentEmails = has('student_emails') ? uniqueStrings(asStringArray(payload.student_emails).map(normalizeEmail).filter(Boolean)) : undefined;
 
   return {
     ...payload,
@@ -4872,15 +5776,22 @@ function normalizeAnnouncementWriteBody(payload: Record<string, unknown>) {
     audience,
     cohort_names: cohortNames,
     custom_emoji: customEmoji === undefined ? undefined : customEmoji,
+    expires_at: normalizeOptionalText('expires_at'),
     end_date: normalizeOptionalDate('end_date'),
     link_label: normalizeOptionalText('link_label'),
     link_url: normalizeOptionalText('link_url'),
     message: has('message') && typeof payload.message === 'string' ? payload.message.trim() : payload.message,
+    metadata: has('metadata') && isRecord(payload.metadata) ? payload.metadata : payload.metadata,
     pinned: has('pinned') ? payload.pinned === true : payload.pinned,
     priority: has('priority') && typeof payload.priority === 'string' ? payload.priority.trim().toLowerCase() : payload.priority,
     program_keys: programKeys,
+    source_id: normalizeOptionalText('source_id'),
+    source_key: normalizeOptionalText('source_key'),
+    source_type: normalizeOptionalText('source_type'),
     start_date: normalizeOptionalDate('start_date'),
     status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    student_emails: studentEmails,
+    system_generated: has('system_generated') ? payload.system_generated === true : payload.system_generated,
     title: has('title') && typeof payload.title === 'string' ? payload.title.trim() : payload.title,
     type,
     updated_by: normalizeOptionalText('updated_by')
@@ -5014,6 +5925,49 @@ function validateStudentGuidanceContentWriteBody(payload: Record<string, unknown
   }
 }
 
+function validateCareerReadinessContentWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const category = typeof payload.category === 'string' ? payload.category.trim() : '';
+  const sectionTitle = typeof payload.section_title === 'string' ? payload.section_title.trim() : '';
+  const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+  const sortOrder = payload.sort_order;
+  const linkUrl = typeof payload.link_url === 'string' ? payload.link_url.trim() : '';
+  const linkButtons = Array.isArray(payload.link_buttons) ? payload.link_buttons : undefined;
+
+  if (inserting && !category) throw new ApiClientError('Career readiness category is required.', 400);
+  if (category && !/^[a-z0-9][a-z0-9_-]{1,79}$/.test(category)) throw new ApiClientError('Career readiness category is invalid.', 400);
+  if (inserting && !sectionTitle) throw new ApiClientError('Career readiness section title is required.', 400);
+  if (sectionTitle && (sectionTitle.length < 2 || sectionTitle.length > 120)) throw new ApiClientError('Career readiness section title must be 2 to 120 characters.', 400);
+  if (inserting && !title) throw new ApiClientError('Career readiness title is required.', 400);
+  if (sortOrder !== undefined && sortOrder !== null && (!Number.isInteger(Number(sortOrder)) || Number(sortOrder) < 0)) {
+    throw new ApiClientError('Career readiness sort order must be zero or a positive whole number.', 400);
+  }
+  if (linkUrl && !/^https?:\/\//i.test(linkUrl) && !linkUrl.startsWith('/')) {
+    throw new ApiClientError('Career readiness link must start with http://, https://, or /.', 400);
+  }
+  if (payload.link_buttons !== undefined && !Array.isArray(payload.link_buttons)) {
+    throw new ApiClientError('Career readiness CTA buttons must be a list.', 400);
+  }
+  if (linkButtons && linkButtons.length > 8) {
+    throw new ApiClientError('Career readiness can include up to 8 CTA buttons.', 400);
+  }
+  linkButtons?.forEach((button, index) => {
+    if (!isRecord(button)) throw new ApiClientError(`CTA button ${index + 1} is invalid.`, 400);
+    const label = typeof button.label === 'string' ? button.label.trim() : '';
+    const url = typeof button.url === 'string' ? button.url.trim() : '';
+    if (!label || !url) throw new ApiClientError(`CTA button ${index + 1} needs both a label and a URL.`, 400);
+    if (label.length > 80) throw new ApiClientError(`CTA button ${index + 1} label must be 80 characters or fewer.`, 400);
+    if (!/^https?:\/\//i.test(url) && !url.startsWith('/')) {
+      throw new ApiClientError(`CTA button ${index + 1} URL must start with http://, https://, or /.`, 400);
+    }
+  });
+  if (payload.program_keys !== undefined && !Array.isArray(payload.program_keys)) {
+    throw new ApiClientError('Career readiness program targeting must be a list.', 400);
+  }
+  if (payload.cohort_names !== undefined && !Array.isArray(payload.cohort_names)) {
+    throw new ApiClientError('Career readiness cohort targeting must be a list.', 400);
+  }
+}
+
 function validateProjectRoleWriteBody(payload: Record<string, unknown>, inserting: boolean) {
   const roleId = typeof payload.role_id === 'string' ? payload.role_id.trim() : '';
   const roleName = typeof payload.role_name === 'string' ? payload.role_name.trim() : '';
@@ -5093,8 +6047,10 @@ function validateAnnouncementWriteBody(payload: Record<string, unknown>, inserti
   const type = typeof payload.type === 'string' ? payload.type : undefined;
   const cohortNames = payload.cohort_names;
   const programKeys = payload.program_keys;
+  const studentEmails = payload.student_emails;
   const startDate = typeof payload.start_date === 'string' ? payload.start_date.trim() : '';
   const endDate = typeof payload.end_date === 'string' ? payload.end_date.trim() : '';
+  const expiresAt = typeof payload.expires_at === 'string' ? payload.expires_at.trim() : '';
   const linkUrl = typeof payload.link_url === 'string' ? payload.link_url.trim() : '';
 
   if (inserting && !title) throw new ApiClientError('Announcement title is required.', 400);
@@ -5103,16 +6059,19 @@ function validateAnnouncementWriteBody(payload: Record<string, unknown>, inserti
   if ('message' in payload && !message) throw new ApiClientError('Announcement message is required.', 400);
   if (title.length > 160) throw new ApiClientError('Announcement title must be 160 characters or fewer.', 400);
   if (message.length > 2500) throw new ApiClientError('Announcement message must be 2500 characters or fewer.', 400);
-  if (audience && !['all', 'cohort', 'program'].includes(audience)) throw new ApiClientError('Announcement audience is invalid.', 400);
+  if (audience && !['all', 'cohort', 'program', 'student'].includes(audience)) throw new ApiClientError('Announcement audience is invalid.', 400);
   if (priority && !['normal', 'urgent'].includes(priority)) throw new ApiClientError('Announcement priority is invalid.', 400);
   if (status && !['active', 'inactive'].includes(status)) throw new ApiClientError('Announcement status is invalid.', 400);
   if (type && !['general', 'alert', 'session', 'resource', 'project', 'custom'].includes(type)) throw new ApiClientError('Announcement type is invalid.', 400);
   if (cohortNames !== undefined && !Array.isArray(cohortNames)) throw new ApiClientError('Announcement cohorts must be a list.', 400);
   if (programKeys !== undefined && !Array.isArray(programKeys)) throw new ApiClientError('Announcement programs must be a list.', 400);
+  if (studentEmails !== undefined && !Array.isArray(studentEmails)) throw new ApiClientError('Announcement student emails must be a list.', 400);
   if (audience === 'cohort' && Array.isArray(cohortNames) && cohortNames.length === 0) throw new ApiClientError('Select at least one cohort.', 400);
   if (audience === 'program' && Array.isArray(programKeys) && programKeys.length === 0) throw new ApiClientError('Select at least one program.', 400);
+  if (audience === 'student' && Array.isArray(studentEmails) && studentEmails.length === 0) throw new ApiClientError('Select at least one student.', 400);
   if (startDate && Number.isNaN(new Date(`${startDate}T00:00:00.000Z`).getTime())) throw new ApiClientError('Announcement start date is invalid.', 400);
   if (endDate && Number.isNaN(new Date(`${endDate}T00:00:00.000Z`).getTime())) throw new ApiClientError('Announcement end date is invalid.', 400);
+  if (expiresAt && Number.isNaN(new Date(expiresAt).getTime())) throw new ApiClientError('Announcement expiry time is invalid.', 400);
   if (startDate && endDate && startDate > endDate) throw new ApiClientError('Announcement end date cannot be before the start date.', 400);
   if (linkUrl && !isHttpUrl(linkUrl)) throw new ApiClientError('Announcement link must start with http:// or https://.', 400);
 }
@@ -5284,7 +6243,8 @@ async function writeAuditLog(
     table !== 'certificates' &&
     table !== 'feature_controls' &&
     table !== 'email_templates' &&
-    table !== 'student_guidance_content'
+    table !== 'student_guidance_content' &&
+    table !== 'career_readiness_content'
   ) return;
   const entityType =
     table === 'cohorts'
@@ -5309,7 +6269,9 @@ async function writeAuditLog(
                         ? 'email_template'
                         : table === 'student_guidance_content'
                           ? 'student_guidance_content'
-                          : 'student';
+                          : table === 'career_readiness_content'
+                            ? 'career_readiness_content'
+                            : 'student';
 
   const auditRow = {
     action: `admin_${entityType}_${action}`,
@@ -5324,7 +6286,7 @@ async function writeAuditLog(
   const { error } = await context.supabase.from('audit_logs').insert(auditRow);
   if (error) {
     throw new ApiClientError(
-      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_toolkit_item' ? 'Project toolkit item' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : entityType === 'feature_control' ? 'Feature control' : entityType === 'email_template' ? 'Email template' : entityType === 'student_guidance_content' ? 'Student guidance content' : 'Student'} was saved, but audit logging failed: ${error.message}`,
+      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_toolkit_item' ? 'Project toolkit item' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : entityType === 'feature_control' ? 'Feature control' : entityType === 'email_template' ? 'Email template' : entityType === 'student_guidance_content' ? 'Student guidance content' : entityType === 'career_readiness_content' ? 'Career readiness content' : 'Student'} was saved, but audit logging failed: ${error.message}`,
       503
     );
   }
@@ -5512,6 +6474,13 @@ function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function todayLocalDate() {
+  const date = new Date();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
 function isIsoDate(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T00:00:00.000Z`).getTime());
 }
@@ -5520,6 +6489,16 @@ function addDays(dateValue: string, days: number) {
   const date = new Date(`${dateValue}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function addMonths(dateValue: string, months: number) {
+  const date = new Date(`${dateValue}T00:00:00.000Z`);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  return date.toISOString().slice(0, 10);
+}
+
+function dateInputTime(dateValue: string) {
+  return new Date(`${dateValue}T00:00:00.000Z`).getTime();
 }
 
 function liveProjectCertificateKey(studentEmail: unknown, projectId: unknown, cohortName: unknown) {

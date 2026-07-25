@@ -1,0 +1,25 @@
+Hostinger deployment package - LMS student portal
+
+Build date: 2026-07-22
+Package purpose: Static frontend files for Hostinger public_html.
+
+Upload steps:
+1. Upload hostinger-smart-announcements-20260722.zip to Hostinger File Manager.
+2. Open public_html.
+3. Extract the zip contents directly inside public_html.
+4. Confirm these files/folders are at the public_html root:
+   - index.html
+   - .htaccess
+   - assets/
+   - favicon files
+5. Clear browser cache or test in an incognito window.
+
+Important:
+- The Supabase database migrations for smart daily announcements have already been pushed.
+- The Supabase Edge Function zoom-meetings has already been deployed.
+- This package only deploys the frontend bundle to Hostinger.
+
+Included student-facing updates:
+- Cleaner student dashboard UI.
+- Smart daily portal update announcement support.
+- Student dashboard announcement visibility respects 24-hour expiry and student targeting.

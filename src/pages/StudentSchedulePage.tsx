@@ -1,4 +1,4 @@
-import { CalendarDays, ExternalLink, History, Lock, Radio, ShieldCheck } from 'lucide-react';
+import { CalendarDays, ExternalLink, History, Lock } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState, LockedState } from '../components/ScreenStates';
@@ -210,8 +210,6 @@ export function StudentSchedulePage() {
   const safePage = Math.min(page, totalPages);
   const visibleItems = paginateItems(scheduleItems, safePage);
   const lockedCount = useMemo(() => upcomingItems.filter((item) => item.locked).length, [upcomingItems]);
-  const liveCount = useMemo(() => upcomingItems.filter((item) => isLiveByTime(item, now)).length, [upcomingItems, now]);
-  const joinableCount = useMemo(() => upcomingItems.filter((item) => hasScheduleAccess(item) && item.joinUrl).length, [upcomingItems]);
   const nextSession = upcomingItems.find((item) => isLiveByTime(item, now)) ?? upcomingItems[0];
 
   if (scheduleQuery.isLoading) {
@@ -244,7 +242,7 @@ export function StudentSchedulePage() {
         <div>
           <span>Next session</span>
           <strong>{nextSession?.title ?? 'No scheduled sessions'}</strong>
-          <p>{nextSession ? `${formatDate(nextSession.date)} · ${nextSession.time ? `${nextSession.time} IST` : 'Time not set'} · ${formatDuration(nextSession.durationMinutes)}` : 'New sessions will appear here once scheduled.'}</p>
+          <p>{nextSession ? `${formatDate(nextSession.date)} · ${nextSession.time ? `${nextSession.time} IST` : 'Time not set'} · ${formatDuration(nextSession.durationMinutes)}` : 'New weekend sessions are updated every Friday. Please check this page on Fridays for the latest Saturday and Sunday schedule.'}</p>
         </div>
         {nextSession && hasScheduleAccess(nextSession) && nextSession.joinUrl ? (
           <a className="student-action student-action--primary" href={nextSession.joinUrl} rel="noreferrer" target="_blank">
@@ -254,44 +252,32 @@ export function StudentSchedulePage() {
         ) : null}
       </section>
 
-      <div className="student-schedule-summary">
-        <article>
-          <CalendarDays size={20} />
-          <span>Upcoming</span>
-          <strong>{upcomingItems.length}</strong>
-        </article>
-        <article>
-          <Radio size={20} />
-          <span>Live now</span>
-          <strong>{liveCount}</strong>
-        </article>
-        <article>
-          <ShieldCheck size={20} />
-          <span>Joinable</span>
-          <strong>{joinableCount}</strong>
-        </article>
-        <article>
-          <Lock size={20} />
-          <span>Locked</span>
-          <strong>{lockedCount}</strong>
-        </article>
-        <article>
-          <History size={20} />
-          <span>Past sessions</span>
-          <strong>{pastItems.length}</strong>
-        </article>
-      </div>
+      {pastItems.length > 0 ? (
+        <div className="student-schedule-summary">
+          <article>
+            <History size={20} />
+            <span>Past sessions</span>
+            <strong>{pastItems.length}</strong>
+          </article>
+        </div>
+      ) : null}
 
-      <nav className="student-schedule-tabs" aria-label="Workshop schedule views">
-        <Link className={view === 'upcoming' ? 'student-schedule-tab student-schedule-tab--active' : 'student-schedule-tab'} to="?page=1">
-          <span>Upcoming Workshops</span>
-          <strong>{upcomingItems.length}</strong>
-        </Link>
-        <Link className={view === 'past' ? 'student-schedule-tab student-schedule-tab--active' : 'student-schedule-tab'} to="?view=past&page=1">
-          <span>Past Sessions</span>
-          <strong>{pastItems.length}</strong>
-        </Link>
-      </nav>
+      {upcomingItems.length > 0 || pastItems.length > 0 ? (
+        <nav className="student-schedule-tabs" aria-label="Workshop schedule views">
+          {upcomingItems.length > 0 ? (
+            <Link className={view === 'upcoming' ? 'student-schedule-tab student-schedule-tab--active' : 'student-schedule-tab'} to="?page=1">
+              <span>Upcoming Workshops</span>
+              <strong>{upcomingItems.length}</strong>
+            </Link>
+          ) : null}
+          {pastItems.length > 0 ? (
+            <Link className={view === 'past' ? 'student-schedule-tab student-schedule-tab--active' : 'student-schedule-tab'} to="?view=past&page=1">
+              <span>Past Sessions</span>
+              <strong>{pastItems.length}</strong>
+            </Link>
+          ) : null}
+        </nav>
+      ) : null}
 
       {visibleItems.length > 0 ? (
         <section className="student-schedule-list" aria-label={view === 'past' ? 'Past sessions' : 'Upcoming workshops'}>

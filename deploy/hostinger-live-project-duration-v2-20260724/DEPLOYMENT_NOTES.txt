@@ -1,0 +1,35 @@
+Hostinger deployment package - Live project duration v2
+Generated on: 2026-07-24
+
+Contents
+- Production frontend build from npm run build.
+- Supabase migration SQL:
+  supabase-migrations/20260724040750_live_project_submission_duration_dates.sql
+
+Database status
+- The migration has already been applied to the linked Supabase project.
+- It adds project_start_date and project_end_date to project_submission_requests.
+- It updates student_projects_bundle so the student portal receives student_project_start_date from onboarding.
+
+Functional changes included
+- Student report submission shows Project start date from onboarding as read-only.
+- Project end date defaults to today's date when today is within the one-month project window.
+- Project end date defaults to the one-month maximum date when today is beyond that window.
+- Project end date cannot be before onboarding date.
+- Project end date cannot be more than one month after onboarding date.
+- Project end date cannot be a future date, even if it falls within the one-month window.
+- Student must confirm: "I understand that my live project duration will be recorded from the project start date to the project end date selected above."
+- Tagged programs in the student modal show the enrolled cohort/program only.
+- Admin certificate issuance prefills student-submitted project dates when present.
+- Admin can still override dates by choosing 1-6 week duration or Custom dates before issuing.
+
+QA completed
+- npm run typecheck
+- npm run build
+- Production bundle checked for the student duration checkbox and future-date validation copy.
+- Production bundle checked for project_start_date, project_end_date, and duration_confirmed write payload fields.
+
+Deploy steps
+1. Upload all files in this folder to the Hostinger public web root for the portal.
+2. Keep .htaccess in place so client-side routes continue to resolve to index.html.
+3. No additional Supabase migration run is required if the linked production database is the same one already migrated.

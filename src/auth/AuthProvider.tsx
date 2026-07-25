@@ -11,6 +11,7 @@ type AuthContextValue = {
   isPasswordRecovery: boolean;
   resetPasswordForEmail: (email: string, intent?: 'forgot' | 'create', portal?: 'admin' | 'student') => Promise<void>;
   session: Session | null;
+  signUpGuest: (payload: GuestSignUpPayload) => Promise<{ needsEmailVerification: boolean }>;
   signInWithPassword: (email: string, password: string) => Promise<Session | null>;
   signOut: () => Promise<void>;
   status: AuthStatus;
@@ -20,6 +21,24 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const passwordActionSessionKey = 'skilled-sapiens-password-action-session';
+
+export type GuestSignUpPayload = {
+  audienceType: 'student' | 'working_professional' | 'other';
+  collegeName?: string;
+  companyName?: string;
+  currentCity?: string;
+  currentRole?: string;
+  currentStatus: string;
+  educationYear?: string;
+  fullName: string;
+  interestedProgram?: string;
+  interestedRoles: string[];
+  mentorAllocationInterest: 'yes_urgently' | 'maybe_later' | 'no';
+  officialEmail?: string;
+  password: string;
+  personalEmail: string;
+  whatsappNumber: string;
+};
 
 type AuthProviderProps = {
   children: ReactNode;
@@ -220,6 +239,52 @@ export function AuthProvider({ children }: AuthProviderProps) {
     [supabase]
   );
 
+  const signUpGuest = useCallback(
+    async (payload: GuestSignUpPayload) => {
+      if (!supabase) {
+        throw new Error('Portal authentication is not configured for this environment.');
+      }
+
+      const personalEmail = payload.personalEmail.trim().toLowerCase();
+      const { data, error } = await supabase.auth.signUp({
+        email: personalEmail,
+        password: payload.password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/guest`,
+          data: {
+            audience_type: payload.audienceType,
+            college_name: payload.collegeName?.trim() || null,
+            company_name: payload.companyName?.trim() || null,
+            current_city: payload.currentCity?.trim() || null,
+            current_role: payload.currentRole?.trim() || null,
+            current_status: payload.currentStatus,
+            education_year: payload.educationYear?.trim() || null,
+            full_name: payload.fullName.trim(),
+            interested_program: payload.interestedProgram?.trim() || null,
+            interested_roles: payload.interestedRoles,
+            lms_signup_type: 'guest',
+            mentor_allocation_interest: payload.mentorAllocationInterest,
+            official_email: payload.officialEmail?.trim().toLowerCase() || null,
+            personal_email: personalEmail,
+            whatsapp_number: payload.whatsappNumber.replace(/[^\d]/g, '')
+          }
+        }
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      if (data.session) {
+        setSession(data.session);
+        setStatus('authenticated');
+      }
+
+      return { needsEmailVerification: !data.session };
+    },
+    [supabase]
+  );
+
   const updatePassword = useCallback(
     async (password: string) => {
       if (!supabase) {
@@ -300,13 +365,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
       isPasswordRecovery,
       resetPasswordForEmail,
       session,
+      signUpGuest,
       signInWithPassword,
       signOut,
       status,
       updatePassword,
       verifyPasswordOtpAndUpdatePassword
     }),
-    [isConfigured, isPasswordRecovery, resetPasswordForEmail, session, signInWithPassword, signOut, status, updatePassword, verifyPasswordOtpAndUpdatePassword]
+    [isConfigured, isPasswordRecovery, resetPasswordForEmail, session, signInWithPassword, signOut, signUpGuest, status, updatePassword, verifyPasswordOtpAndUpdatePassword]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

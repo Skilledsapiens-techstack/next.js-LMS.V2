@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Student Action Center Mockup</title>
+  <style>
+    :root {
+      --bg: #edf4fb;
+      --panel: #ffffff;
+      --line: #dbe3ef;
+      --text: #111111;
+      --muted: #5d5c73;
+      --red: #e5302c;
+      --red-soft: #fff0ef;
+      --red-line: #ff9b92;
+      --yellow: #ffd200;
+      --yellow-soft: #fff9dd;
+      --green: #1a8754;
+      --green-soft: #e8f8ee;
+      --chip: #eef1f6;
+      --shadow: 0 16px 36px rgba(20, 34, 60, .08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      min-height: 100vh;
+    }
+
+    aside {
+      background: #fff;
+      border-right: 1px solid var(--line);
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+    }
+
+    .brand {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      background: #fbfcff;
+    }
+
+    .logo {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: var(--yellow);
+      display: grid;
+      place-items: center;
+      font-weight: 900;
+      letter-spacing: .02em;
+      border: 1px solid #d6b100;
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 20px;
+      line-height: 1.05;
+    }
+
+    .brand span,
+    .section-label,
+    .eyebrow {
+      color: #8a879d;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: .14em;
+      font-size: 12px;
+    }
+
+    nav { display: grid; gap: 8px; }
+    .nav-item {
+      height: 48px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 16px;
+      font-weight: 800;
+      color: var(--muted);
+    }
+
+    .nav-item.active {
+      background: var(--yellow);
+      color: #111;
+    }
+
+    main {
+      padding: 28px 32px 56px;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 28px;
+    }
+
+    h1 {
+      font-size: clamp(42px, 5vw, 64px);
+      line-height: .96;
+      margin: 8px 0 8px;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      font-size: 20px;
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .session-pill {
+      background: var(--green-soft);
+      color: var(--green);
+      border-radius: 999px;
+      padding: 9px 16px;
+      font-weight: 900;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 1px 2px rgba(20, 34, 60, .04);
+    }
+
+    .profile {
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+
+    .profile-meta {
+      display: flex;
+      gap: 22px;
+      color: var(--muted);
+      font-weight: 650;
+      margin: 12px 0 18px;
+      flex-wrap: wrap;
+    }
+
+    .profile-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 28px;
+      align-items: center;
+      border-top: 1px solid var(--line);
+      padding-top: 20px;
+    }
+
+    .role-label {
+      color: var(--muted);
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      margin-bottom: 8px;
+    }
+
+    .role-title {
+      font-size: clamp(30px, 3.5vw, 46px);
+      line-height: 1.12;
+      font-weight: 950;
+      max-width: 920px;
+    }
+
+    .button-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    button, .btn {
+      border: 1px solid #d3b987;
+      border-radius: 8px;
+      padding: 15px 20px;
+      background: #fff;
+      color: #111;
+      font-weight: 900;
+      font-size: 16px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      transition: .16s ease;
+    }
+
+    .btn.primary {
+      background: var(--red);
+      border-color: var(--red);
+      color: #fff;
+    }
+
+    .btn:hover {
+      background: var(--red-soft);
+      border-color: var(--red-line);
+      color: #9f1f1a;
+      transform: translateY(-1px);
+    }
+
+    .btn.primary:hover {
+      background: #cf2925;
+      border-color: #cf2925;
+      color: #fff;
+    }
+
+    .action-center {
+      padding: 24px;
+      border-top: 4px solid var(--red);
+      margin-bottom: 20px;
+      box-shadow: var(--shadow);
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+
+    .section-head h2 {
+      margin: 4px 0 0;
+      font-size: 32px;
+      line-height: 1;
+    }
+
+    .section-head p {
+      margin: 0;
+      color: var(--muted);
+      font-weight: 700;
+      max-width: 560px;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .action-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      min-height: 210px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      background: #fff;
+    }
+
+    .action-card.priority {
+      background: linear-gradient(120deg, #fff8d9, #fff);
+      border-color: #ffd98b;
+    }
+
+    .action-card h3 {
+      margin: 0;
+      font-size: 21px;
+      line-height: 1.15;
+    }
+
+    .action-card p {
+      margin: 0;
+      color: var(--muted);
+      font-weight: 650;
+      line-height: 1.38;
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      border: 1px solid #ffe16e;
+      background: #fff6c7;
+      display: grid;
+      place-items: center;
+      font-size: 20px;
+    }
+
+    .state {
+      border-radius: 999px;
+      padding: 7px 10px;
+      background: var(--chip);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .state.green { background: var(--green-soft); color: var(--green); }
+    .state.red { background: var(--red-soft); color: #a92621; }
+
+    .metric {
+      font-size: 30px;
+      font-weight: 950;
+      line-height: 1;
+    }
+
+    .progress-track {
+      height: 9px;
+      border-radius: 999px;
+      background: #e8e6dc;
+      overflow: hidden;
+      margin-top: 2px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 63%;
+      background: linear-gradient(90deg, var(--yellow), #ff8a00, var(--red));
+      border-radius: inherit;
+    }
+
+    .push { margin-top: auto; }
+    .mini-btn {
+      padding: 11px 14px;
+      font-size: 14px;
+      width: 100%;
+      justify-content: center;
+    }
+
+    .support-strip {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 18px;
+      align-items: center;
+      padding: 18px 20px;
+      background: #f8fbff;
+    }
+
+    .support-strip strong {
+      font-size: 20px;
+    }
+
+    .support-strip p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-weight: 650;
+    }
+
+    @media (max-width: 1180px) {
+      .app { grid-template-columns: 230px 1fr; }
+      .actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .profile-grid { grid-template-columns: 1fr; }
+      .button-row { justify-content: flex-start; }
+    }
+
+    @media (max-width: 760px) {
+      .app { display: block; }
+      aside { position: static; padding: 16px; }
+      nav { grid-template-columns: repeat(2, 1fr); }
+      main { padding: 20px 14px 40px; }
+      .topbar { align-items: flex-start; gap: 14px; }
+      .section-head, .support-strip { grid-template-columns: 1fr; display: grid; }
+      .actions { grid-template-columns: 1fr; }
+      .profile, .action-center { padding: 18px; }
+      .role-title { font-size: 30px; }
+      .btn { width: 100%; justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <div class="brand">
+        <div class="logo">SS</div>
+        <div>
+          <strong>Skilled Sapiens</strong>
+          <span>Learning Portal</span>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-label">Main</div>
+        <nav>
+          <div class="nav-item active">▦ Dashboard</div>
+          <div class="nav-item">▱ My Programs</div>
+          <div class="nav-item">▣ Watch Recordings</div>
+          <div class="nav-item">▣ Upcoming Workshops</div>
+          <div class="nav-item">▥ Resource Library</div>
+        </nav>
+      </div>
+
+      <div>
+        <div class="section-label">My Progress</div>
+        <nav>
+          <div class="nav-item">▤ Live Project Hub</div>
+          <div class="nav-item">▧ Certificates</div>
+        </nav>
+      </div>
+    </aside>
+
+    <main>
+      <div class="topbar">
+        <div>
+          <div class="eyebrow" style="color: var(--red)">Student Dashboard</div>
+          <h1>Welcome, Saurabh</h1>
+          <p class="subtitle">A focused home base for your next class, recordings, project work, and certificates.</p>
+        </div>
+        <div class="session-pill">Protected session</div>
+      </div>
+
+      <section class="card profile">
+        <div class="eyebrow" style="color: var(--red)">Learner Profile</div>
+        <div class="profile-meta">
+          <span>saurabhvaslas955@gmail.com</span>
+          <span>STU-20260712-VPGJHR</span>
+          <span>IIFT Delhi</span>
+          <span class="state green">Active access</span>
+        </div>
+
+        <div class="profile-grid">
+          <div>
+            <div class="role-label">Live Project Role</div>
+            <div class="role-title">Sales & Marketing Manager<br />Equity Research & Financial Modeling Analyst</div>
+          </div>
+          <div class="button-row">
+            <a class="btn primary" href="#">▣ View upcoming workshops</a>
+            <a class="btn" href="#">▶ Watch recordings</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="card action-center">
+        <div class="section-head">
+          <div>
+            <div class="eyebrow" style="color: var(--red)">Student Action Center</div>
+            <h2>What needs your attention</h2>
+          </div>
+          <p>This stays simple even when a student has multiple programs: show the next useful action, then keep detailed breakdowns inside each module.</p>
+        </div>
+
+        <div class="actions">
+          <article class="action-card priority">
+            <div class="card-top">
+              <div class="icon">▣</div>
+              <span class="state green">Join ready</span>
+            </div>
+            <div>
+              <h3>Next live session</h3>
+              <p>Live Project Doubt Session</p>
+            </div>
+            <div class="metric">Today</div>
+            <p>4:00 PM IST · 90 min</p>
+            <a class="btn primary mini-btn push" href="#">Open meeting link</a>
+          </article>
+
+          <article class="action-card">
+            <div class="card-top">
+              <div class="icon">▣</div>
+              <span class="state red">In progress</span>
+            </div>
+            <div>
+              <h3>Training progress</h3>
+              <p>Complete atleast 75% training modules to get your training completion certificate.</p>
+            </div>
+            <div class="metric">10 of 16</div>
+            <div>
+              <div class="progress-track"><div class="progress-fill"></div></div>
+              <p style="margin-top: 8px;">63% completed</p>
+            </div>
+            <a class="btn mini-btn push" href="#">Watch recordings</a>
+          </article>
+
+          <article class="action-card">
+            <div class="card-top">
+              <div class="icon">▤</div>
+              <span class="state">Pending</span>
+            </div>
+            <div>
+              <h3>Live project</h3>
+              <p>Choose your project, review the brief, and submit your report when ready.</p>
+            </div>
+            <div class="metric">1 task</div>
+            <p>Project submission not completed yet.</p>
+            <a class="btn mini-btn push" href="#">Continue project</a>
+          </article>
+
+          <article class="action-card">
+            <div class="card-top">
+              <div class="icon">▧</div>
+              <span class="state green">Ready</span>
+            </div>
+            <div>
+              <h3>Certificates</h3>
+              <p>Your issued certificates and fresh PDF downloads stay in one place.</p>
+            </div>
+            <div class="metric">1 ready</div>
+            <p>Download PDF is available for your issued certificate.</p>
+            <a class="btn mini-btn push" href="#">Download PDF</a>
+          </article>
+        </div>
+      </section>
+
+      <section class="card support-strip">
+        <div>
+          <div class="eyebrow" style="color: var(--red)">Need Clarity?</div>
+          <strong>Understand your program structure and certificates</strong>
+          <p>Keep the explanation available without crowding the main dashboard.</p>
+        </div>
+        <div class="button-row">
+          <a class="btn" href="#">ⓘ Program structure</a>
+          <a class="btn" href="#">♢ How certificates work</a>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

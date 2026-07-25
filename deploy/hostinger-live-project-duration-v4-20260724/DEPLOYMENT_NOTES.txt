@@ -1,0 +1,27 @@
+Hostinger deployment package - Live project duration v4
+Generated on: 2026-07-24
+
+Includes
+- All previous live-project duration changes.
+- Manual Live Project certificate form now supports custom project end dates:
+  - Duration dropdown includes 1 week through 6 weeks plus Custom dates.
+  - End date field is always visible.
+  - Fixed durations auto-fill End date from Start date and keep it read-only.
+  - Custom dates makes End date editable.
+  - Issue date label is now Certificate Issue Date.
+- API supports manual Live Project custom end dates and validates that the end date is not before the start date.
+
+Database status
+- No new migration is required for this v4 change.
+- The included migration has already been applied to the linked Supabase project:
+  supabase-migrations/20260724040750_live_project_submission_duration_dates.sql
+
+QA completed
+- npm run typecheck
+- npm run build
+- Production bundle checked for Custom dates, End date, Certificate Issue Date, and custom-date API validation strings.
+
+Deploy steps
+1. Upload all files in this folder to the Hostinger public web root for the portal.
+2. Keep .htaccess in place so client-side routes continue to resolve to index.html.
+3. No additional Supabase migration run is required if production already has migration 20260724040750.
