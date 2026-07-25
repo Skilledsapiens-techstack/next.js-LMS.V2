@@ -1,15 +1,17 @@
 import { lazy, ReactNode, Suspense } from 'react';
 import { createBrowserRouter, isRouteErrorResponse, Navigate, useRouteError } from 'react-router-dom';
-import { ProtectedPortalRoute } from '../auth/ProtectedPortalRoute';
+import { ProtectedGuestRoute, ProtectedPortalRoute } from '../auth/ProtectedPortalRoute';
 import { AdminPermissionGate } from '../auth/AdminPermissionGate';
 import { AppShell } from '../layouts/AppShell';
 import { LoadingState } from '../components/ScreenStates';
 import { StudentFeatureGate } from '../components/StudentFeatureGate';
-import { adminNavItems, studentNavItems } from './routeConfig';
+import { adminNavItems, guestNavItems, studentNavItems } from './routeConfig';
 
 const AdminDashboardPage = lazy(() => import('../pages/AdminDashboardPage').then((module) => ({ default: module.AdminDashboardPage })));
 const AdminAnnouncementsPage = lazy(() => import('../pages/AdminAnnouncementsPage').then((module) => ({ default: module.AdminAnnouncementsPage })));
+const AdminCareerReadinessPage = lazy(() => import('../pages/AdminCareerReadinessPage').then((module) => ({ default: module.AdminCareerReadinessPage })));
 const AdminStudentsPage = lazy(() => import('../pages/AdminStudentsPage').then((module) => ({ default: module.AdminStudentsPage })));
+const AdminGuestLeadsPage = lazy(() => import('../pages/AdminGuestLeadsPage').then((module) => ({ default: module.AdminGuestLeadsPage })));
 const AdminStudentPreviewPage = lazy(() => import('../pages/AdminStudentPreviewPage').then((module) => ({ default: module.AdminStudentPreviewPage })));
 const AdminCohortsPage = lazy(() => import('../pages/AdminCohortsPage').then((module) => ({ default: module.AdminCohortsPage })));
 const AdminProgramsPage = lazy(() => import('../pages/AdminProgramsPage').then((module) => ({ default: module.AdminProgramsPage })));
@@ -43,8 +45,11 @@ const AdminUsersPage = lazy(() => import('../pages/AdminUsersPage').then((module
 const AdminEmailCenterPage = lazy(() => import('../pages/AdminEmailCenterPage').then((module) => ({ default: module.AdminEmailCenterPage })));
 const AdminObservabilityPage = lazy(() => import('../pages/AdminObservabilityPage').then((module) => ({ default: module.AdminObservabilityPage })));
 const LoginPage = lazy(() => import('../pages/LoginPage').then((module) => ({ default: module.LoginPage })));
+const GuestSignupPage = lazy(() => import('../pages/GuestSignupPage').then((module) => ({ default: module.GuestSignupPage })));
+const GuestAccessPage = lazy(() => import('../pages/GuestAccessPage').then((module) => ({ default: module.GuestAccessPage })));
 const ModulePlaceholderPage = lazy(() => import('../pages/ModulePlaceholderPage').then((module) => ({ default: module.ModulePlaceholderPage })));
 const StudentAnnouncementsPage = lazy(() => import('../pages/StudentAnnouncementsPage').then((module) => ({ default: module.StudentAnnouncementsPage })));
+const StudentCareerReadinessPage = lazy(() => import('../pages/StudentCareerReadinessPage').then((module) => ({ default: module.StudentCareerReadinessPage })));
 const StudentCohortsPage = lazy(() => import('../pages/StudentCohortsPage').then((module) => ({ default: module.StudentCohortsPage })));
 const StudentDashboardPage = lazy(() => import('../pages/StudentDashboardPage').then((module) => ({ default: module.StudentDashboardPage })));
 const StudentCertificatesPage = lazy(() => import('../pages/StudentCertificatesPage').then((module) => ({ default: module.StudentCertificatesPage })));
@@ -115,6 +120,91 @@ export const router = createBrowserRouter([
     errorElement: <RouteErrorFallback />
   },
   {
+    path: '/guest-signup',
+    element: (
+      <PageLoader>
+        <GuestSignupPage />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />
+  },
+  {
+    path: '/guest',
+    element: <ProtectedGuestRoute />,
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        element: <AppShell navItems={guestNavItems} portal="guest" />,
+        children: [
+          {
+            index: true,
+            element: (
+              <PageLoader>
+                <GuestAccessPage />
+              </PageLoader>
+            )
+          },
+          {
+            path: 'programs',
+            element: (
+              <PageLoader>
+                <GuestAccessPage />
+              </PageLoader>
+            )
+          },
+          {
+            path: 'recordings',
+            element: (
+              <PageLoader>
+                <GuestAccessPage />
+              </PageLoader>
+            )
+          },
+          {
+            path: 'schedule',
+            element: (
+              <PageLoader>
+                <GuestAccessPage />
+              </PageLoader>
+            )
+          },
+          {
+            path: 'resources',
+            element: (
+              <PageLoader>
+                <GuestAccessPage />
+              </PageLoader>
+            )
+          },
+          {
+            path: 'career-readiness',
+            element: (
+              <PageLoader>
+                <GuestAccessPage />
+              </PageLoader>
+            )
+          },
+          {
+            path: 'announcements',
+            element: (
+              <PageLoader>
+                <GuestAccessPage />
+              </PageLoader>
+            )
+          },
+          {
+            path: 'support',
+            element: (
+              <PageLoader>
+                <GuestAccessPage />
+              </PageLoader>
+            )
+          }
+        ]
+      }
+    ]
+  },
+  {
     path: '/unauthorized',
     element: (
       <PageLoader>
@@ -165,6 +255,16 @@ export const router = createBrowserRouter([
               <PageLoader>
                 <StudentFeaturePage moduleId="resources">
                   <StudentResourcesPage />
+                </StudentFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'career-readiness',
+            element: (
+              <PageLoader>
+                <StudentFeaturePage moduleId="career-readiness">
+                  <StudentCareerReadinessPage />
                 </StudentFeaturePage>
               </PageLoader>
             )
@@ -306,6 +406,16 @@ export const router = createBrowserRouter([
             )
           },
           {
+            path: 'guest-leads',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="guest-leads">
+                  <AdminGuestLeadsPage />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
             path: 'student-preview/:studentId',
             element: (
               <PageLoader>
@@ -361,6 +471,16 @@ export const router = createBrowserRouter([
               <PageLoader>
                 <AdminFeaturePage moduleId="resources">
                   <AdminResourcesPage />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'career-readiness',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="career-readiness">
+                  <AdminCareerReadinessPage />
                 </AdminFeaturePage>
               </PageLoader>
             )

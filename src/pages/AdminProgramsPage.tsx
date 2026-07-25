@@ -9,6 +9,8 @@ import { ProjectRichText } from '../components/ProjectRichText';
 import { StatusBadge } from '../components/StatusBadge';
 import {
   AdminProgram,
+  AdminProgramCtaButton,
+  AdminProgramFaq,
   AdminProgramImpact,
   AdminProgramStatus,
   AdminProgramWritePayload,
@@ -33,11 +35,33 @@ type ProgramTemplate = {
 };
 
 type ProgramFormState = {
+  bannerUrl: string;
+  careerOutcomes: string;
+  catalogueBadge: string;
+  certificateDetails: string;
+  ctaButtons: AdminProgramCtaButton[];
+  curriculum: string;
   domainLabel: string;
+  duration: string;
+  faqs: AdminProgramFaq[];
+  guestCatalogueEnabled: boolean;
+  highlights: string;
+  liveProjectDetails: string;
+  mentorSupport: string;
   name: string;
+  nextBatchDate: string;
+  outcomes: string;
+  overview: string;
+  pricing: string;
   programKey: string;
+  scheduleFormat: string;
+  shortDescription: string;
   shortName: string;
   status: AdminProgramStatus;
+  thumbnailUrl: string;
+  toolsCovered: string;
+  whatYouWillLearn: string;
+  whoShouldJoin: string;
 };
 
 type PendingStatusChange = {
@@ -108,14 +132,76 @@ function buildPageLink(page: number, search: string, status: AdminProgramStatus 
   return `?${params.toString()}`;
 }
 
+function nullableText(value: string) {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function linesToList(value: string) {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function listToLines(value: unknown) {
+  return Array.isArray(value) ? value.map((item) => String(item ?? '').trim()).filter(Boolean).join('\n') : '';
+}
+
+function cleanCtaRows(value: AdminProgramCtaButton[]) {
+  return value
+    .map((item) => ({
+      label: item.label.trim(),
+      url: item.url.trim(),
+      variant: (item.variant === 'secondary' ? 'secondary' : 'primary') as AdminProgramCtaButton['variant']
+    }))
+    .filter((item) => item.label || item.url);
+}
+
+function cleanFaqRows(value: AdminProgramFaq[]) {
+  return value
+    .map((item) => ({
+      question: item.question.trim(),
+      answer: item.answer.trim()
+    }))
+    .filter((item) => item.question || item.answer);
+}
+
+function hasInvalidUrl(value: string) {
+  const trimmed = value.trim();
+  return Boolean(trimmed && !/^https?:\/\//i.test(trimmed) && !trimmed.startsWith('/'));
+}
+
 function formFromProgram(program: AdminProgram | null): ProgramFormState {
   const template = programTemplates[0];
   return {
+    bannerUrl: program?.bannerUrl ?? '',
+    careerOutcomes: program?.careerOutcomes ?? '',
+    catalogueBadge: program?.catalogueBadge ?? '',
+    certificateDetails: program?.certificateDetails ?? '',
+    ctaButtons: program?.ctaButtons?.length ? program.ctaButtons : [{ label: 'Request Access', url: '', variant: 'primary' }],
+    curriculum: listToLines(program?.curriculum),
     domainLabel: program?.domainLabel ?? template.domainLabel,
+    duration: program?.duration ?? '',
+    faqs: program?.faqs?.length ? program.faqs : [{ question: '', answer: '' }],
+    guestCatalogueEnabled: program?.guestCatalogueEnabled ?? true,
+    highlights: listToLines(program?.highlights),
+    liveProjectDetails: program?.liveProjectDetails ?? '',
+    mentorSupport: program?.mentorSupport ?? '',
     name: program?.name ?? template.name,
+    nextBatchDate: program?.nextBatchDate ?? '',
+    outcomes: listToLines(program?.outcomes),
+    overview: program?.overview ?? '',
+    pricing: program?.pricing ?? '',
     programKey: program?.programKey ?? template.programKey,
+    scheduleFormat: program?.scheduleFormat ?? '',
+    shortDescription: program?.shortDescription ?? '',
     shortName: program?.shortName ?? template.shortName,
-    status: program?.status ?? 'active'
+    status: program?.status ?? 'active',
+    thumbnailUrl: program?.thumbnailUrl ?? '',
+    toolsCovered: program?.toolsCovered ?? '',
+    whatYouWillLearn: program?.whatYouWillLearn ?? '',
+    whoShouldJoin: program?.whoShouldJoin ?? ''
   };
 }
 
@@ -140,12 +226,44 @@ function ProgramModal({
   const normalizedKey = normalizeProgramKey(form.programKey);
   const duplicateProgram = existingPrograms.find((item) => item.id !== program?.id && item.programKey.trim().toLowerCase() === normalizedKey);
 
-  function updateForm(field: keyof ProgramFormState, value: string) {
+  function updateForm(field: keyof ProgramFormState, value: string | boolean | AdminProgramCtaButton[] | AdminProgramFaq[]) {
     setSubmitError('');
     setForm((current) => ({
       ...current,
-      [field]: field === 'programKey' ? normalizeProgramKey(value) : value
+      [field]: field === 'programKey' && typeof value === 'string' ? normalizeProgramKey(value) : value
     }));
+  }
+
+  function updateCtaButton(index: number, field: keyof AdminProgramCtaButton, value: string) {
+    updateForm(
+      'ctaButtons',
+      form.ctaButtons.map((item, itemIndex) => (itemIndex === index ? { ...item, [field]: value } : item))
+    );
+  }
+
+  function addCtaButton() {
+    updateForm('ctaButtons', [...form.ctaButtons, { label: '', url: '', variant: 'primary' }]);
+  }
+
+  function removeCtaButton(index: number) {
+    const nextRows = form.ctaButtons.filter((_, itemIndex) => itemIndex !== index);
+    updateForm('ctaButtons', nextRows.length ? nextRows : [{ label: '', url: '', variant: 'primary' }]);
+  }
+
+  function updateFaq(index: number, field: keyof AdminProgramFaq, value: string) {
+    updateForm(
+      'faqs',
+      form.faqs.map((item, itemIndex) => (itemIndex === index ? { ...item, [field]: value } : item))
+    );
+  }
+
+  function addFaq() {
+    updateForm('faqs', [...form.faqs, { question: '', answer: '' }]);
+  }
+
+  function removeFaq(index: number) {
+    const nextRows = form.faqs.filter((_, itemIndex) => itemIndex !== index);
+    updateForm('faqs', nextRows.length ? nextRows : [{ question: '', answer: '' }]);
   }
 
   function applyTemplate(programKey: string) {
@@ -164,11 +282,33 @@ function ProgramModal({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const payload: AdminProgramWritePayload = {
+      bannerUrl: nullableText(form.bannerUrl),
+      careerOutcomes: nullableText(form.careerOutcomes),
+      catalogueBadge: nullableText(form.catalogueBadge),
+      certificateDetails: nullableText(form.certificateDetails),
+      ctaButtons: cleanCtaRows(form.ctaButtons),
+      curriculum: linesToList(form.curriculum),
       domainLabel: form.domainLabel.trim(),
+      duration: nullableText(form.duration),
+      faqs: cleanFaqRows(form.faqs),
+      guestCatalogueEnabled: form.guestCatalogueEnabled,
+      highlights: linesToList(form.highlights),
+      liveProjectDetails: nullableText(form.liveProjectDetails),
+      mentorSupport: nullableText(form.mentorSupport),
       name: form.name.trim(),
+      nextBatchDate: nullableText(form.nextBatchDate),
+      outcomes: linesToList(form.outcomes),
+      overview: nullableText(form.overview),
+      pricing: nullableText(form.pricing),
       programKey: normalizedKey,
+      scheduleFormat: nullableText(form.scheduleFormat),
+      shortDescription: nullableText(form.shortDescription),
       shortName: form.shortName.trim(),
-      status: form.status
+      status: form.status,
+      thumbnailUrl: nullableText(form.thumbnailUrl),
+      toolsCovered: nullableText(form.toolsCovered),
+      whatYouWillLearn: nullableText(form.whatYouWillLearn),
+      whoShouldJoin: nullableText(form.whoShouldJoin)
     };
 
     if (!payload.name) {
@@ -183,15 +323,51 @@ function ProgramModal({
       setSubmitError(`Program key "${payload.programKey}" is already used by ${duplicateProgram.name}.`);
       return;
     }
+    const invalidCta = cleanCtaRows(form.ctaButtons).find((item) => !item.label || !item.url || hasInvalidUrl(item.url));
+    if (invalidCta) {
+      setSubmitError('Every CTA row needs a label and a valid http://, https://, or internal / link.');
+      return;
+    }
+    const invalidFaq = cleanFaqRows(form.faqs).find((item) => !item.question || !item.answer);
+    if (invalidFaq) {
+      setSubmitError('Every FAQ row needs both a question and an answer.');
+      return;
+    }
+    if ([form.thumbnailUrl, form.bannerUrl].some(hasInvalidUrl)) {
+      setSubmitError('Image links must use http://, https://, or an internal / path.');
+      return;
+    }
 
     try {
       if (mode === 'edit' && program) {
         await updateProgram.mutateAsync({
           body: {
+            bannerUrl: payload.bannerUrl,
+            careerOutcomes: payload.careerOutcomes,
+            catalogueBadge: payload.catalogueBadge,
+            certificateDetails: payload.certificateDetails,
+            ctaButtons: payload.ctaButtons,
+            curriculum: payload.curriculum,
             domainLabel: payload.domainLabel,
+            duration: payload.duration,
+            faqs: payload.faqs,
+            guestCatalogueEnabled: payload.guestCatalogueEnabled,
+            highlights: payload.highlights,
+            liveProjectDetails: payload.liveProjectDetails,
+            mentorSupport: payload.mentorSupport,
             name: payload.name,
+            nextBatchDate: payload.nextBatchDate,
+            outcomes: payload.outcomes,
+            overview: payload.overview,
+            pricing: payload.pricing,
+            scheduleFormat: payload.scheduleFormat,
+            shortDescription: payload.shortDescription,
             shortName: payload.shortName,
-            status: payload.status
+            status: payload.status,
+            thumbnailUrl: payload.thumbnailUrl,
+            toolsCovered: payload.toolsCovered,
+            whatYouWillLearn: payload.whatYouWillLearn,
+            whoShouldJoin: payload.whoShouldJoin
           },
           programId: program.id
         });
@@ -257,6 +433,154 @@ function ProgramModal({
                 <option value="inactive">Inactive</option>
               </select>
             </label>
+            <fieldset className="program-form-section">
+              <legend>Guest catalogue</legend>
+              <label className="program-form-toggle">
+                <input checked={form.guestCatalogueEnabled} onChange={(event) => updateForm('guestCatalogueEnabled', event.target.checked)} type="checkbox" />
+                <span>Show this program in Guest Program Catalogue</span>
+              </label>
+              <label>
+                <span>Catalogue badge</span>
+                <input value={form.catalogueBadge} onChange={(event) => updateForm('catalogueBadge', event.target.value)} placeholder="e.g. Corporate mentors driven" />
+              </label>
+              <label>
+                <span>Duration</span>
+                <input value={form.duration} onChange={(event) => updateForm('duration', event.target.value)} placeholder="e.g. 2-4 weeks" />
+              </label>
+              <label>
+                <span>Pricing</span>
+                <input value={form.pricing} onChange={(event) => updateForm('pricing', event.target.value)} placeholder="e.g. Registration starts at ₹6,499" />
+              </label>
+              <label>
+                <span>Next batch date</span>
+                <input value={form.nextBatchDate} onChange={(event) => updateForm('nextBatchDate', event.target.value)} type="date" />
+              </label>
+              <label>
+                <span>Thumbnail URL</span>
+                <input value={form.thumbnailUrl} onChange={(event) => updateForm('thumbnailUrl', event.target.value)} placeholder="https://..." />
+              </label>
+              <label>
+                <span>Banner URL</span>
+                <input value={form.bannerUrl} onChange={(event) => updateForm('bannerUrl', event.target.value)} placeholder="https://..." />
+              </label>
+            </fieldset>
+
+            <fieldset className="program-form-section">
+              <legend>Landing page copy</legend>
+              <label className="program-form-shell__wide">
+                <span>Short description</span>
+                <textarea rows={3} value={form.shortDescription} onChange={(event) => updateForm('shortDescription', event.target.value)} placeholder="One short paragraph used on programme cards and hero." />
+              </label>
+              <label className="program-form-shell__wide">
+                <span>Program overview</span>
+                <textarea rows={5} value={form.overview} onChange={(event) => updateForm('overview', event.target.value)} placeholder="What this program helps the learner achieve." />
+              </label>
+              <label className="program-form-shell__wide">
+                <span>Highlights</span>
+                <textarea rows={3} value={form.highlights} onChange={(event) => updateForm('highlights', event.target.value)} placeholder="Add each highlight on a new line." />
+              </label>
+            </fieldset>
+
+            <fieldset className="program-form-section">
+              <legend>Learning details</legend>
+              <label className="program-form-shell__wide">
+                <span>Who should join</span>
+                <textarea rows={4} value={form.whoShouldJoin} onChange={(event) => updateForm('whoShouldJoin', event.target.value)} />
+              </label>
+              <label className="program-form-shell__wide">
+                <span>What you will learn</span>
+                <textarea rows={4} value={form.whatYouWillLearn} onChange={(event) => updateForm('whatYouWillLearn', event.target.value)} />
+              </label>
+              <label className="program-form-shell__wide">
+                <span>Curriculum modules</span>
+                <textarea rows={5} value={form.curriculum} onChange={(event) => updateForm('curriculum', event.target.value)} placeholder="Add each module on a new line." />
+              </label>
+              <label className="program-form-shell__wide">
+                <span>Tools covered</span>
+                <textarea rows={3} value={form.toolsCovered} onChange={(event) => updateForm('toolsCovered', event.target.value)} />
+              </label>
+            </fieldset>
+
+            <fieldset className="program-form-section">
+              <legend>Outcomes and support</legend>
+              <label className="program-form-shell__wide">
+                <span>Live project details</span>
+                <textarea rows={4} value={form.liveProjectDetails} onChange={(event) => updateForm('liveProjectDetails', event.target.value)} />
+              </label>
+              <label className="program-form-shell__wide">
+                <span>Career outcomes</span>
+                <textarea rows={4} value={form.careerOutcomes} onChange={(event) => updateForm('careerOutcomes', event.target.value)} />
+              </label>
+              <label className="program-form-shell__wide">
+                <span>Outcomes list</span>
+                <textarea rows={4} value={form.outcomes} onChange={(event) => updateForm('outcomes', event.target.value)} placeholder="Add each outcome on a new line." />
+              </label>
+              <label className="program-form-shell__wide">
+                <span>Schedule format</span>
+                <textarea rows={3} value={form.scheduleFormat} onChange={(event) => updateForm('scheduleFormat', event.target.value)} />
+              </label>
+              <label className="program-form-shell__wide">
+                <span>Mentor support</span>
+                <textarea rows={3} value={form.mentorSupport} onChange={(event) => updateForm('mentorSupport', event.target.value)} />
+              </label>
+              <label className="program-form-shell__wide">
+                <span>Certificate details</span>
+                <textarea rows={3} value={form.certificateDetails} onChange={(event) => updateForm('certificateDetails', event.target.value)} />
+              </label>
+            </fieldset>
+
+            <fieldset className="program-form-section">
+              <legend>CTA buttons</legend>
+              {form.ctaButtons.map((button, index) => (
+                <div className="program-repeat-row" key={`cta-${index}`}>
+                  <label>
+                    <span>Button label</span>
+                    <input value={button.label} onChange={(event) => updateCtaButton(index, 'label', event.target.value)} placeholder="e.g. Pay registration fee" />
+                  </label>
+                  <label>
+                    <span>Button link</span>
+                    <input value={button.url} onChange={(event) => updateCtaButton(index, 'url', event.target.value)} placeholder="https://..." />
+                  </label>
+                  <label>
+                    <span>Style</span>
+                    <select value={button.variant ?? 'primary'} onChange={(event) => updateCtaButton(index, 'variant', event.target.value)}>
+                      <option value="primary">Primary</option>
+                      <option value="secondary">Secondary</option>
+                    </select>
+                  </label>
+                  <button className="segmented-button" onClick={() => removeCtaButton(index)} type="button">
+                    Remove
+                  </button>
+                </div>
+              ))}
+              <button className="segmented-button segmented-button--gold program-form-shell__wide" onClick={addCtaButton} type="button">
+                <Plus size={14} />
+                Add CTA
+              </button>
+            </fieldset>
+
+            <fieldset className="program-form-section">
+              <legend>FAQs</legend>
+              {form.faqs.map((faq, index) => (
+                <div className="program-faq-row" key={`faq-${index}`}>
+                  <label>
+                    <span>Question</span>
+                    <input value={faq.question} onChange={(event) => updateFaq(index, 'question', event.target.value)} />
+                  </label>
+                  <label>
+                    <span>Answer</span>
+                    <textarea rows={3} value={faq.answer} onChange={(event) => updateFaq(index, 'answer', event.target.value)} />
+                  </label>
+                  <button className="segmented-button" onClick={() => removeFaq(index)} type="button">
+                    Remove FAQ
+                  </button>
+                </div>
+              ))}
+              <button className="segmented-button segmented-button--gold program-form-shell__wide" onClick={addFaq} type="button">
+                <Plus size={14} />
+                Add FAQ
+              </button>
+            </fieldset>
           </form>
         </div>
         <footer className="student-modal__footer">

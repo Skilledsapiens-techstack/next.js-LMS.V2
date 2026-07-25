@@ -1,0 +1,15 @@
+Hostinger deployment package: Login create-password show/hide
+Date: 2026-07-25
+
+Scope:
+- Frontend-only login screen update.
+- Ensures create-password and confirm-password fields use the same show/hide password toggle behavior as the sign-in password field.
+- Marks create-password fields with browser-safe new-password autocomplete.
+- Adds clear accessibility/title state to the password visibility button.
+
+Database:
+- No migration is required.
+
+Validation:
+- npm run typecheck passed.
+- npm run build passed.

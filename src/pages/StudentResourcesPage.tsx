@@ -56,10 +56,9 @@ function formatReadableLabel(value: string | undefined) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function buildPageLink(page: number, search: string, resourceType: string, programKey: string) {
+function buildPageLink(page: number, resourceType: string, programKey: string) {
   const params = new URLSearchParams();
   params.set('page', String(page));
-  if (search) params.set('search', search);
   if (resourceType) params.set('resourceType', resourceType);
   if (programKey) params.set('programKey', programKey);
   return `?${params.toString()}`;
@@ -212,13 +211,11 @@ export function StudentResourcesPage() {
   const page = asPositiveInteger(searchParams.get('page'), 1);
   const programKey = searchParams.get('programKey')?.trim() ?? '';
   const resourceType = searchParams.get('resourceType')?.trim() ?? '';
-  const search = searchParams.get('search')?.trim() ?? '';
-  const [searchInput, setSearchInput] = useState(search);
   const [resourceTypeInput, setResourceTypeInput] = useState(resourceType);
   const [isApplyingFilters, setIsApplyingFilters] = useState(false);
   const [isCheckingAccess, setIsCheckingAccess] = useState(false);
   const [bookmarkedResourceIds, setBookmarkedResourceIds] = useState<string[]>([]);
-  const resourcesQuery = useStudentResources({ locked: 'all', page, programKey, resourceType, search });
+  const resourcesQuery = useStudentResources({ locked: 'all', page, programKey, resourceType });
   const paymentOrdersQuery = useStudentPaymentOrders({ itemType: 'resource', limit: 100, page: 1, status: 'all' });
   const data = resourcesQuery.data;
   const paymentOrders = paymentOrdersQuery.data?.items ?? [];
@@ -275,11 +272,7 @@ export function StudentResourcesPage() {
     setIsApplyingFilters(true);
     const next = new URLSearchParams(searchParams);
     next.set('page', '1');
-    if (searchInput.trim()) {
-      next.set('search', searchInput.trim());
-    } else {
-      next.delete('search');
-    }
+    next.delete('search');
     if (resourceTypeInput.trim()) {
       next.set('resourceType', resourceTypeInput.trim());
     } else {
@@ -356,13 +349,6 @@ export function StudentResourcesPage() {
 
       <section className="student-resource-toolbar" aria-label="Resource filters">
         <form className="student-resource-search" onSubmit={handleSearch}>
-          <div className="filter-search">
-            <Search size={16} />
-            <label className="sr-only" htmlFor="resource-search">
-              Search resources
-            </label>
-            <input id="resource-search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="Search resources" type="search" />
-          </div>
           <label className="sr-only" htmlFor="resource-type">
             Resource type
           </label>
@@ -444,18 +430,14 @@ export function StudentResourcesPage() {
         </section>
       ) : (
         <ResourceEmptyState
-          description={
-            search
-              ? `No resources match "${search}". Try a shorter search or clear filters.`
-              : 'Resource library items mapped to your account will appear here.'
-          }
-          title={search || resourceType || programKey ? 'No matching resource library items' : 'No resource library items yet'}
+          description="Resource library items mapped to your account will appear here."
+          title={resourceType || programKey ? 'No matching resource library items' : 'No resource library items yet'}
         />
       )}
 
       <nav className="pagination-bar" aria-label="Resource pagination">
         {data?.hasPreviousPage ? (
-          <Link className="pagination-link" to={buildPageLink(page - 1, search, resourceType, programKey)}>
+          <Link className="pagination-link" to={buildPageLink(page - 1, resourceType, programKey)}>
             Previous page
           </Link>
         ) : (
@@ -465,7 +447,7 @@ export function StudentResourcesPage() {
           Page {page} of {totalPages} · {total} matching · {recentlyAddedCount} recent
         </span>
         {data?.hasNextPage ? (
-          <Link className="pagination-link" to={buildPageLink(page + 1, search, resourceType, programKey)}>
+          <Link className="pagination-link" to={buildPageLink(page + 1, resourceType, programKey)}>
             Next page
           </Link>
         ) : (

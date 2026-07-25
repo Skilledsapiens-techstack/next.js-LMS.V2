@@ -155,6 +155,42 @@ function formatDate(value: string | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function isValidDateInput(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T00:00:00.000Z`).getTime());
+}
+
+function compareDateInputs(left: string, right: string) {
+  return new Date(`${left}T00:00:00.000Z`).getTime() - new Date(`${right}T00:00:00.000Z`).getTime();
+}
+
+function addMonthsInput(value: string, months: number) {
+  if (!isValidDateInput(value)) return '';
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  return date.toISOString().slice(0, 10);
+}
+
+function todayInputValue() {
+  const date = new Date();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function earlierDateInput(left: string, right: string) {
+  if (!isValidDateInput(left)) return right;
+  if (!isValidDateInput(right)) return left;
+  return compareDateInputs(left, right) <= 0 ? left : right;
+}
+
+function defaultProjectEndDate(startDate: string, maxEndDate: string) {
+  const today = todayInputValue();
+  if (!isValidDateInput(startDate)) return '';
+  if (!isValidDateInput(maxEndDate)) return startDate;
+  if (compareDateInputs(today, startDate) < 0) return startDate;
+  return earlierDateInput(today, maxEndDate);
+}
+
 function projectRoleValue(project: StudentProject) {
   return project.projectRole ?? project.roleId ?? 'Project';
 }
@@ -198,7 +234,8 @@ function projectProgramKeys(project: StudentProject) {
   return Array.from(new Set([...(project.programKeys ?? []), project.programKey].filter(Boolean).map((key) => String(key).toLowerCase())));
 }
 
-function projectProgramLabels(project: StudentProject) {
+function projectProgramLabels(project: StudentProject, cohort?: StudentCohort) {
+  if (cohort?.programKey) return [cohort.programKey.toUpperCase()];
   if (project.programName) return project.programName.split(',').map((item) => item.trim()).filter(Boolean);
   return projectProgramKeys(project).map((key) => key.toUpperCase());
 }
@@ -353,15 +390,32 @@ function ProjectSubmissionModal({
   isSubmitting: boolean;
   message: string;
   onClose: () => void;
-  onSubmit: (input: { cohortId: string; declarationAccepted: boolean; declarationConfirmations: string[]; remarks?: string; studentFeedback: string; submissionLink: string }) => Promise<void>;
+  onSubmit: (input: {
+    cohortId: string;
+    declarationAccepted: boolean;
+    declarationConfirmations: string[];
+    durationConfirmed: boolean;
+    projectEndDate: string;
+    projectStartDate?: string;
+    remarks?: string;
+    studentFeedback: string;
+    submissionLink: string;
+  }) => Promise<void>;
   project: StudentProject;
 }) {
   const [cohortId, setCohortId] = useState(cohorts[0]?.id ?? '');
   const [submissionLink, setSubmissionLink] = useState('');
   const [studentFeedback, setStudentFeedback] = useState('');
+  const [projectEndDate, setProjectEndDate] = useState('');
+  const [durationConfirmed, setDurationConfirmed] = useState(false);
   const [checkedDeclarations, setCheckedDeclarations] = useState<string[]>([]);
   const [localError, setLocalError] = useState('');
-  const programLabels = projectProgramLabels(project);
+  const selectedCohort = cohorts.find((cohort) => cohort.id === cohortId) ?? cohorts[0];
+  const programLabels = projectProgramLabels(project, selectedCohort);
+  const projectStartDate = project.studentProjectStartDate?.slice(0, 10) ?? '';
+  const maxProjectEndDate = addMonthsInput(projectStartDate, 1);
+  const todayEndDate = todayInputValue();
+  const effectiveMaxProjectEndDate = earlierDateInput(maxProjectEndDate, todayEndDate);
   const allDeclarationsChecked = checkedDeclarations.length === PROJECT_SUBMISSION_DECLARATIONS.length;
   const feedbackWordCount = countWords(studentFeedback);
   const feedbackWordsRemaining = Math.max(PROJECT_FEEDBACK_MIN_WORDS - feedbackWordCount, 0);
@@ -369,6 +423,23 @@ function ProjectSubmissionModal({
   useEffect(() => {
     setCohortId(cohorts[0]?.id ?? '');
   }, [cohorts]);
+
+  useEffect(() => {
+    setProjectEndDate(defaultProjectEndDate(projectStartDate, maxProjectEndDate));
+  }, [maxProjectEndDate, projectStartDate]);
+
+  function validateProjectDuration(endDate: string) {
+    if (!isValidDateInput(projectStartDate)) return 'Your onboarding date is not available. Please contact the support team before submitting this report.';
+    if (!isValidDateInput(endDate)) return 'Select your live project end date before submitting.';
+    if (compareDateInputs(endDate, projectStartDate) < 0) return 'End date cannot be before your onboarding date.';
+    if (compareDateInputs(endDate, todayEndDate) > 0) {
+      return "Future end dates are not allowed. Please select today's date or an earlier date within your allowed project duration.";
+    }
+    if (maxProjectEndDate && compareDateInputs(endDate, maxProjectEndDate) > 0) {
+      return 'Live project duration can be a maximum of 1 month. Please select an end date within 1 month of your onboarding date.';
+    }
+    return '';
+  }
 
   function toggleDeclaration(key: string) {
     setCheckedDeclarations((current) => (current.includes(key) ? current.filter((item) => item !== key) : [...current, key]));
@@ -389,10 +460,22 @@ function ProjectSubmissionModal({
       setLocalError('Confirm all project submission declarations before submitting.');
       return;
     }
+    if (!durationConfirmed) {
+      setLocalError('Confirm that you understand your live project duration will be recorded from the start date to the selected end date.');
+      return;
+    }
+    const durationError = validateProjectDuration(projectEndDate);
+    if (durationError) {
+      setLocalError(durationError);
+      return;
+    }
     await onSubmit({
       cohortId,
       declarationAccepted: allDeclarationsChecked,
       declarationConfirmations: checkedDeclarations,
+      durationConfirmed,
+      projectEndDate,
+      projectStartDate,
       remarks: undefined,
       studentFeedback,
       submissionLink
@@ -464,6 +547,39 @@ function ProjectSubmissionModal({
           <label>
             <span>Report link</span>
             <input disabled={isSubmitting} onChange={(event) => setSubmissionLink(event.target.value)} placeholder="https://..." required type="url" value={submissionLink} />
+          </label>
+
+          <div className="live-project-duration-grid">
+            <label>
+              <span>Project start date *</span>
+              <input disabled={isSubmitting} readOnly required type="date" value={projectStartDate} />
+            </label>
+            <label>
+              <span>Project end date *</span>
+              <input
+                disabled={isSubmitting}
+                max={effectiveMaxProjectEndDate || undefined}
+                min={projectStartDate || undefined}
+                onChange={(event) => {
+                  const nextEndDate = event.target.value;
+                  setProjectEndDate(nextEndDate);
+                  setLocalError(validateProjectDuration(nextEndDate));
+                }}
+                required
+                type="date"
+                value={projectEndDate}
+              />
+            </label>
+          </div>
+
+          <label className="live-project-declaration live-project-duration-confirmation">
+            <input
+              checked={durationConfirmed}
+              disabled={isSubmitting}
+              onChange={(event) => setDurationConfirmed(event.target.checked)}
+              type="checkbox"
+            />
+            <span>I understand that my live project duration will be recorded from the project start date to the project end date selected above.</span>
           </label>
 
           <label>
@@ -684,7 +800,17 @@ function LiveProjectDetail({ allSubmissions, cohorts, project }: { allSubmission
     </article>
   );
 
-  async function handleSubmit(input: { cohortId: string; declarationAccepted: boolean; declarationConfirmations: string[]; remarks?: string; studentFeedback: string; submissionLink: string }) {
+  async function handleSubmit(input: {
+    cohortId: string;
+    declarationAccepted: boolean;
+    declarationConfirmations: string[];
+    durationConfirmed: boolean;
+    projectEndDate: string;
+    projectStartDate?: string;
+    remarks?: string;
+    studentFeedback: string;
+    submissionLink: string;
+  }) {
     setSubmitMessage('');
     const result = await submitMutation.mutateAsync({
       ...input,

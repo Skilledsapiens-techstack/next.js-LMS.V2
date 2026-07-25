@@ -1,0 +1,26 @@
+Hostinger deployment package - Live project duration verification
+
+Package: hostinger-live-project-duration-20260724
+Build date: 2026-07-24
+
+Contents:
+- Production frontend build for Hostinger public_html.
+- supabase-migrations/20260724040750_live_project_submission_duration_dates.sql for audit/reference.
+
+Database:
+- Migration 20260724040750_live_project_submission_duration_dates.sql has already been applied to the linked remote Supabase database.
+- Verified remote columns:
+  - public.project_submission_requests.project_start_date date
+  - public.project_submission_requests.project_end_date date
+
+Upload steps:
+1. Upload hostinger-live-project-duration-20260724.zip to Hostinger File Manager.
+2. Extract the zip contents directly inside public_html.
+3. Keep .htaccess in place so SPA refresh routing continues to work.
+
+QA completed:
+- npm run typecheck
+- npm run build
+- Supabase remote migration status check
+- Supabase remote column verification
+- Production chunk string/control verification for student and admin duration UI

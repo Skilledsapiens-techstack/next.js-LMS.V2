@@ -63,8 +63,10 @@ export type AdminCertificateRequest = {
   moderatorReviewedAt?: string;
   moderatorStatus: AdminCertificateReviewStatus;
   programKey?: string;
+  projectEndDate?: string;
   projectId: string;
   projectRole: string;
+  projectStartDate?: string;
   projectTitle?: string;
   requestId: string;
   requestNumber?: string;
@@ -78,7 +80,8 @@ export type AdminCertificateRequest = {
 };
 
 export type IssueLiveProjectCertificateInput = {
-  durationWeeks: number;
+  durationWeeks?: number;
+  endDate: string;
   issueDate: string;
   requestId: string;
   sendEmail: boolean;
@@ -116,6 +119,7 @@ export type IssueManualCertificateInput = {
   modulesCovered?: string[];
   programKey?: string;
   programName?: string;
+  projectEndDate?: string;
   projectRole?: string;
   projectStartDate?: string;
   projectTitle?: string;

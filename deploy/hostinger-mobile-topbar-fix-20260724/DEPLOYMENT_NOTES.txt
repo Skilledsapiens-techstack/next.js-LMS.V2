@@ -1,0 +1,17 @@
+Hostinger deployment package: Mobile topbar fix
+Date: 2026-07-24
+
+Scope:
+- Frontend-only CSS fix for the shared app topbar across student, guest, and admin modules.
+- On mobile/tablet widths, the topbar is now sticky at the top.
+- Adds safe-area top padding support for mobile browsers.
+- Prevents long module titles from expanding or breaking the topbar layout.
+- Keeps sidebar and overlay above the topbar when the mobile navigation menu is open.
+
+Database:
+- No migration is required for this topbar UI fix.
+
+Validation:
+- npm run typecheck passed.
+- npm run build passed.
+- Production CSS contains the compiled sticky topbar rules.

@@ -12,7 +12,7 @@ import { apiGet, apiPost } from '../lib/supabaseApi';
 
 type AppShellProps = {
   navItems: NavItem[];
-  portal: Portal;
+  portal: Portal | 'guest';
 };
 
 type NavSection = {
@@ -26,7 +26,7 @@ type AdminProfile = {
 };
 
 const studentSections: NavSection[] = [
-  { title: 'Main', moduleIds: ['dashboard', 'cohorts', 'recordings', 'schedule', 'resources'] },
+  { title: 'Main', moduleIds: ['dashboard', 'cohorts', 'recordings', 'schedule', 'resources', 'career-readiness'] },
   { title: 'My Progress', moduleIds: ['projects', 'project-submissions', 'certificates'] },
   { title: 'Community', moduleIds: ['community'] },
   { title: 'Help', moduleIds: ['announcements', 'support', 'email-center'] },
@@ -34,7 +34,7 @@ const studentSections: NavSection[] = [
 ];
 
 const adminSections: NavSection[] = [
-  { title: 'Main', moduleIds: ['dashboard', 'recording-candidates', 'workshops', 'resources'] },
+  { title: 'Main', moduleIds: ['dashboard', 'recording-candidates', 'workshops', 'resources', 'career-readiness'] },
   { title: 'Administration', moduleIds: ['students', 'cohorts', 'programs', 'projects', 'project-submissions', 'certificates', 'enrollments', 'admin-users', 'feature-control'] },
   { title: 'Community', moduleIds: ['community'] },
   { title: 'Help', moduleIds: ['announcements', 'support', 'email-center', 'observability'] },
@@ -44,8 +44,8 @@ const adminSections: NavSection[] = [
 const PRESENCE_STORAGE_KEY = 'lms.studentPresenceLastSentAt';
 const PRESENCE_THROTTLE_MS = 5 * 60 * 1000;
 
-function groupNavItems(navItems: NavItem[], portal: Portal) {
-  const sections = portal === 'student' ? studentSections : adminSections;
+function groupNavItems(navItems: NavItem[], portal: Portal | 'guest') {
+  const sections = portal === 'admin' ? adminSections : studentSections;
   const itemMap = new Map(navItems.map((item) => [item.moduleId, item]));
 
   return sections
@@ -93,8 +93,9 @@ function normalizeWhatsAppNumber(value: unknown) {
 }
 
 export function AppShell({ navItems, portal }: AppShellProps) {
-  const portalLabel = portal === 'student' ? 'Student Portal' : 'Admin Portal';
-  const workspaceLabel = portal === 'student' ? 'Learning workspace' : 'Admin workspace';
+  const isLearnerShell = portal === 'student' || portal === 'guest';
+  const portalLabel = isLearnerShell ? 'Student Portal' : 'Admin Portal';
+  const workspaceLabel = isLearnerShell ? 'Learning workspace' : 'Admin workspace';
   const [isNavOpen, setIsNavOpen] = useState(false);
   const [isAnnouncementOpen, setIsAnnouncementOpen] = useState(false);
   const [dismissedBannerId, setDismissedBannerId] = useState<string | null>(null);
@@ -111,7 +112,9 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   });
   const visibleNavItems = portal === 'student'
     ? filterStudentNavItems(navItems, featureControlsQuery.data)
-    : filterAdminNavItems(navItems, adminProfileQuery.data?.role, adminProfileQuery.data?.permissions);
+    : portal === 'guest'
+      ? navItems
+      : filterAdminNavItems(navItems, adminProfileQuery.data?.role, adminProfileQuery.data?.permissions);
   const featureStatusMap = new Map((featureControlsQuery.data?.items ?? []).map((item) => [item.moduleId, item.status]));
   const announcementsEnabled = portal === 'student' && featureStatusMap.get('announcements') !== 'hide';
   const announcementsQuery = useStudentAnnouncements({ activeOnly: true, enabled: announcementsEnabled, limit: 5, page: 1, priority: 'all' });
@@ -168,7 +171,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   async function handleSignOut() {
     setIsNavOpen(false);
     await signOut();
-    navigate(`/login?portal=${portal}`, { replace: true });
+    navigate(`/login?portal=${portal === 'admin' ? 'admin' : 'student'}`, { replace: true });
   }
 
   return (
@@ -185,7 +188,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
           </div>
           <div>
             <strong>Skilled Sapiens</strong>
-            <span>{portal === 'student' ? 'Learning portal' : 'Admin portal'}</span>
+            <span>{isLearnerShell ? 'Learning portal' : 'Admin portal'}</span>
           </div>
         </div>
 
@@ -207,6 +210,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
                     >
                       <Icon size={18} />
                       <span>{item.label}</span>
+                      {isLearnerShell && item.moduleId === 'career-readiness' ? <small className="nav-item__badge nav-item__badge--new">New</small> : null}
                       {portal === 'student' && featureStatusMap.get(item.moduleId) === 'upcoming' ? <small className="nav-item__badge">Soon</small> : null}
                     </NavLink>
                   );

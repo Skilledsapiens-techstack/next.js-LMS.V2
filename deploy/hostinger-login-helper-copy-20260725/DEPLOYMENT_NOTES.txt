@@ -1,0 +1,14 @@
+Hostinger deployment package: Login helper copy update
+Date: 2026-07-25
+
+Scope:
+- Frontend-only login screen copy update.
+- Replaced the latest-password-email helper note with:
+  "Use the exact email registered in the LMS. Alternate or mistyped email addresses cannot be used to sign in or create a password."
+
+Database:
+- No migration is required for this copy update.
+
+Validation:
+- npm run typecheck passed.
+- npm run build passed.

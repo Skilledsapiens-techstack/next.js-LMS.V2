@@ -23,6 +23,11 @@ type ResourceFormState = {
   currency: string;
   description: string;
   domainKey: string;
+  guestAccessEnabled: boolean;
+  guestAccessExpiresAt: string;
+  guestCtaLabel: string;
+  guestCtaUrl: string;
+  guestRegistrationRequired: boolean;
   paymentLink: string;
   price: string;
   programKeys: string[];
@@ -71,6 +76,11 @@ const emptyResourceForm: ResourceFormState = {
   currency: 'INR',
   description: '',
   domainKey: '',
+  guestAccessEnabled: false,
+  guestAccessExpiresAt: '',
+  guestCtaLabel: '',
+  guestCtaUrl: '',
+  guestRegistrationRequired: false,
   paymentLink: '',
   price: '',
   programKeys: [],
@@ -92,6 +102,19 @@ function normalizeOptionValue(value: string | undefined, fallback: string) {
   return (value ?? fallback).trim().toLowerCase().replace(/[\s-]+/g, '_');
 }
 
+function toDatetimeLocalValue(value: string | null | undefined) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+function toIsoOrNull(value: string) {
+  if (!value.trim()) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function mapResourceToForm(resource: AdminResource): ResourceFormState {
   return {
     accessType: resource.accessType,
@@ -99,6 +122,11 @@ function mapResourceToForm(resource: AdminResource): ResourceFormState {
     currency: resource.currency || 'INR',
     description: resource.description ?? '',
     domainKey: resource.domainKey ?? '',
+    guestAccessEnabled: resource.guestAccessEnabled === true,
+    guestAccessExpiresAt: toDatetimeLocalValue(resource.guestAccessExpiresAt),
+    guestCtaLabel: resource.guestCtaLabel ?? '',
+    guestCtaUrl: resource.guestCtaUrl ?? '',
+    guestRegistrationRequired: resource.guestRegistrationRequired === true,
     paymentLink: resource.paymentLink ?? '',
     price: resource.price === undefined ? '' : String(resource.price),
     programKeys: resource.programKeys,
@@ -339,6 +367,7 @@ export function AdminResourcesPage() {
     const url = formState.url.trim();
     const paymentLink = formState.paymentLink.trim();
     const price = formState.price.trim();
+    const guestCtaUrl = formState.guestCtaUrl.trim();
 
     if (!resourceId) {
       setFormError('Resource ID is required.');
@@ -374,6 +403,10 @@ export function AdminResourcesPage() {
         return null;
       }
     }
+    if (guestCtaUrl && !isHttpUrl(guestCtaUrl)) {
+      setFormError('Guest CTA URL must start with http:// or https://.');
+      return null;
+    }
 
     return {
       accessType: formState.accessType,
@@ -381,6 +414,11 @@ export function AdminResourcesPage() {
       currency: formState.currency.trim() || 'INR',
       description: formState.description.trim() || null,
       domainKey: effectiveDomainKey || null,
+      guestAccessEnabled: formState.guestAccessEnabled,
+      guestAccessExpiresAt: toIsoOrNull(formState.guestAccessExpiresAt),
+      guestCtaLabel: formState.guestCtaLabel.trim() || null,
+      guestCtaUrl: guestCtaUrl || null,
+      guestRegistrationRequired: formState.guestRegistrationRequired,
       paymentLink: formState.accessType === 'paid' ? paymentLink : null,
       price: formState.accessType === 'paid' ? Number(price) : null,
       programKeys: effectiveProgramKeys,
@@ -758,6 +796,32 @@ export function AdminResourcesPage() {
               <span>Resource URL *</span>
               <input value={formState.url} onChange={(event) => updateForm('url', event.target.value)} placeholder="https://drive.google.com/..." />
             </label>
+            <fieldset className="admin-project-program-picker admin-project-form__wide">
+              <legend>Guest access controls</legend>
+              <label className="admin-career-publish-toggle">
+                <input checked={formState.guestAccessEnabled} onChange={(event) => updateForm('guestAccessEnabled', event.target.checked)} type="checkbox" />
+                <span>Available to verified guest users</span>
+              </label>
+              <label className="admin-career-publish-toggle">
+                <input checked={formState.guestRegistrationRequired} onChange={(event) => updateForm('guestRegistrationRequired', event.target.checked)} type="checkbox" />
+                <span>Require guest registration before opening this item</span>
+              </label>
+              <div className="admin-career-cta-row">
+                <label>
+                  <span>Guest Access Expiry</span>
+                  <input type="datetime-local" value={formState.guestAccessExpiresAt} onChange={(event) => updateForm('guestAccessExpiresAt', event.target.value)} />
+                </label>
+                <label>
+                  <span>Guest CTA Label</span>
+                  <input value={formState.guestCtaLabel} onChange={(event) => updateForm('guestCtaLabel', event.target.value)} placeholder="Request access" />
+                </label>
+                <label>
+                  <span>Guest CTA Link</span>
+                  <input value={formState.guestCtaUrl} onChange={(event) => updateForm('guestCtaUrl', event.target.value)} placeholder="https://..." />
+                </label>
+              </div>
+              <p className="admin-resource-validation-note">When enabled, this resource appears in the guest Resource Library until the expiry date. Leave expiry blank for lifetime access.</p>
+            </fieldset>
             <label className="admin-project-form__wide">
               <span>Description</span>
               <textarea value={formState.description} onChange={(event) => updateForm('description', event.target.value)} placeholder="Short description" rows={4} />

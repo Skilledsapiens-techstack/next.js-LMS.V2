@@ -20,6 +20,8 @@ export type StudentProjectSubmission = {
   requestNumber?: string;
   roleId?: string;
   roleName?: string;
+  projectEndDate?: string;
+  projectStartDate?: string;
   status: StudentProjectSubmissionStatus;
   studentFeedback?: string;
   submissionLink?: string;
@@ -30,7 +32,10 @@ export type StudentProjectSubmissionInput = {
   cohortId: string;
   declarationAccepted: boolean;
   declarationConfirmations: string[];
+  durationConfirmed: boolean;
   projectId: string;
+  projectEndDate: string;
+  projectStartDate?: string;
   remarks?: string;
   studentFeedback: string;
   submissionLink: string;

@@ -38,6 +38,7 @@ export const defaultFeatureMessages: Record<string, string> = {
   resources: 'Resource Library will be available after onboarding.',
   schedule: 'Upcoming Workshops will be visible once sessions are planned.',
   support: 'Support will be available soon.',
+  'login-create-password': 'Create password is currently unavailable.',
   'whatsapp-widget': 'Contact Program Coordinator'
 };
 
@@ -57,6 +58,22 @@ export function useStudentFeatureControls(query: { enabled?: boolean } = {}) {
         query: { limit: 50, page: 1, sort: 'order' }
       }),
     queryKey: ['student-feature-controls', accessToken],
+    staleTime: 120_000
+  });
+}
+
+export function useGuestLoginFeatureControl() {
+  return useQuery({
+    queryFn: () => apiGet<FeatureControl>('/public/feature-controls/guest-login'),
+    queryKey: ['public-feature-control', 'guest-login'],
+    staleTime: 120_000
+  });
+}
+
+export function useLoginCreatePasswordFeatureControl() {
+  return useQuery({
+    queryFn: () => apiGet<FeatureControl>('/public/feature-controls/login-create-password'),
+    queryKey: ['public-feature-control', 'login-create-password'],
     staleTime: 120_000
   });
 }

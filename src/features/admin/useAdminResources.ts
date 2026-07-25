@@ -12,6 +12,11 @@ export type AdminResource = {
   currency: string;
   description?: string;
   domainKey?: string;
+  guestAccessEnabled?: boolean;
+  guestAccessExpiresAt?: string | null;
+  guestCtaLabel?: string | null;
+  guestCtaUrl?: string | null;
+  guestRegistrationRequired?: boolean;
   id: string;
   phase?: string;
   paymentLink?: string;
@@ -48,6 +53,11 @@ export type AdminResourceWritePayload = {
   currency?: string;
   description?: string | null;
   domainKey?: string | null;
+  guestAccessEnabled?: boolean;
+  guestAccessExpiresAt?: string | null;
+  guestCtaLabel?: string | null;
+  guestCtaUrl?: string | null;
+  guestRegistrationRequired?: boolean;
   paymentLink?: string | null;
   price?: number | null;
   programKeys: string[];

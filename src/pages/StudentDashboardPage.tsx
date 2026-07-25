@@ -3,7 +3,6 @@ import {
   Award,
   BookOpen,
   CalendarDays,
-  Clock3,
   ExternalLink,
   FileCheck2,
   GraduationCap,
@@ -13,8 +12,7 @@ import {
   Megaphone,
   PlayCircle,
   Video,
-  X,
-  type LucideIcon
+  X
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -28,23 +26,6 @@ import { JsonRecord, StudentProfile, useStudentDashboard } from '../features/stu
 import { type StudentRecording } from '../features/student/useStudentRecordings';
 import { type StudentResource } from '../features/student/useStudentResources';
 import { type StudentScheduleItem, type StudentScheduleStatus } from '../features/student/useStudentSchedule';
-
-type SummaryCard = {
-  caption: string;
-  icon: LucideIcon;
-  label: string;
-  path: string;
-  value: string;
-};
-
-type ScopedCounts = {
-  announcements: number;
-  certificates: number;
-  projects: number;
-  recordings: number;
-  resources: number;
-  schedule: number;
-};
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -453,46 +434,6 @@ function getResourceNote(resource: StudentResource) {
   return resource.resourceType || 'Learning resource';
 }
 
-function buildSummaryCards(counts: ScopedCounts): SummaryCard[] {
-  return [
-    {
-      caption: 'Join-ready live sessions',
-      icon: CalendarDays,
-      label: 'Upcoming Workshops',
-      path: '/student/schedule',
-      value: String(counts.schedule)
-    },
-    {
-      caption: 'Completed sessions to watch',
-      icon: Video,
-      label: 'Watch Recordings',
-      path: '/student/recordings',
-      value: String(counts.recordings)
-    },
-    {
-      caption: 'Templates and useful links',
-      icon: Library,
-      label: 'Resource Library',
-      path: '/student/resources',
-      value: String(counts.resources)
-    },
-    {
-      caption: 'Guided work and submissions',
-      icon: FileCheck2,
-      label: 'Projects',
-      path: '/student/projects',
-      value: String(counts.projects)
-    },
-    {
-      caption: 'Certificate status',
-      icon: Award,
-      label: 'Certificates',
-      path: '/student/certificates',
-      value: String(counts.certificates)
-    }
-  ];
-}
-
 function getSessionAction(item?: StudentScheduleItem) {
   if (!item) {
     return { label: 'View upcoming workshops', path: '/student/schedule' };
@@ -554,7 +495,6 @@ export function StudentDashboardPage() {
     resources: resourceItemsAll.length,
     schedule: upcomingScheduleItems.length
   };
-  const summaryCards = buildSummaryCards(scopedCounts);
   const trackRoles = asArray(profile?.trackRoleIds).filter((role): role is string => typeof role === 'string');
   const liveProjectRoles = uniqueNames(asArray(profile?.liveProjectRoles).filter((role): role is string => typeof role === 'string'));
   const guidanceItems = takeMapped(pickArray(dashboardQuery.data?.guidanceContent, ['items']), mapGuidanceContent, 10);
@@ -677,12 +617,97 @@ export function StudentDashboardPage() {
         </div>
       </section>
 
+      <section className="student-action-center" aria-label="Student Action Center">
+        <div className="student-action-center__header">
+          <div>
+            <span className="eyebrow">Student Action Center</span>
+            <h2>Pick up where it matters most</h2>
+          </div>
+          <Link className="student-action-center__support" to="/student/support">
+            <Megaphone size={17} />
+            Support
+          </Link>
+        </div>
+
+        <div className="student-action-center__grid">
+          <article className="student-action-card student-action-card--featured">
+            <div className="student-action-card__icon">
+              <CalendarDays size={22} />
+            </div>
+            <div className="student-action-card__content">
+              <span>Next session</span>
+              <h3>{nextSession?.title ?? 'No upcoming workshop scheduled'}</h3>
+              <p>{nextSession ? formatScheduleTime(nextSession) : 'Upcoming workshops mapped to your cohort will appear here.'}</p>
+            </div>
+            <div className="student-action-card__footer">
+              {nextSessionStatus ? <StatusBadge>{formatStatusLabel(nextSessionStatus)}</StatusBadge> : <StatusBadge>Schedule pending</StatusBadge>}
+              {'href' in sessionAction ? (
+                <a className="student-action student-action--primary" href={sessionAction.href} rel="noreferrer" target="_blank">
+                  <ExternalLink size={18} />
+                  {sessionAction.label}
+                </a>
+              ) : (
+                <Link className="student-action student-action--primary" to={sessionAction.path}>
+                  <ArrowRight size={18} />
+                  {sessionAction.label}
+                </Link>
+              )}
+            </div>
+          </article>
+
+          <Link className="student-action-card" to="/student/recordings">
+            <div className="student-action-card__icon">
+              <PlayCircle size={22} />
+            </div>
+            <div className="student-action-card__content">
+              <span>Training progress</span>
+              <h3>{scopedCounts.recordings} recording{scopedCounts.recordings === 1 ? '' : 's'} ready</h3>
+              <p>Continue your modules and keep completion moving toward certificate eligibility.</p>
+            </div>
+            <div className="student-action-card__meta">
+              <strong>{scopedCounts.recordings}</strong>
+              <span>available</span>
+            </div>
+          </Link>
+
+          <Link className="student-action-card" to="/student/projects">
+            <div className="student-action-card__icon">
+              <FileCheck2 size={22} />
+            </div>
+            <div className="student-action-card__content">
+              <span>Live project</span>
+              <h3>{liveProjectRoles.length ? liveProjectRoles.join(', ') : 'Role pending'}</h3>
+              <p>{scopedCounts.projects ? `${scopedCounts.projects} project item${scopedCounts.projects === 1 ? '' : 's'} available for your access.` : 'Project work will appear after assignment.'}</p>
+            </div>
+            <div className="student-action-card__meta">
+              <strong>{scopedCounts.projects}</strong>
+              <span>items</span>
+            </div>
+          </Link>
+
+          <Link className="student-action-card" to="/student/certificates">
+            <div className="student-action-card__icon">
+              <Award size={22} />
+            </div>
+            <div className="student-action-card__content">
+              <span>Certificates</span>
+              <h3>{scopedCounts.certificates ? `${scopedCounts.certificates} certificate record${scopedCounts.certificates === 1 ? '' : 's'}` : 'Check readiness'}</h3>
+              <p>Track issued certificates and download available PDFs from one place.</p>
+            </div>
+            <div className="student-action-card__meta">
+              <strong>{scopedCounts.certificates}</strong>
+              <span>issued</span>
+            </div>
+          </Link>
+        </div>
+      </section>
+
       {showLeadershipGuidance ? (
         <section className="student-certificate-guide">
           <header>
             <div>
-              <span className="eyebrow">Your certificates</span>
-              <h2>What you can earn</h2>
+              <span className="eyebrow">Certificate path</span>
+              <h2>Training, project, and mentorship at a glance</h2>
             </div>
             {certificateGuidance ? (
               <button className="student-guidance-button" onClick={() => setSelectedGuidance(certificateGuidance)} type="button">
@@ -714,47 +739,6 @@ export function StudentDashboardPage() {
               </div>
             </article>
           </div>
-        </section>
-      ) : null}
-
-      <div className="student-summary-grid">
-        {summaryCards.map(({ caption, icon: Icon, label, path, value }) => (
-          <Link className="student-summary-card" key={label} to={path}>
-            <Icon size={20} />
-            <div>
-              <span>{label}</span>
-              <strong>{value}</strong>
-              <p>{caption}</p>
-            </div>
-          </Link>
-        ))}
-      </div>
-
-      {nextSession ? (
-        <section className="student-home-grid student-home-grid--single">
-          <article className="student-panel student-next-session">
-            <div className="student-panel__header">
-              <div>
-                <span className="eyebrow">Next up</span>
-                <h2>{nextSession.title}</h2>
-              </div>
-              {nextSessionStatus ? <StatusBadge>{formatStatusLabel(nextSessionStatus)}</StatusBadge> : null}
-            </div>
-            <p>{formatScheduleTime(nextSession)}</p>
-            <div className="student-panel__footer">
-              {'href' in sessionAction ? (
-                <a className="student-action student-action--primary" href={sessionAction.href} rel="noreferrer" target="_blank">
-                  <ExternalLink size={18} />
-                  {sessionAction.label}
-                </a>
-              ) : (
-                <Link className="student-action student-action--primary" to={sessionAction.path}>
-                  <ArrowRight size={18} />
-                  {sessionAction.label}
-                </Link>
-              )}
-            </div>
-          </article>
         </section>
       ) : null}
 
@@ -833,25 +817,6 @@ export function StudentDashboardPage() {
             )
           })}
         </article>
-      </section>
-
-      <section className="student-shortcut-grid" aria-label="Student dashboard shortcuts">
-        <Link className="student-shortcut-card" to="/student/schedule">
-          <Clock3 size={18} />
-          <span>Upcoming Workshops</span>
-        </Link>
-        <Link className="student-shortcut-card" to="/student/projects">
-          <FileCheck2 size={18} />
-          <span>Projects</span>
-        </Link>
-        <Link className="student-shortcut-card" to="/student/certificates">
-          <Award size={18} />
-          <span>Certificates</span>
-        </Link>
-        <Link className="student-shortcut-card" to="/student/support">
-          <Megaphone size={18} />
-          <span>Support</span>
-        </Link>
       </section>
 
       <StateBlock title="Need help?">

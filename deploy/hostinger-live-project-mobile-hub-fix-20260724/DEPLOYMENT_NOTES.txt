@@ -1,0 +1,17 @@
+Hostinger deployment package: Live Project Hub mobile zoom fix
+Date: 2026-07-24
+
+Scope:
+- Frontend-only CSS fix for the Student Live Project Hub module.
+- Adds scoped horizontal overflow containment under .student-project-hub-page.
+- Ensures wide rich text/media/table content cannot keep mobile viewport zoomed out after pinch gesture release.
+- Updates the Live Project Toolkit reader shell to use dynamic viewport height with a 100vh fallback.
+
+Database:
+- No migration is required for this specific mobile UI fix.
+- Existing live project duration migration remains: supabase/migrations/20260724040750_live_project_submission_duration_dates.sql
+
+Validation:
+- npm run typecheck passed.
+- npm run build passed.
+- Production dist was rebuilt successfully.

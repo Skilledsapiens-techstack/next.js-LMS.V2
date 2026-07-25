@@ -137,6 +137,8 @@ export const MODULE_VIEW_PERMISSIONS: Record<string, AdminPermission> = {
   enrollments: 'admin.enrollments.view',
   'admin-users': 'admin.admin_users.view',
   'feature-control': 'admin.feature_control.manage',
+  'career-readiness': 'admin.resources.view',
+  'guest-leads': 'admin.students.view',
   observability: 'admin.observability.view',
   'paid-access': 'admin.paid_access.view',
   'payment-orders': 'admin.payments.view',

@@ -244,7 +244,7 @@ function RecordingProgressCard({ progress }: { progress: RecordingGroupProgress 
             {progress.completed} of {progress.total} completed
           </strong>
         </div>
-        <p>Complete atleast 75% training modules to get your training completion certificate.</p>
+        <p>Complete atleast 75% training modules to get your training completion certificate. (Only for students who applied for Leadership Programs)</p>
       </div>
       <div className="student-recording-progress-card__meter" aria-label={`Training progress ${progress.percent}%`}>
         <strong>

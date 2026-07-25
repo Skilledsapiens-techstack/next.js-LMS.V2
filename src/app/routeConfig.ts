@@ -3,6 +3,7 @@ import {
   BookOpen,
   CalendarDays,
   ClipboardCheck,
+  BriefcaseBusiness,
   FileCheck2,
   GraduationCap,
   HelpCircle,
@@ -15,6 +16,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Ticket,
+  UserPlus,
   UserCog,
   Users,
   Video,
@@ -37,6 +39,7 @@ export const studentNavItems: NavItem[] = [
   { label: 'Watch Recordings', path: '/student/recordings', moduleId: 'recordings', icon: Video, mode: 'read-only' },
   { label: 'Upcoming Workshops', path: '/student/schedule', moduleId: 'schedule', icon: CalendarDays, mode: 'read-only' },
   { label: 'Resource Library', path: '/student/resources', moduleId: 'resources', icon: Library, mode: 'read-only' },
+  { label: 'Career Readiness', path: '/student/career-readiness', moduleId: 'career-readiness', icon: BriefcaseBusiness, mode: 'read-only' },
   { label: 'Live Project Hub', path: '/student/projects', moduleId: 'projects', icon: BookOpen, mode: 'read-only' },
   { label: 'My Submissions', path: '/student/project-submissions', moduleId: 'project-submissions', icon: ClipboardCheck, mode: 'read-only' },
   { label: 'Certificates', path: '/student/certificates', moduleId: 'certificates', icon: FileCheck2, mode: 'read-only' },
@@ -46,12 +49,25 @@ export const studentNavItems: NavItem[] = [
   { label: 'Payments & Access', path: '/student/payments', moduleId: 'payments', icon: BadgeIndianRupee, mode: 'read-only' }
 ];
 
+export const guestNavItems: NavItem[] = [
+  { label: 'Dashboard', path: '/guest', moduleId: 'dashboard', icon: LayoutDashboard, mode: 'read-only' },
+  { label: 'Program Catalogue', path: '/guest/programs', moduleId: 'cohorts', icon: GraduationCap, mode: 'read-only' },
+  { label: 'Watch Recordings', path: '/guest/recordings', moduleId: 'recordings', icon: Video, mode: 'read-only' },
+  { label: 'Upcoming Workshops', path: '/guest/schedule', moduleId: 'schedule', icon: CalendarDays, mode: 'read-only' },
+  { label: 'Resource Library', path: '/guest/resources', moduleId: 'resources', icon: Library, mode: 'read-only' },
+  { label: 'Career Readiness', path: '/guest/career-readiness', moduleId: 'career-readiness', icon: BriefcaseBusiness, mode: 'read-only' },
+  { label: 'Announcements', path: '/guest/announcements', moduleId: 'announcements', icon: Megaphone, mode: 'read-only' },
+  { label: 'Support', path: '/guest/support', moduleId: 'support', icon: HelpCircle, mode: 'write' }
+];
+
 export const adminNavItems: NavItem[] = [
   { label: 'Dashboard', path: '/admin', moduleId: 'dashboard', icon: LayoutDashboard, mode: 'read-only' },
   { label: 'Recordings', path: '/admin/recording-candidates', moduleId: 'recording-candidates', icon: Video, mode: 'read-only' },
   { label: 'Schedule Meeting', path: '/admin/workshops', moduleId: 'workshops', icon: CalendarDays, mode: 'read-only' },
   { label: 'Resources', path: '/admin/resources', moduleId: 'resources', icon: Library, mode: 'write' },
+  { label: 'Career Content', path: '/admin/career-readiness', moduleId: 'career-readiness', icon: BriefcaseBusiness, mode: 'write' },
   { label: 'Students', path: '/admin/students', moduleId: 'students', icon: Users, mode: 'read-only' },
+  { label: 'Guest Leads', path: '/admin/guest-leads', moduleId: 'guest-leads', icon: UserPlus, mode: 'write' },
   { label: 'Cohorts', path: '/admin/cohorts', moduleId: 'cohorts', icon: GraduationCap, mode: 'read-only' },
   { label: 'Programs', path: '/admin/programs', moduleId: 'programs', icon: BookOpen, mode: 'read-only' },
   { label: 'Projects', path: '/admin/projects', moduleId: 'projects', icon: Library, mode: 'read-only' },

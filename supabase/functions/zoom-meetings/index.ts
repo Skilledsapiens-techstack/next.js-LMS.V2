@@ -15,6 +15,13 @@ type ZoomMeetingAction =
   | 'publish-recording'
   | 'reject-recording';
 
+type PortalWorkshopEvent =
+  | 'recording_published'
+  | 'session_cancelled'
+  | 'session_completed'
+  | 'session_rescheduled'
+  | 'session_scheduled';
+
 type WorkshopPayload = {
   action: ZoomMeetingAction;
   alternateDate?: string;
@@ -50,6 +57,8 @@ type WorkshopRow = {
   zoom_account: string | null;
   zoom_id: string | null;
 };
+
+type WorkshopPortalRow = Record<string, unknown> | WorkshopRow;
 
 type ZoomRecordingFile = {
   id?: string;
@@ -302,6 +311,126 @@ async function writeAudit(supabase: ReturnType<typeof createClient>, actorEmail:
   });
 }
 
+function workshopRecord(workshop: WorkshopPortalRow) {
+  return workshop as Record<string, unknown>;
+}
+
+function hasPortalAudienceScope(workshop: WorkshopPortalRow) {
+  const row = workshopRecord(workshop);
+  const programKey = typeof row.program_key === 'string' && row.program_key.trim() ? [row.program_key.trim().toLowerCase()] : [];
+  const cohortNames = Array.isArray(row.cohort_names) ? row.cohort_names.map((name) => String(name).trim()).filter(Boolean) : [];
+  return programKey.length > 0 || cohortNames.length > 0;
+}
+
+function workshopProgramKeys(workshop: WorkshopPortalRow) {
+  const row = workshopRecord(workshop);
+  return typeof row.program_key === 'string' && row.program_key.trim() ? [row.program_key.trim().toLowerCase()] : [];
+}
+
+function workshopCohortNames(workshop: WorkshopPortalRow) {
+  const row = workshopRecord(workshop);
+  return Array.isArray(row.cohort_names) ? row.cohort_names.map((name) => String(name).trim()).filter(Boolean) : [];
+}
+
+function sortedAudienceValues(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))).sort();
+}
+
+function hasWorkshopAudienceChanged(previousWorkshop: WorkshopPortalRow, nextWorkshop: WorkshopPortalRow) {
+  const previousProgramKeys = sortedAudienceValues(workshopProgramKeys(previousWorkshop));
+  const nextProgramKeys = sortedAudienceValues(workshopProgramKeys(nextWorkshop));
+  const previousCohortNames = sortedAudienceValues(workshopCohortNames(previousWorkshop));
+  const nextCohortNames = sortedAudienceValues(workshopCohortNames(nextWorkshop));
+  return previousProgramKeys.join('\n') !== nextProgramKeys.join('\n') || previousCohortNames.join('\n') !== nextCohortNames.join('\n');
+}
+
+function isStudentVisibleSession(workshop: WorkshopPortalRow) {
+  const row = workshopRecord(workshop);
+  return ['Upcoming', 'Scheduled', 'Live'].includes(String(row.workshop_status ?? row.status ?? '').trim());
+}
+
+function workshopScheduleSummary(workshop: WorkshopPortalRow) {
+  const row = workshopRecord(workshop);
+  return [row.date, row.time, row.duration_minutes ? `${row.duration_minutes} min` : undefined].filter(Boolean).join(' · ') || 'A new session has been added to your schedule.';
+}
+
+function workshopPortalUpdateCopy(eventType: PortalWorkshopEvent, workshop: WorkshopPortalRow) {
+  const row = workshopRecord(workshop);
+  const title = String(row.title ?? 'Workshop').trim() || 'Workshop';
+  const schedule = workshopScheduleSummary(workshop);
+
+  if (eventType === 'recording_published') {
+    return {
+      linkLabel: 'Watch recording',
+      linkUrl: '/student/recordings',
+      sourceType: 'workshop_recording',
+      summary: 'The session recording is now available.',
+      title: `Recording published: ${title}`
+    };
+  }
+
+  if (eventType === 'session_rescheduled') {
+    return {
+      linkLabel: 'View schedule',
+      linkUrl: '/student/schedule',
+      sourceType: 'workshop_session',
+      summary: `The session schedule has been updated: ${schedule}.`,
+      title: `Workshop rescheduled: ${title}`
+    };
+  }
+
+  if (eventType === 'session_cancelled') {
+    return {
+      linkLabel: 'View schedule',
+      linkUrl: '/student/schedule',
+      sourceType: 'workshop_session',
+      summary: 'This session has been cancelled.',
+      title: `Workshop cancelled: ${title}`
+    };
+  }
+
+  if (eventType === 'session_completed') {
+    return {
+      linkLabel: 'View schedule',
+      linkUrl: '/student/schedule',
+      sourceType: 'workshop_session',
+      summary: 'This session has been marked completed.',
+      title: `Workshop completed: ${title}`
+    };
+  }
+
+  return {
+    linkLabel: 'View schedule',
+    linkUrl: '/student/schedule',
+    sourceType: 'workshop_session',
+    summary: schedule,
+    title: `New session scheduled: ${title}`
+  };
+}
+
+async function recordPortalUpdate(supabase: ReturnType<typeof createClient>, actorEmail: string, eventType: PortalWorkshopEvent, workshop: WorkshopPortalRow) {
+  if (!hasPortalAudienceScope(workshop)) return;
+
+  const row = workshopRecord(workshop);
+  const copy = workshopPortalUpdateCopy(eventType, workshop);
+  const { error } = await supabase.rpc('record_portal_update_event', {
+    p_cohort_names: workshopCohortNames(workshop),
+    p_created_by: actorEmail,
+    p_event_type: eventType,
+    p_link_label: copy.linkLabel,
+    p_link_url: copy.linkUrl,
+    p_metadata: { workshopId: row.workshop_id ?? row.id },
+    p_program_keys: workshopProgramKeys(workshop),
+    p_source_id: String(row.id ?? row.workshop_id ?? ''),
+    p_source_type: copy.sourceType,
+    p_student_emails: [],
+    p_summary: copy.summary,
+    p_title: copy.title
+  });
+
+  if (error) console.warn('Smart portal update digest was skipped:', error.message);
+}
+
 async function getWorkshopById(supabase: ReturnType<typeof createClient>, workshopId: string) {
   const { data, error } = await supabase.from('workshops').select('*').eq('id', workshopId).single();
   if (error) throw error;
@@ -316,6 +445,7 @@ async function createMeeting(supabase: ReturnType<typeof createClient>, actorEma
     const { data, error } = await supabase.from('workshops').insert(workshopRow).select('*').single();
     if (error) throw error;
     await writeAudit(supabase, actorEmail, 'admin_workshop_created', data, { changedFields: Object.keys(workshopRow).sort(), zoomAccount: source });
+    await recordPortalUpdate(supabase, actorEmail, 'session_scheduled', data);
     return data;
   }
 
@@ -328,6 +458,7 @@ async function createMeeting(supabase: ReturnType<typeof createClient>, actorEma
   const { data, error } = await supabase.from('workshops').insert(workshopRow).select('*').single();
   if (error) throw error;
   await writeAudit(supabase, actorEmail, 'admin_workshop_created', data, { changedFields: Object.keys(workshopRow).sort(), zoomAccount: account });
+  await recordPortalUpdate(supabase, actorEmail, 'session_scheduled', data);
   return data;
 }
 
@@ -349,6 +480,10 @@ async function updateMeeting(supabase: ReturnType<typeof createClient>, actorEma
       changedFields: Object.keys(updateRow).sort(),
       zoomAccount: source
     });
+    if (payload.action === 'reschedule-meeting') await recordPortalUpdate(supabase, actorEmail, 'session_rescheduled', data);
+    else if (isStudentVisibleSession(data) && (!isStudentVisibleSession(workshop) || !hasPortalAudienceScope(workshop) || hasWorkshopAudienceChanged(workshop, data))) {
+      await recordPortalUpdate(supabase, actorEmail, 'session_scheduled', data);
+    }
     return data;
   }
 
@@ -380,6 +515,10 @@ async function updateMeeting(supabase: ReturnType<typeof createClient>, actorEma
     changedFields: Object.keys(updateRow).sort(),
     zoomAccount: account
   });
+  if (payload.action === 'reschedule-meeting') await recordPortalUpdate(supabase, actorEmail, 'session_rescheduled', data);
+  else if (isStudentVisibleSession(data) && (!isStudentVisibleSession(workshop) || !hasPortalAudienceScope(workshop) || hasWorkshopAudienceChanged(workshop, data))) {
+    await recordPortalUpdate(supabase, actorEmail, 'session_scheduled', data);
+  }
   return data;
 }
 
@@ -455,6 +594,7 @@ async function completeMeeting(supabase: ReturnType<typeof createClient>, actorE
     .single();
   if (error) throw error;
   await writeAudit(supabase, actorEmail, 'admin_workshop_status_changed', data, { changedFields: ['updated_at', 'workshop_status'] });
+  await recordPortalUpdate(supabase, actorEmail, 'session_completed', data);
   return data;
 }
 
@@ -560,6 +700,9 @@ async function editPublishedRecording(supabase: ReturnType<typeof createClient>,
       zoom_recording_url: (workshop as Record<string, unknown>).zoom_recording_url ?? null
     }
   });
+  if (!hasPortalAudienceScope(workshop) || hasWorkshopAudienceChanged(workshop, data)) {
+    await recordPortalUpdate(supabase, actorEmail, 'recording_published', data);
+  }
 
   return { workshop: data };
 }
@@ -603,6 +746,7 @@ async function cancelMeeting(supabase: ReturnType<typeof createClient>, actorEma
     zoomAccount: source,
     zoomId: zoomMeetingId || null
   });
+  await recordPortalUpdate(supabase, actorEmail, 'session_cancelled', data);
   return { ...data, zoom_cancellation_warning: zoomCancellationWarning || null };
 }
 
@@ -652,6 +796,7 @@ async function publishRecording(supabase: ReturnType<typeof createClient>, actor
     publishedUrl: playUrl,
     zoomRecordingFileId: candidate.zoom_recording_file_id
   });
+  await recordPortalUpdate(supabase, actorEmail, 'recording_published', workshop);
   return { candidateId, workshop };
 }
 

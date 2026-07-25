@@ -1,0 +1,26 @@
+Hostinger deployment package - LMS student portal
+
+Build date: 2026-07-23
+Package purpose: Static frontend files for Hostinger public_html.
+
+Upload steps:
+1. Upload hostinger-career-readiness-20260723.zip to Hostinger File Manager.
+2. Open public_html.
+3. Extract the zip contents directly inside public_html.
+4. Confirm these files/folders are at the public_html root:
+   - index.html
+   - .htaccess
+   - assets/
+   - favicon files
+5. Clear browser cache or test in an incognito window.
+
+Important:
+- Supabase migration 20260722183304_career_readiness_content.sql has already been pushed.
+- This package only deploys the frontend bundle to Hostinger.
+
+Included student-facing updates:
+- Career Readiness student tab.
+- Admin Career Content authoring screen.
+- Published/draft content support.
+- Program/cohort targeting for Career Readiness content.
+- Smart daily portal update announcement support from the previous deployment.
