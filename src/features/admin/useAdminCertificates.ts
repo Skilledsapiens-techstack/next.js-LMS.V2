@@ -83,6 +83,7 @@ export type IssueLiveProjectCertificateInput = {
   durationWeeks?: number;
   endDate: string;
   issueDate: string;
+  projectRole?: string;
   requestId: string;
   sendEmail: boolean;
   startDate: string;
@@ -91,6 +92,17 @@ export type IssueLiveProjectCertificateInput = {
 export type IssueLiveProjectCertificateResult = {
   certificate: AdminCertificate;
   message: string;
+};
+
+export type RejectLiveProjectCertificateRequestInput = {
+  reason: string;
+  requestId: string;
+};
+
+export type RejectLiveProjectCertificateRequestResult = {
+  message: string;
+  requestId: string;
+  status: 'updated';
 };
 
 export type IssueLeadershipCertificatesInput = {
@@ -237,6 +249,26 @@ export function useIssueLiveProjectCertificate() {
       queryClient.invalidateQueries({ queryKey: ['admin-certificates'] });
       queryClient.invalidateQueries({ queryKey: ['admin-certificate-requests'] });
       queryClient.invalidateQueries({ queryKey: ['student-certificates'] });
+    }
+  });
+}
+
+export function useRejectLiveProjectCertificateRequest() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ reason, requestId }: RejectLiveProjectCertificateRequestInput) =>
+      apiPatch<RejectLiveProjectCertificateRequestResult, { reviewNote: string }>(`/admins/project-submissions/${requestId}/reject`, {
+        accessToken: accessToken ?? undefined,
+        body: {
+          reviewNote: reason
+        }
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-certificate-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-certificates'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-project-submissions'] });
     }
   });
 }

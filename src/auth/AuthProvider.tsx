@@ -21,6 +21,7 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const passwordActionSessionKey = 'skilled-sapiens-password-action-session';
+const emailDeliveryDisabledMessage = 'Email delivery is temporarily disabled from Feature Control. Re-enable Email Delivery before sending emails.';
 
 export type GuestSignUpPayload = {
   audienceType: 'student' | 'working_professional' | 'other';
@@ -113,6 +114,24 @@ async function passwordEmailErrorMessage(data: unknown, error: unknown) {
 
   if (error instanceof Error && error.message.trim()) return error.message;
   return 'Unable to send password email.';
+}
+
+async function assertLmsEmailDeliveryEnabled(supabase: ReturnType<typeof getSupabaseClient>) {
+  if (!supabase) return;
+  const { data, error } = await supabase
+    .from('feature_controls')
+    .select('status')
+    .eq('module_id', 'email-service')
+    .maybeSingle();
+
+  if (error) {
+    console.warn('Email delivery feature control check failed', error.message);
+    return;
+  }
+
+  if (isRecord(data) && typeof data.status === 'string' && data.status !== 'show') {
+    throw new Error(emailDeliveryDisabledMessage);
+  }
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
@@ -210,6 +229,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       const redirectTo = `${window.location.origin}/login?mode=recovery&intent=${intent}&portal=${portal}`;
+      await assertLmsEmailDeliveryEnabled(supabase);
+
       if (portal === 'student') {
         const { data, error } = await supabase.functions.invoke('transactional-email', {
           body: {

@@ -3,7 +3,8 @@ import { ArrowRight, CheckCircle2, Eye, EyeOff, HelpCircle, KeyRound, Loader2, L
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { StateBlock } from '../components/StateBlock';
-import { getFeatureMessage, useGuestLoginFeatureControl, useLoginCreatePasswordFeatureControl } from '../features/useFeatureControls';
+import { WhatsAppContactWidget } from '../components/WhatsAppContactWidget';
+import { getFeatureMessage, useGuestLoginFeatureControl, useLoginCreatePasswordFeatureControl, usePublicWhatsAppWidgetFeatureControl } from '../features/useFeatureControls';
 import { apiGet, ApiClientError } from '../lib/supabaseApi';
 
 type LoginPortal = 'admin' | 'student';
@@ -80,6 +81,7 @@ export function LoginPage() {
   const guestLoginControl = guestLoginControlQuery.data;
   const createPasswordControlQuery = useLoginCreatePasswordFeatureControl();
   const createPasswordControl = createPasswordControlQuery.data;
+  const whatsappWidgetQuery = usePublicWhatsAppWidgetFeatureControl({ enabled: portal === 'student' });
   const shouldShowGuestLogin = portal === 'student' && (guestLoginControlQuery.isError || (!guestLoginControlQuery.isLoading && guestLoginControl?.status !== 'hide'));
   const isGuestLoginUpcoming = guestLoginControl?.status === 'upcoming';
   const shouldShowCreatePassword = portal === 'student' && (createPasswordControlQuery.isError || (!createPasswordControlQuery.isLoading && createPasswordControl?.status !== 'hide'));
@@ -234,9 +236,10 @@ export function LoginPage() {
   }
 
   return (
-    <main className="auth-page">
-      <section className="auth-shell">
-        <section className="auth-panel">
+    <>
+      <main className="auth-page">
+        <section className="auth-shell">
+          <section className="auth-panel">
           <div className="auth-lockup">
             <div className="brand-mark brand-mark--logo">
               <img alt="Skilled Sapiens logo" src="/apple-touch-icon.png" />
@@ -471,8 +474,15 @@ export function LoginPage() {
 
           {requestStatus === 'sent' || passwordUpdateStatus === 'updated' ? <StateBlock title={passwordUpdateStatus === 'updated' ? 'Password ready' : 'Check your email'}>{noticeMessage}</StateBlock> : null}
         </section>
-      </section>
-    </main>
+        </section>
+      </main>
+      {portal === 'student' ? (
+        <div className="auth-whatsapp-help">
+          <span>Having trouble signing in? Contact your program coordinator on WhatsApp for quick help.</span>
+          <WhatsAppContactWidget feature={whatsappWidgetQuery.data} />
+        </div>
+      ) : null}
+    </>
   );
 }
 

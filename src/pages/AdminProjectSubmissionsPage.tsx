@@ -1,5 +1,5 @@
 import { Check, ExternalLink, RotateCcw, Search, ShieldCheck, X } from 'lucide-react';
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { StatusBadge } from '../components/StatusBadge';
@@ -80,6 +80,7 @@ export function AdminProjectSubmissionsPage() {
   const submittedDate = searchParams.get('submittedDate')?.trim().slice(0, 10) ?? '';
   const [searchInput, setSearchInput] = useState(search);
   const [message, setMessage] = useState('');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const submissionsQuery = useAdminProjectSubmissions({ cohortName, page, programKey, roleId, search, status, submittedDate });
   const programsQuery = useAdminPrograms({ limit: 200, status: 'all' });
   const rolesQuery = useAdminProjectRoles({ limit: 200, status: 'all' });
@@ -88,6 +89,14 @@ export function AdminProjectSubmissionsPage() {
   const data = submissionsQuery.data;
   const totalPages = data?.totalPages ?? 1;
   const repeatCount = useMemo(() => data?.items.filter((item) => item.isRepeatSubmission).length ?? 0, [data?.items]);
+  const selectableItems = useMemo(() => data?.items.filter(reviewable) ?? [], [data?.items]);
+  const selectableIds = useMemo(() => selectableItems.map((item) => item.id), [selectableItems]);
+  const selectedItems = useMemo(() => selectableItems.filter((item) => selectedIds.includes(item.id)), [selectableItems, selectedIds]);
+  const allVisibleSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.includes(id));
+
+  useEffect(() => {
+    setSelectedIds((current) => current.filter((id) => selectableIds.includes(id)));
+  }, [selectableIds]);
 
   function setParam(key: string, value: string) {
     const next = new URLSearchParams(searchParams);
@@ -108,6 +117,33 @@ export function AdminProjectSubmissionsPage() {
     setMessage('');
     await reviewMutation.mutateAsync({ action: 'approve', requestId: item.id });
     setMessage(`${item.requestNumber ?? item.id} approved.`);
+    setSelectedIds((current) => current.filter((id) => id !== item.id));
+  }
+
+  async function handleApproveSelected() {
+    if (selectedItems.length === 0) return;
+    const confirmed = window.confirm(`Approve ${selectedItems.length} selected project submission${selectedItems.length === 1 ? '' : 's'}?`);
+    if (!confirmed) return;
+
+    setMessage('');
+    const itemsToApprove = [...selectedItems];
+    for (const item of itemsToApprove) {
+      await reviewMutation.mutateAsync({ action: 'approve', requestId: item.id });
+    }
+    setSelectedIds([]);
+    setMessage(`${itemsToApprove.length} selected project submission${itemsToApprove.length === 1 ? '' : 's'} approved.`);
+  }
+
+  function toggleSelection(item: AdminProjectSubmission, checked: boolean) {
+    if (!reviewable(item)) return;
+    setSelectedIds((current) => (checked ? Array.from(new Set([...current, item.id])) : current.filter((id) => id !== item.id)));
+  }
+
+  function toggleSelectAllVisible(checked: boolean) {
+    setSelectedIds((current) => {
+      if (!checked) return current.filter((id) => !selectableIds.includes(id));
+      return Array.from(new Set([...current, ...selectableIds]));
+    });
   }
 
   async function handleReject(item: AdminProjectSubmission) {
@@ -209,10 +245,37 @@ export function AdminProjectSubmissionsPage() {
           ) : null}
 
           {data && data.items.length > 0 ? (
-            <div className="admin-submission-list">
+            <div className="admin-submission-list-wrap">
+              <div className="admin-submission-bulkbar">
+                <label className="admin-submission-select-all">
+                  <input checked={allVisibleSelected} disabled={selectableIds.length === 0 || reviewMutation.isPending} onChange={(event) => toggleSelectAllVisible(event.target.checked)} type="checkbox" />
+                  <span>Select all visible pending rows</span>
+                </label>
+                <div>
+                  <span>{selectedItems.length} selected</span>
+                  <button className="segmented-button segmented-button--success" disabled={selectedItems.length === 0 || reviewMutation.isPending} onClick={() => void handleApproveSelected()} type="button">
+                    <Check size={14} />
+                    {reviewMutation.isPending ? 'Approving...' : 'Approve selected'}
+                  </button>
+                  <button className="segmented-button" disabled={selectedItems.length === 0 || reviewMutation.isPending} onClick={() => setSelectedIds([])} type="button">
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div className="admin-submission-list">
               {data.items.map((item) => (
-                <SubmissionRow disabled={reviewMutation.isPending} item={item} key={item.id} onApprove={handleApprove} onChangesRequested={handleChangesRequested} onReject={handleReject} />
+                <SubmissionRow
+                  checked={selectedIds.includes(item.id)}
+                  disabled={reviewMutation.isPending}
+                  item={item}
+                  key={item.id}
+                  onApprove={handleApprove}
+                  onChangesRequested={handleChangesRequested}
+                  onReject={handleReject}
+                  onSelect={toggleSelection}
+                />
               ))}
+              </div>
             </div>
           ) : (
             <EmptyState />
@@ -244,20 +307,29 @@ export function AdminProjectSubmissionsPage() {
 }
 
 function SubmissionRow({
+  checked,
   disabled,
   item,
   onApprove,
   onChangesRequested,
-  onReject
+  onReject,
+  onSelect
 }: {
+  checked: boolean;
   disabled: boolean;
   item: AdminProjectSubmission;
   onApprove: (item: AdminProjectSubmission) => Promise<void>;
   onChangesRequested: (item: AdminProjectSubmission) => Promise<void>;
   onReject: (item: AdminProjectSubmission) => Promise<void>;
+  onSelect: (item: AdminProjectSubmission, checked: boolean) => void;
 }) {
+  const canSelect = reviewable(item);
+
   return (
     <article className="admin-submission-row">
+      <label className="admin-submission-row__select" title={canSelect ? 'Select submission for bulk approval' : 'Only pending review submissions can be selected'}>
+        <input checked={checked} disabled={!canSelect || disabled} onChange={(event) => onSelect(item, event.target.checked)} type="checkbox" />
+      </label>
       <div className="admin-submission-row__main">
         <div className="admin-submission-row__title">
           <h2>{item.projectTitle ?? item.requestNumber ?? item.id}</h2>

@@ -1,4 +1,4 @@
-import { CalendarDays, Check, ChevronDown, Copy, ExternalLink, Link2, Lock, ShieldCheck, Video } from 'lucide-react';
+import { CalendarDays, Check, ChevronDown, Copy, ExternalLink, Link2, Lock, ShieldCheck, Video, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState, LockedState } from '../components/ScreenStates';
@@ -14,6 +14,7 @@ import {
   useStudentRecordingResources,
   useStudentRecordings
 } from '../features/student/useStudentRecordings';
+import { RecordingPlaybackMode, getRecordingPlaybackMode, useStudentFeatureControls } from '../features/useFeatureControls';
 
 const pageSize = 25;
 
@@ -21,12 +22,16 @@ type RecordingProgramFilter = {
   cohortNames: string[];
   count: number;
   label: string;
+  learningTrackLabel: string;
+  roleFirst: boolean;
   value: string;
 };
 
 type RecordingDisplayGroup = {
   key: string;
   label: string;
+  learningTrackLabel?: string;
+  roleFirst?: boolean;
   sections: RecordingSectionGroup[];
 };
 
@@ -74,6 +79,57 @@ function programLabelFromKey(value: string) {
     .join(' ');
 }
 
+const roleFirstRecordingRoles = new Set([
+  'business analyst',
+  'business analysis',
+  'digital marketing specialist',
+  'growth & strategy consultant',
+  'market research & analytics',
+  'product marketing manager',
+  'sales & marketing manager'
+]);
+
+function normalizeDisplayName(value: string | undefined | null) {
+  return value?.trim().replace(/\s+/g, ' ').toLowerCase() ?? '';
+}
+
+function friendlyLearningTrackLabel(programKey: string, programLabel: string) {
+  const key = normalizeProgramKey(programKey).replace(/[^a-z0-9]+/g, '_');
+  const label = normalizeDisplayName(programLabel);
+
+  if (key.includes('smlp') || label.includes('sales') || label.includes('marketing')) return 'Marketing Track';
+  if (key.includes('mclp') || label.includes('management consulting')) return 'Consulting & Business Analyst Track';
+  if (key.includes('hrlp') || label.includes('human resources') || label.includes('hr leadership')) return 'HR Track';
+  if (key.includes('pevc') || label.includes('private equity') || label.includes('venture capital')) return 'Finance - Private Equity & Venture Capital';
+  if (key.includes('qf') || label.includes('quantitative finance') || label.includes('portfolio')) return 'Finance - Quantitative Finance';
+  if (key.includes('er') || label.includes('equity research') || label.includes('financial modeling')) return 'Finance - Equity Research & Financial Modeling';
+  if (key.includes('pmlp') || label.includes('product management')) return 'Product Management';
+
+  return programLabel
+    .replace(/\s*Leadership Program\s*/gi, '')
+    .replace(/\s*Program\s*/gi, '')
+    .trim() || programLabelFromKey(programKey);
+}
+
+function uniqueLabels(values: Array<string | undefined>) {
+  const seen = new Set<string>();
+  return values
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value))
+    .filter((value) => {
+      const key = normalizeDisplayName(value);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function roleFirstLabelForCohorts(cohorts: StudentCohort[]) {
+  const roles = uniqueLabels(cohorts.flatMap((cohort) => cohort.liveProjectRoles ?? []))
+    .filter((role) => roleFirstRecordingRoles.has(normalizeDisplayName(role)));
+  return roles.join(' + ');
+}
+
 function primaryProgramKeyForRecording(recording: StudentRecording) {
   return normalizeProgramKey(recording.programKey) || normalizeProgramKey(recording.domainKey);
 }
@@ -115,10 +171,6 @@ function getLatestRecordingDate(recordings: StudentRecording[]) {
   }, null);
 
   return latest ? formatDate(latest.toISOString()) : 'None';
-}
-
-function formatDuration(value: number | undefined | null) {
-  return value == null ? 'Not set' : `${value} min`;
 }
 
 function hasRecordingAccess(recording: StudentRecording) {
@@ -178,17 +230,17 @@ function compareRecordingsForStudent(left: StudentRecording, right: StudentRecor
 
 function buildRecordingDisplayGroups(recordings: StudentRecording[], programs: RecordingProgramFilter[], selectedProgram?: RecordingProgramFilter) {
   if (selectedProgram) {
-    return [buildRecordingDisplayGroup(selectedProgram.value, selectedProgram.label, recordings)];
+    return [buildRecordingDisplayGroup(selectedProgram.value, selectedProgram.label, recordings, selectedProgram)];
   }
 
   if (programs.length <= 1) {
     const label = programs[0]?.label ?? 'Recordings';
     const key = programs[0]?.value ?? 'all';
-    return [buildRecordingDisplayGroup(key, label, recordings)];
+    return [buildRecordingDisplayGroup(key, label, recordings, programs[0])];
   }
 
   const groups = programs
-    .map((program) => buildRecordingDisplayGroup(program.value, program.label, recordings.filter((recording) => recordingMatchesProgram(recording, program))))
+    .map((program) => buildRecordingDisplayGroup(program.value, program.label, recordings.filter((recording) => recordingMatchesProgram(recording, program)), program))
     .filter((group) => group.sections.some((section) => section.items.length > 0));
 
   const assignedIds = new Set(groups.flatMap((group) => group.sections.flatMap((section) => section.items.map((recording) => recording.id))));
@@ -196,7 +248,7 @@ function buildRecordingDisplayGroups(recordings: StudentRecording[], programs: R
   return remaining.length > 0 ? [...groups, buildRecordingDisplayGroup('additional', 'Additional Recordings', remaining)] : groups;
 }
 
-function buildRecordingDisplayGroup(key: string, label: string, recordings: StudentRecording[]): RecordingDisplayGroup {
+function buildRecordingDisplayGroup(key: string, label: string, recordings: StudentRecording[], program?: RecordingProgramFilter): RecordingDisplayGroup {
   const ordered = [...recordings].sort(compareRecordingsForStudent);
   const sections = recordingSectionOptions
     .map((section) => ({
@@ -209,12 +261,52 @@ function buildRecordingDisplayGroup(key: string, label: string, recordings: Stud
   return {
     key,
     label,
+    learningTrackLabel: program?.learningTrackLabel,
+    roleFirst: program?.roleFirst,
     sections
   };
 }
 
 function totalPagesFor(count: number) {
   return Math.max(1, Math.ceil(count / pageSize));
+}
+
+function youtubeVideoIdFromUrl(value: string | undefined | null) {
+  if (!value) return '';
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.replace(/^www\./, '').toLowerCase();
+    if (hostname === 'youtu.be') {
+      return sanitizeYoutubeVideoId(url.pathname.split('/').filter(Boolean)[0]);
+    }
+    if (!['youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtube-nocookie.com'].includes(hostname)) return '';
+    const watchId = sanitizeYoutubeVideoId(url.searchParams.get('v'));
+    if (watchId) return watchId;
+    const pathParts = url.pathname.split('/').filter(Boolean);
+    const embedIndex = pathParts.findIndex((part) => ['embed', 'shorts', 'live', 'v'].includes(part));
+    return sanitizeYoutubeVideoId(embedIndex >= 0 ? pathParts[embedIndex + 1] : '');
+  } catch (_error) {
+    return '';
+  }
+}
+
+function sanitizeYoutubeVideoId(value: string | undefined | null) {
+  const cleanValue = value?.trim() ?? '';
+  return /^[A-Za-z0-9_-]{6,}$/.test(cleanValue) ? cleanValue : '';
+}
+
+function youtubeEmbedUrl(recordingUrl: string | undefined | null) {
+  const videoId = youtubeVideoIdFromUrl(recordingUrl);
+  if (!videoId) return '';
+  const params = new URLSearchParams({
+    autoplay: '1',
+    cc_load_policy: '0',
+    iv_load_policy: '3',
+    modestbranding: '1',
+    playsinline: '1',
+    rel: '0'
+  });
+  return `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
 }
 
 function recordingsInGroup(group: RecordingDisplayGroup) {
@@ -265,16 +357,21 @@ function RecordingRow({
   isCompleted,
   isProgressPending,
   onMarkComplete,
+  onOpenRecording,
+  playbackMode,
   recording,
   sectionKey
 }: {
   isCompleted: boolean;
   isProgressPending: boolean;
   onMarkComplete: (recordingId: string) => void;
+  onOpenRecording: (recording: StudentRecording) => void;
+  playbackMode: RecordingPlaybackMode;
   recording: StudentRecording;
   sectionKey: StudentRecordingSection;
 }) {
   const canOpen = hasRecordingAccess(recording) && Boolean(recording.recordingUrl);
+  const canOpenInPortal = playbackMode === 'popup' && Boolean(youtubeEmbedUrl(recording.recordingUrl));
   const sequenceNumber = recordingSequenceNumber(recording);
   const showSequenceBadge = sectionKey === 'induction_live_project' && sequenceNumber !== null;
   const [copied, setCopied] = useState(false);
@@ -302,7 +399,7 @@ function RecordingRow({
           {showSequenceBadge ? <StatusBadge tone="safe">{`Step ${sequenceNumber}`}</StatusBadge> : null}
         </div>
         <p>
-          {formatDate(recording.date)} · {recording.time ?? 'Time not set'} · {formatDuration(recording.durationMinutes)}
+          {formatDate(recording.date)} · {recording.time ?? 'Time not set'}
         </p>
         {recording.locked ? (
           <div className="student-recording-row__notice">
@@ -321,7 +418,12 @@ function RecordingRow({
         ) : null}
       </div>
       <div className="student-recording-row__actions">
-        {canOpen ? (
+        {canOpen && canOpenInPortal ? (
+          <button className="student-action student-action--primary" onClick={() => onOpenRecording(recording)} type="button">
+            <Video size={16} />
+            Open recording
+          </button>
+        ) : canOpen ? (
           <a className="student-action student-action--primary" href={recording.recordingUrl} rel="noreferrer" target="_blank">
             <ExternalLink size={16} />
             Open recording
@@ -345,18 +447,19 @@ function RecordingRow({
           ) : (
             <button className="student-recording-complete" disabled={isProgressPending} onClick={() => onMarkComplete(recording.id)} type="button">
               <Check size={15} />
-              {isProgressPending ? 'Saving...' : 'Mark complete'}
+              {isProgressPending ? 'Saving...' : 'Complete'}
             </button>
           )
         ) : null}
         {relatedResources.length > 0 ? (
           <button
+            aria-label={`${resourcesOpen ? 'Hide' : 'Show'} ${relatedResources.length} related resources for ${recording.title}`}
             className={resourcesOpen ? 'student-recording-resource-toggle student-recording-resource-toggle--open' : 'student-recording-resource-toggle'}
             onClick={() => setResourcesOpen((current) => !current)}
             type="button"
           >
             <Link2 size={15} />
-            Related Resources
+            Resources
             <span>{relatedResources.length}</span>
             <ChevronDown size={15} />
           </button>
@@ -383,18 +486,55 @@ function RecordingRow({
   );
 }
 
+function RecordingVideoModal({ onClose, recording }: { onClose: () => void; recording: StudentRecording }) {
+  const embedUrl = youtubeEmbedUrl(recording.recordingUrl);
+  if (!embedUrl) return null;
+
+  return (
+    <div className="student-modal-backdrop student-recording-player-backdrop" role="presentation">
+      <section aria-label={`Recording player for ${recording.title}`} aria-modal="true" className="student-recording-player-modal" role="dialog">
+        <header className="student-recording-player-modal__header">
+          <div>
+            <span>Watch Recording</span>
+            <h2>{recording.title}</h2>
+            <p>
+              {formatDate(recording.date)} · {recording.time ?? 'Time not set'}
+            </p>
+          </div>
+          <button aria-label="Close recording player" onClick={onClose} type="button">
+            <X size={20} />
+          </button>
+        </header>
+        <div className="student-recording-player-modal__frame">
+          <iframe
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            referrerPolicy="strict-origin-when-cross-origin"
+            src={embedUrl}
+            title={recording.title}
+          />
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function StudentRecordingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [pendingProgressRecordingId, setPendingProgressRecordingId] = useState<string | null>(null);
   const [progressError, setProgressError] = useState('');
+  const [activePlayerRecording, setActivePlayerRecording] = useState<StudentRecording | null>(null);
   const selectedProgramKey = normalizeProgramKey(searchParams.get('programKey'));
   const page = asPositiveInteger(searchParams.get('page'), 1);
   const recordingsQuery = useStudentRecordings({ limit: 500, page: 1 });
   const cohortsQuery = useStudentCohorts({ limit: 100, page: 1, status: 'all' });
+  const featureControlsQuery = useStudentFeatureControls();
   const recordings = recordingsQuery.data?.items ?? [];
   const enrolledCohorts = cohortsQuery.data?.items ?? [];
+  const recordingsFeature = useMemo(() => featureControlsQuery.data?.items.find((item) => item.moduleId === 'recordings'), [featureControlsQuery.data?.items]);
+  const playbackMode = getRecordingPlaybackMode(recordingsFeature);
   const enrolledPrograms = useMemo<RecordingProgramFilter[]>(() => {
-    const programMap = new Map<string, { cohortNames: Set<string>; label: string; value: string }>();
+    const programMap = new Map<string, { cohortNames: Set<string>; cohorts: StudentCohort[]; label: string; value: string }>();
     enrolledCohorts.forEach((cohort) => {
       const key = programKeyForCohort(cohort);
       if (!key) return;
@@ -403,16 +543,21 @@ export function StudentRecordingsPage() {
       const cohortNames = existing?.cohortNames ?? new Set<string>();
       const cohortName = normalizeCohortName(cohort.name);
       if (cohortName) cohortNames.add(cohortName);
-      programMap.set(key, { cohortNames, label, value: key });
+      programMap.set(key, { cohortNames, cohorts: [...(existing?.cohorts ?? []), cohort], label, value: key });
     });
 
     return Array.from(programMap.values())
       .map((program) => {
         const filterProgram = { cohortNames: Array.from(program.cohortNames), value: program.value };
+        const learningTrackLabel = friendlyLearningTrackLabel(program.value, program.label);
+        const roleLabel = roleFirstLabelForCohorts(program.cohorts);
+        const roleFirst = Boolean(roleLabel);
         return {
           ...filterProgram,
           count: recordings.filter((recording) => recordingMatchesProgram(recording, filterProgram)).length,
-          label: program.label
+          label: roleFirst ? roleLabel : learningTrackLabel,
+          learningTrackLabel,
+          roleFirst
         };
       })
       .sort((left, right) => left.label.localeCompare(right.label));
@@ -495,7 +640,6 @@ export function StudentRecordingsPage() {
     <div className="page-stack student-recordings-page">
       <PageHeader
         description="Watch completed workshop recordings that are visible to your profile while locked recordings stay protected."
-        eyebrow="Watch recordings"
         title="Watch Recordings"
       />
 
@@ -510,11 +654,13 @@ export function StudentRecordingsPage() {
           <span>Available</span>
           <strong>{availableCount}</strong>
         </article>
-        <article>
-          <Lock size={20} />
-          <span>Locked</span>
-          <strong>{lockedCount}</strong>
-        </article>
+        {lockedCount > 0 ? (
+          <article>
+            <Lock size={20} />
+            <span>Locked</span>
+            <strong>{lockedCount}</strong>
+          </article>
+        ) : null}
         <article>
           <CalendarDays size={20} />
           <span>Latest recording</span>
@@ -531,7 +677,10 @@ export function StudentRecordingsPage() {
               onClick={() => updateProgramFilter(program.value)}
               type="button"
             >
-              <span>{program.label}</span>
+              <span className="student-recording-chip__text">
+                <span>{program.label}</span>
+                {program.roleFirst ? <small>Learning Track: {program.learningTrackLabel}</small> : null}
+              </span>
               <strong>{program.count}</strong>
             </button>
           ))}
@@ -542,7 +691,10 @@ export function StudentRecordingsPage() {
         <section className="student-recording-list" aria-label="Visible recordings">
           {visibleGroups.map((group) => (
             <div className="student-recording-group" key={group.key}>
-              {visibleGroups.length > 1 ? <h2>{group.label}</h2> : null}
+              <header className="student-recording-group__header">
+                <span>{group.roleFirst ? `Recordings for ${group.label}` : `${group.label} Recordings`}</span>
+                {group.roleFirst && group.learningTrackLabel ? <small>Learning Track: {group.learningTrackLabel}</small> : null}
+              </header>
               <RecordingProgressCard progress={progressByGroupKey.get(group.key) ?? progressForGroup(group, completedRecordingIds)} />
               {group.sections.map((section) => (
                 <div className="student-recording-section" key={`${group.key}-${section.key}`}>
@@ -556,6 +708,8 @@ export function StudentRecordingsPage() {
                       isProgressPending={pendingProgressRecordingId === recording.id}
                       key={recording.id}
                       onMarkComplete={(recordingId) => void markRecordingComplete(recordingId)}
+                      onOpenRecording={setActivePlayerRecording}
+                      playbackMode={playbackMode}
                       recording={recording}
                       sectionKey={section.key}
                     />
@@ -596,6 +750,8 @@ export function StudentRecordingsPage() {
       <StateBlock title="Recording access">
         Only recordings mapped to your account are shown here. Recording links and paid access stay protected for eligible learners.
       </StateBlock>
+
+      {activePlayerRecording ? <RecordingVideoModal onClose={() => setActivePlayerRecording(null)} recording={activePlayerRecording} /> : null}
     </div>
   );
 }

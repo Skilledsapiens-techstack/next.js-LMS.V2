@@ -1,11 +1,20 @@
-import { Clock3, Eye, EyeOff, LockKeyhole, RefreshCw, Save, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { Clock3, Eye, EyeOff, LockKeyhole, Mail, RefreshCw, Save, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
-import { FeatureControl, FeatureControlStatus, getFeatureMessage, useAdminFeatureControls, useUpdateAdminFeatureControl } from '../features/useFeatureControls';
+import {
+  FeatureControl,
+  FeatureControlStatus,
+  RecordingPlaybackMode,
+  getFeatureMessage,
+  getRecordingPlaybackMode,
+  useAdminFeatureControls,
+  useUpdateAdminFeatureControl
+} from '../features/useFeatureControls';
 
 type DraftFeature = {
+  recordingPlaybackMode: RecordingPlaybackMode;
   status: FeatureControlStatus;
   upcomingMessage: string;
   whatsappNumber: string;
@@ -39,6 +48,22 @@ function isWhatsAppWidget(item: FeatureControl) {
   return item.moduleId === 'whatsapp-widget';
 }
 
+function isRecordingsFeature(item: FeatureControl) {
+  return item.moduleId === 'recordings';
+}
+
+function isEmailServiceFeature(item: FeatureControl) {
+  return item.moduleId === 'email-service';
+}
+
+function getStatusDescription(item: FeatureControl, status: FeatureControlStatus) {
+  if (isEmailServiceFeature(item)) {
+    if (status === 'show') return 'Email delivery is enabled for Email Centre, password links, and onboarding emails.';
+    return 'Email delivery is paused. Recipient previews, templates, history, and student data remain available.';
+  }
+  return statusOptions.find((option) => option.value === status)?.description;
+}
+
 function getWhatsAppNumber(item: FeatureControl) {
   const value = item.settings?.whatsapp_number ?? item.settings?.whatsappNumber;
   return typeof value === 'string' ? value : '';
@@ -53,6 +78,7 @@ function buildDrafts(items: FeatureControl[]) {
     items.map((item) => [
       item.id,
       {
+        recordingPlaybackMode: getRecordingPlaybackMode(item),
         status: item.status,
         upcomingMessage: item.upcomingMessage ?? '',
         whatsappNumber: getWhatsAppNumber(item)
@@ -64,7 +90,8 @@ function buildDrafts(items: FeatureControl[]) {
 function isDirty(item: FeatureControl, draft?: DraftFeature) {
   if (!draft) return false;
   const numberChanged = isWhatsAppWidget(item) && getWhatsAppNumber(item) !== draft.whatsappNumber.trim();
-  return item.status !== draft.status || (item.upcomingMessage ?? '') !== draft.upcomingMessage.trim() || numberChanged;
+  const playbackModeChanged = isRecordingsFeature(item) && getRecordingPlaybackMode(item) !== draft.recordingPlaybackMode;
+  return item.status !== draft.status || (item.upcomingMessage ?? '') !== draft.upcomingMessage.trim() || numberChanged || playbackModeChanged;
 }
 
 export function AdminFeatureControlPage() {
@@ -121,7 +148,14 @@ export function AdminFeatureControlPage() {
                 whatsapp_number: whatsappNumber
               }
             }
-          : {})
+          : isRecordingsFeature(item)
+            ? {
+                settings: {
+                  ...(item.settings ?? {}),
+                  recording_playback_mode: draft.recordingPlaybackMode
+                }
+              }
+            : {})
       };
 
       await updateFeature.mutateAsync({
@@ -156,7 +190,7 @@ export function AdminFeatureControlPage() {
   return (
     <div className="page-stack admin-feature-control-page">
       <PageHeader
-        description="Control which student-side modules are visible, upcoming, or hidden across the LMS."
+        description="Control student-side modules and global operational switches across the LMS."
         eyebrow="Admin operations"
         title="Feature Control"
       />
@@ -184,8 +218,8 @@ export function AdminFeatureControlPage() {
       <section className="feature-control-guidance">
         <SlidersHorizontal size={20} />
         <div>
-          <strong>Global student visibility</strong>
-          <p>Dashboard stays visible. Hidden modules are removed from student navigation and direct URLs are blocked. Upcoming modules remain visible with a coming-soon message.</p>
+          <strong>Global portal controls</strong>
+          <p>Student visibility controls manage navigation and direct URLs. System switches such as Email Delivery can pause operational actions without changing templates, history, or data access.</p>
         </div>
         <button className="segmented-button" disabled={controlsQuery.isFetching} onClick={() => void controlsQuery.refetch()} type="button">
           <RefreshCw size={16} />
@@ -197,22 +231,32 @@ export function AdminFeatureControlPage() {
         <section className="feature-control-panel" aria-label="Student module feature controls">
           <header>
             <div>
-              <span className="eyebrow">Student modules</span>
-              <h2>Visibility controls</h2>
+              <span className="eyebrow">Portal controls</span>
+              <h2>Feature controls</h2>
             </div>
-            <span>{items.length} modules</span>
+            <span>{items.length} controls</span>
           </header>
           <div className="feature-control-list">
             {items.map((item) => {
               const isWidget = isWhatsAppWidget(item);
-              const draft = drafts[item.id] ?? { status: item.status, upcomingMessage: item.upcomingMessage ?? '', whatsappNumber: getWhatsAppNumber(item) };
+              const isRecordings = isRecordingsFeature(item);
+              const isEmailService = isEmailServiceFeature(item);
+              const draft = drafts[item.id] ?? {
+                recordingPlaybackMode: getRecordingPlaybackMode(item),
+                status: item.status,
+                upcomingMessage: item.upcomingMessage ?? '',
+                whatsappNumber: getWhatsAppNumber(item)
+              };
               const dirty = isDirty(item, draft);
               const isSaving = updateFeature.isPending;
 
               return (
-                <article className={`feature-control-row ${isWidget ? 'feature-control-row--widget' : ''}`} key={item.id}>
+                <article
+                  className={`feature-control-row ${isWidget ? 'feature-control-row--widget' : ''} ${isRecordings ? 'feature-control-row--recordings' : ''} ${isEmailService ? 'feature-control-row--email' : ''}`}
+                  key={item.id}
+                >
                   <div className="feature-control-row__module">
-                    <div className="feature-control-row__icon">{item.isCore ? <LockKeyhole size={17} /> : statusIcon(item.status)}</div>
+                    <div className="feature-control-row__icon">{isEmailService ? <Mail size={17} /> : item.isCore ? <LockKeyhole size={17} /> : statusIcon(item.status)}</div>
                     <div>
                       <h2>{item.studentLabel}</h2>
                       <p>{item.studentPath}</p>
@@ -232,11 +276,11 @@ export function AdminFeatureControlPage() {
                         </option>
                       ))}
                     </select>
-                    <span>{statusOptions.find((option) => option.value === draft.status)?.description}</span>
+                    <span>{getStatusDescription(item, draft.status)}</span>
                   </label>
 
                   <label className="feature-control-field feature-control-field--message">
-                    {isWidget ? 'Widget help text' : 'Upcoming message'}
+                    {isWidget ? 'Widget help text' : isEmailService ? 'Paused message' : 'Upcoming message'}
                     <textarea
                       disabled={item.isCore || isSaving}
                       maxLength={500}
@@ -262,6 +306,17 @@ export function AdminFeatureControlPage() {
                     </label>
                   ) : null}
 
+                  {isRecordings ? (
+                    <label className="feature-control-field feature-control-field--playback">
+                      Recording playback mode
+                      <select disabled={isSaving} value={draft.recordingPlaybackMode} onChange={(event) => updateDraft(item.id, { recordingPlaybackMode: event.target.value as RecordingPlaybackMode })}>
+                        <option value="external">Open YouTube / external link</option>
+                        <option value="popup">In-portal popup player</option>
+                      </select>
+                      <span>Global setting for all student recording links. Non-YouTube URLs will still open externally.</span>
+                    </label>
+                  ) : null}
+
                   <div className="feature-control-row__meta">
                     <span>Updated</span>
                     <strong>{formatDate(item.updatedAt)}</strong>
@@ -283,7 +338,7 @@ export function AdminFeatureControlPage() {
 
       <section className="feature-control-safety-note">
         <ShieldCheck size={16} />
-        <span>Feature Control changes affect student navigation globally. Content permissions and student data access rules remain handled separately by each module.</span>
+        <span>Feature Control changes affect global portal behavior. Email Delivery pauses real outbound sends only; recipient previews, templates, history, permissions, and student data remain unchanged.</span>
       </section>
     </div>
   );

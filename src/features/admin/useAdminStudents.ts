@@ -179,6 +179,29 @@ export type AdminStudentAccessPreview = {
   studentName: string;
 };
 
+export type AdminStudentRosterSnapshot = {
+  createdAt?: string;
+  createdBy?: string;
+  id: string;
+  restoredAt?: string | null;
+  restoredBy?: string | null;
+  restoreNote?: string | null;
+  snapshotDate: string;
+  studentCount: number;
+};
+
+export type AdminStudentRosterSnapshotCreateResult = {
+  created: boolean;
+  item: AdminStudentRosterSnapshot;
+};
+
+export type AdminStudentRosterRestoreResult = {
+  item: AdminStudentRosterSnapshot;
+  restoredStudents: number;
+  skippedStudents: number;
+  status: 'restored';
+};
+
 export function useAdminStudents(query: AdminStudentsQuery) {
   const { accessToken } = useAuth();
   const limit = query.limit ?? 25;
@@ -212,6 +235,66 @@ export function useAdminStudents(query: AdminStudentsQuery) {
   });
 }
 
+export function useAdminStudentsAll(query: AdminStudentsQuery) {
+  const { accessToken } = useAuth();
+  const programKey = query.programKey?.trim();
+  const search = query.search?.trim();
+  const sort = query.sort?.trim();
+  const direction = query.direction;
+  const status = query.status ?? 'all';
+  const cohortName = query.cohortName?.trim();
+
+  return useQuery({
+    enabled: Boolean(accessToken) && query.enabled === true,
+    queryFn: async () => {
+      const allItems: AdminStudent[] = [];
+      let currentPage = 1;
+      let latestResponse: PaginatedResponse<AdminStudent> | null = null;
+
+      do {
+        latestResponse = await apiGet<PaginatedResponse<AdminStudent>>('/admins/students', {
+          accessToken: accessToken ?? undefined,
+          query: {
+            cohortName,
+            direction,
+            limit: 500,
+            page: currentPage,
+            programKey,
+            search,
+            sort,
+            status
+          }
+        });
+        allItems.push(...latestResponse.items);
+        currentPage += 1;
+      } while (latestResponse.hasNextPage && currentPage <= 100);
+
+      return latestResponse
+        ? {
+            ...latestResponse,
+            hasNextPage: false,
+            hasPreviousPage: false,
+            items: allItems,
+            page: 1,
+            total: allItems.length,
+            totalPages: 1
+          }
+        : {
+            hasNextPage: false,
+            hasPreviousPage: false,
+            items: allItems,
+            limit: 500,
+            page: 1,
+            total: 0,
+            totalPages: 1
+          };
+    },
+    queryKey: ['admin-students-all', accessToken, status, search, cohortName, programKey, sort, direction],
+    placeholderData: keepPreviousData,
+    staleTime: 60_000
+  });
+}
+
 export function useAdminStudentCollegeOptions() {
   const { accessToken } = useAuth();
 
@@ -223,6 +306,52 @@ export function useAdminStudentCollegeOptions() {
       }),
     queryKey: ['admin-student-college-options', accessToken],
     staleTime: 5 * 60_000
+  });
+}
+
+export function useAdminStudentRosterSnapshots(enabled = true) {
+  const { accessToken } = useAuth();
+
+  return useQuery({
+    enabled: Boolean(accessToken) && enabled,
+    queryFn: () =>
+      apiGet<{ items: AdminStudentRosterSnapshot[] }>('/admins/student-roster-snapshots', {
+        accessToken: accessToken ?? undefined
+      }),
+    queryKey: ['admin-student-roster-snapshots', accessToken],
+    staleTime: 60_000
+  });
+}
+
+export function useCreateAdminStudentRosterSnapshot() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      apiPost<AdminStudentRosterSnapshotCreateResult>('/admins/student-roster-snapshots', {
+        accessToken: accessToken ?? undefined
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-student-roster-snapshots'] })
+  });
+}
+
+export function useRestoreAdminStudentRosterSnapshot() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ restoreNote, snapshotId }: { restoreNote?: string; snapshotId: string }) =>
+      apiPost<AdminStudentRosterRestoreResult, { confirm: true; restoreNote?: string }>(`/admins/student-roster-snapshots/${snapshotId}/restore`, {
+        accessToken: accessToken ?? undefined,
+        body: { confirm: true, restoreNote }
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-students'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-students-all'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-student-roster-snapshots'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-student-audit-logs'] });
+    }
   });
 }
 

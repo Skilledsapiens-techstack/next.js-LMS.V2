@@ -418,7 +418,7 @@ function formatScheduleTime(item?: StudentScheduleItem) {
     return 'Time pending';
   }
 
-  const parts = [formatDate(item.date), item.time, item.durationMinutes ? `${item.durationMinutes} min` : undefined].filter(Boolean);
+  const parts = [formatDate(item.date), item.time].filter(Boolean);
   return parts.join(' · ');
 }
 
@@ -555,16 +555,16 @@ export function StudentDashboardPage() {
           </header>
 
           <div className="student-profile-section student-profile-section--training">
-            <div className="student-profile-field">
-              <span>Live Project Role</span>
-              <div className="student-training-programs">
-                {liveProjectRoles.length ? (
-                  liveProjectRoles.map((role) => <strong key={role}>{role}</strong>)
-                ) : (
-                  <strong>Live project role not assigned</strong>
-                )}
+            {liveProjectRoles.length > 0 ? (
+              <div className="student-profile-field">
+                <span className="student-profile-field__role-label">Your Live Project Leadership Role</span>
+                <ul className="student-training-programs">
+                  {liveProjectRoles.map((role) => (
+                    <li key={role}>{role}</li>
+                  ))}
+                </ul>
               </div>
-            </div>
+            ) : null}
             <div className="student-home-actions" aria-label="Learning shortcuts">
               <Link className="student-action student-action--primary" to="/student/schedule">
                 <CalendarDays size={18} />
@@ -584,11 +584,6 @@ export function StudentDashboardPage() {
                   <span>Your Tagged Cohort(s) Name</span>
                   <p>{cohortNames.length ? cohortNames.join(', ') : 'Cohort pending'}</p>
                 </div>
-                <div className="student-live-project-role-block">
-                  <span>Your Corporate Training Cohort Category</span>
-                  <p>{trainingProgramNames.length ? trainingProgramNames.join(', ') : 'Training cohort category pending'}</p>
-                </div>
-                <p className="student-live-project-roles__note">Your live project role is mapped under this training cohort category for module access.</p>
               </div>
             </div>
           ) : null}
@@ -616,6 +611,46 @@ export function StudentDashboardPage() {
           ) : null}
         </div>
       </section>
+
+      {showLeadershipGuidance ? (
+        <section className="student-certificate-guide">
+          <header>
+            <div>
+              <span className="eyebrow">Certificate path</span>
+              <h2>Training, project, and mentorship at a glance</h2>
+            </div>
+            {certificateGuidance ? (
+              <button className="student-guidance-button" onClick={() => setSelectedGuidance(certificateGuidance)} type="button">
+                <Info size={16} />
+                Details
+              </button>
+            ) : null}
+          </header>
+          <div className="student-certificate-guide__items">
+            <article>
+              <GraduationCap size={18} />
+              <div>
+                <strong>Training Certificate</strong>
+                <span>Based on leadership training module completion.</span>
+              </div>
+            </article>
+            <article>
+              <FileCheck2 size={18} />
+              <div>
+                <strong>Live Project Certificate</strong>
+                <span>Based on approved project report submission.</span>
+              </div>
+            </article>
+            <article>
+              <BookOpen size={18} />
+              <div>
+                <strong>Placement Mentorship</strong>
+                <span>Career guidance support. No separate certificate.</span>
+              </div>
+            </article>
+          </div>
+        </section>
+      ) : null}
 
       <section className="student-action-center" aria-label="Student Action Center">
         <div className="student-action-center__header">
@@ -676,12 +711,12 @@ export function StudentDashboardPage() {
             </div>
             <div className="student-action-card__content">
               <span>Live project</span>
-              <h3>{liveProjectRoles.length ? liveProjectRoles.join(', ') : 'Role pending'}</h3>
-              <p>{scopedCounts.projects ? `${scopedCounts.projects} project item${scopedCounts.projects === 1 ? '' : 's'} available for your access.` : 'Project work will appear after assignment.'}</p>
+              <h3>{scopedCounts.projects} project{scopedCounts.projects === 1 ? '' : 's'} available</h3>
+              <p>{scopedCounts.projects ? 'Open your Live Project Hub to view assigned project work and submissions.' : 'Project work will appear after assignment.'}</p>
             </div>
             <div className="student-action-card__meta">
               <strong>{scopedCounts.projects}</strong>
-              <span>items</span>
+              <span>projects available</span>
             </div>
           </Link>
 
@@ -701,46 +736,6 @@ export function StudentDashboardPage() {
           </Link>
         </div>
       </section>
-
-      {showLeadershipGuidance ? (
-        <section className="student-certificate-guide">
-          <header>
-            <div>
-              <span className="eyebrow">Certificate path</span>
-              <h2>Training, project, and mentorship at a glance</h2>
-            </div>
-            {certificateGuidance ? (
-              <button className="student-guidance-button" onClick={() => setSelectedGuidance(certificateGuidance)} type="button">
-                <Info size={16} />
-                Details
-              </button>
-            ) : null}
-          </header>
-          <div className="student-certificate-guide__items">
-            <article>
-              <GraduationCap size={18} />
-              <div>
-                <strong>Training Certificate</strong>
-                <span>Based on leadership program module completion.</span>
-              </div>
-            </article>
-            <article>
-              <FileCheck2 size={18} />
-              <div>
-                <strong>Live Project Certificate</strong>
-                <span>Based on approved project report submission.</span>
-              </div>
-            </article>
-            <article>
-              <BookOpen size={18} />
-              <div>
-                <strong>Placement Mentorship</strong>
-                <span>Career guidance support. No separate certificate.</span>
-              </div>
-            </article>
-          </div>
-        </section>
-      ) : null}
 
       <section className="student-home-grid student-home-grid--three">
         <article className="student-panel">

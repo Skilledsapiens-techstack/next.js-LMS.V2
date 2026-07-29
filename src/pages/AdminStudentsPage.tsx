@@ -1,9 +1,10 @@
-import { CheckSquare, ClipboardPaste, Download, Eye, FileUp, Link2, Mail, Pencil, Plus, RefreshCw, Search, Square, UserCheck, Users, X } from 'lucide-react';
+import { ArchiveRestore, CheckSquare, ClipboardPaste, Download, Eye, FileUp, Link2, Mail, Pencil, Plus, RefreshCw, Search, Square, UserCheck, Users, X } from 'lucide-react';
 import { DragEvent, FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { Sheet, SheetData } from 'write-excel-file/browser';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
+import { PortalToast } from '../components/PortalToast';
 import { StatusBadge } from '../components/StatusBadge';
 import { hasAdminPermission } from '../auth/adminPermissions';
 import { useAdminProfile } from '../features/admin/useAdminDashboard';
@@ -16,14 +17,18 @@ import {
   AdminStudentsBulkPayload,
   useAdminStudentAuthStatuses,
   useAdminStudentCollegeOptions,
+  useAdminStudentRosterSnapshots,
   useAdminStudentAttemptLimit,
   useAdminStudentAccessPreview,
   useAdminStudents,
+  useAdminStudentsAll,
   useBackfillAdminStudentAuthLinks,
   useBulkUpdateAdminStudents,
+  useCreateAdminStudentRosterSnapshot,
   useExportAdminStudents,
   useImportAdminStudents,
   useResendAdminStudentInvite,
+  useRestoreAdminStudentRosterSnapshot,
   useSaveAdminStudent,
   useUpdateAdminStudent,
   useUpdateAdminStudentAttemptLimit,
@@ -518,6 +523,23 @@ function isFailureMessage(message: string) {
   return /\b(could not|failed|invalid|unavailable|error|skipped)\b/i.test(message);
 }
 
+function actionToastMeta(message: string): { title: string; tone: 'error' | 'success' | 'warning' } {
+  const authLinkSummary = message.match(/^Auth link check finished:\s*(\d+)\s+linked,\s*(\d+)\s+skipped(?:,\s*(\d+)\s+failed)?\.$/i);
+  if (authLinkSummary) {
+    const linked = Number(authLinkSummary[1]);
+    const skipped = Number(authLinkSummary[2]);
+    const failed = Number(authLinkSummary[3] ?? 0);
+
+    if (failed > 0) return { title: 'Action failed', tone: 'error' };
+    if (linked > 0) return { title: 'Action complete', tone: 'success' };
+    if (skipped > 0) return { title: 'Sync completed with no changes', tone: 'warning' };
+  }
+
+  return isFailureMessage(message)
+    ? { title: 'Action failed', tone: 'error' }
+    : { title: 'Action complete', tone: 'success' };
+}
+
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
     <div className="student-detail-field">
@@ -710,6 +732,12 @@ type PendingStudentStatusChange = {
   student: AdminStudent;
 };
 
+type PendingRosterRestore = {
+  snapshotDate: string;
+  snapshotId: string;
+  studentCount: number;
+};
+
 const emptyEnrollStudentForm: EnrollStudentForm = {
   active: 'yes',
   altEmail: '',
@@ -767,6 +795,71 @@ function studentToForm(student: AdminStudent | undefined): EnrollStudentForm {
 
 function readableError(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+const rosterRestoreOtp = '12345678910';
+
+function RosterRestoreOtpModal({
+  onClose,
+  onConfirm,
+  pending,
+  submitting
+}: {
+  onClose: () => void;
+  onConfirm: () => void;
+  pending: PendingRosterRestore;
+  submitting: boolean;
+}) {
+  const [otp, setOtp] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const isOtpValid = otp.trim() === rosterRestoreOtp;
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!isOtpValid) {
+      setError('Invalid OTP. Enter the correct restore OTP to continue.');
+      return;
+    }
+    setError(null);
+    onConfirm();
+  }
+
+  return (
+    <div className="student-modal-backdrop" role="presentation">
+      <section aria-labelledby="roster-restore-otp-title" aria-modal="true" className="student-modal roster-restore-modal" role="dialog">
+        <form onSubmit={handleSubmit}>
+          <header className="student-modal__header">
+            <div>
+              <span className="section-eyebrow">Restore protection</span>
+              <h2 id="roster-restore-otp-title">Enter restore OTP</h2>
+            </div>
+            <button aria-label="Close restore OTP" className="student-modal__icon-button" disabled={submitting} onClick={onClose} type="button">
+              <X size={26} />
+            </button>
+          </header>
+          <div className="student-modal__body roster-restore-modal__body">
+            <p>
+              You are about to restore the student roster to <strong>{formatDate(pending.snapshotDate)}</strong> for <strong>{pending.studentCount}</strong> student{pending.studentCount === 1 ? '' : 's'}.
+            </p>
+            <label className="roster-restore-modal__field">
+              <span>OTP</span>
+              <input autoFocus inputMode="numeric" onChange={(event) => setOtp(event.target.value)} placeholder="Enter restore OTP" type="password" value={otp} />
+            </label>
+            {error ? <p className="roster-restore-modal__error">{error}</p> : null}
+            <p className="roster-restore-modal__hint">This check is added to prevent accidental roster restore actions.</p>
+          </div>
+          <footer className="student-modal__footer">
+            <button className="segmented-button" disabled={submitting} onClick={onClose} type="button">
+              Cancel
+            </button>
+            <button className="segmented-button segmented-button--danger" disabled={!isOtpValid || submitting} type="submit">
+              {submitting ? 'Restoring...' : 'Continue'}
+            </button>
+          </footer>
+        </form>
+      </section>
+    </div>
+  );
 }
 
 function isValidEmail(value: string) {
@@ -1811,6 +1904,7 @@ export function AdminStudentsPage() {
   const [editingStudent, setEditingStudent] = useState<AdminStudent | null>(null);
   const [attemptStudent, setAttemptStudent] = useState<AdminStudent | null>(null);
   const [pendingStatusChange, setPendingStatusChange] = useState<PendingStudentStatusChange | null>(null);
+  const [pendingRosterRestore, setPendingRosterRestore] = useState<PendingRosterRestore | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [importPreview, setImportPreview] = useState<StudentImportPreview | null>(null);
@@ -1833,7 +1927,7 @@ export function AdminStudentsPage() {
   const canInviteStudents = Boolean(adminRole) && hasAdminPermission(adminRole, 'admin.students.invite', adminPermissions);
   const hasAuthInviteFilter = authInvite !== 'all';
   const studentsQuery = useAdminStudents({ page, programKey, search, status, cohortName, limit, sort, direction, enabled: !hasAuthInviteFilter });
-  const authFilterStudentsQuery = useAdminStudents({ page: 1, programKey, search, status, cohortName, limit: 500, sort, direction, enabled: hasAuthInviteFilter });
+  const authFilterStudentsQuery = useAdminStudentsAll({ programKey, search, status, cohortName, sort, direction, enabled: hasAuthInviteFilter });
   const studentCollegeOptionsQuery = useAdminStudentCollegeOptions();
   const exportStudents = useExportAdminStudents();
   const saveStudent = useSaveAdminStudent();
@@ -1841,6 +1935,9 @@ export function AdminStudentsPage() {
   const updateStudentStatus = useUpdateAdminStudentStatus();
   const importStudents = useImportAdminStudents();
   const bulkUpdateStudents = useBulkUpdateAdminStudents();
+  const rosterSnapshotsQuery = useAdminStudentRosterSnapshots(canManageStudents);
+  const createRosterSnapshot = useCreateAdminStudentRosterSnapshot();
+  const restoreRosterSnapshot = useRestoreAdminStudentRosterSnapshot();
   const backfillAuthLinks = useBackfillAdminStudentAuthLinks();
   const resendStudentInvite = useResendAdminStudentInvite();
   const programsQuery = useAdminPrograms({ limit: 100, page: 1, status: 'all' });
@@ -2328,6 +2425,43 @@ export function AdminStudentsPage() {
     await runBulkUpdate({ resendInvite: true }, 'Fresh password email send finished');
   }
 
+  async function handleCreateRosterSnapshot() {
+    try {
+      const result = await createRosterSnapshot.mutateAsync();
+      setActionMessage(result.created ? `Student roster backup created for ${formatDate(result.item.snapshotDate)}.` : `Student roster backup already exists for ${formatDate(result.item.snapshotDate)}.`);
+    } catch (error) {
+      setActionMessage(readableError(error, 'Student roster backup could not be created.'));
+    }
+  }
+
+  async function handleRestoreRosterSnapshot(snapshotId: string, snapshotDate: string, studentCount: number) {
+    setPendingRosterRestore({ snapshotDate, snapshotId, studentCount });
+  }
+
+  async function confirmRestoreRosterSnapshot() {
+    if (!pendingRosterRestore) return;
+    const { snapshotDate, snapshotId, studentCount } = pendingRosterRestore;
+    const confirmed = window.prompt(`Restore student roster to ${formatDate(snapshotDate)} for ${studentCount} student${studentCount === 1 ? '' : 's'}? Type RESTORE to confirm.`);
+    if (confirmed !== 'RESTORE') {
+      setPendingRosterRestore(null);
+      setActionMessage('Student roster restore cancelled.');
+      return;
+    }
+
+    try {
+      const result = await restoreRosterSnapshot.mutateAsync({
+        restoreNote: `Restored from Students page backup ${snapshotDate}`,
+        snapshotId
+      });
+      setSelectedStudentIds([]);
+      setPendingRosterRestore(null);
+      setActionMessage(`Student roster restored from ${formatDate(snapshotDate)}: ${result.restoredStudents} students restored${result.skippedStudents ? `, ${result.skippedStudents} ignored` : ''}.`);
+      await activeStudentsQuery.refetch();
+    } catch (error) {
+      setActionMessage(readableError(error, 'Student roster restore failed.'));
+    }
+  }
+
   async function handleResendInvite(student: AdminStudent) {
     try {
       await resendStudentInvite.mutateAsync(student.id);
@@ -2435,14 +2569,58 @@ export function AdminStudentsPage() {
         </div>
       </section>
 
+      {canManageStudents ? (
+        <section className="student-roster-rollback" aria-label="Student roster rollback">
+          <div className="student-roster-rollback__header">
+            <div>
+              <span className="section-eyebrow">Roster rollback</span>
+              <h2>Student roster backups</h2>
+              <p>Restore roster profile fields, cohort tags, and program tags from the latest three daily backups.</p>
+            </div>
+            <button className="segmented-button" disabled={createRosterSnapshot.isPending} onClick={() => void handleCreateRosterSnapshot()} type="button">
+              <RefreshCw size={16} />
+              {createRosterSnapshot.isPending ? 'Creating...' : "Create today's backup"}
+            </button>
+          </div>
+          <div className="student-roster-rollback__list">
+            {rosterSnapshotsQuery.isLoading ? (
+              <span className="student-roster-rollback__empty">Loading backups...</span>
+            ) : rosterSnapshotsQuery.data?.items.length ? (
+              rosterSnapshotsQuery.data.items.map((snapshot) => (
+                <article key={snapshot.id} className="student-roster-rollback__item">
+                  <ArchiveRestore size={18} />
+                  <div>
+                    <strong>{formatDate(snapshot.snapshotDate)}</strong>
+                    <small>
+                      {snapshot.studentCount} students
+                      {snapshot.createdBy ? ` · by ${snapshot.createdBy}` : ''}
+                      {snapshot.restoredAt ? ` · restored ${formatDateTime(snapshot.restoredAt)}` : ''}
+                    </small>
+                  </div>
+                  <button
+                    className="segmented-button segmented-button--danger"
+                    disabled={restoreRosterSnapshot.isPending}
+                    onClick={() => void handleRestoreRosterSnapshot(snapshot.id, snapshot.snapshotDate, snapshot.studentCount)}
+                    type="button"
+                  >
+                    Restore
+                  </button>
+                </article>
+              ))
+            ) : (
+              <span className="student-roster-rollback__empty">No roster backups found yet.</span>
+            )}
+          </div>
+        </section>
+      ) : null}
+
       {actionMessage ? (
-        <div className={`admin-student-toast ${isFailureMessage(actionMessage) ? 'admin-student-toast--error' : 'admin-student-toast--success'}`} role="status">
-          <strong>{isFailureMessage(actionMessage) ? 'Action failed' : 'Action complete'}</strong>
-          <span>{actionMessage}</span>
-          <button aria-label="Dismiss message" onClick={() => setActionMessage(null)} type="button">
-            <X size={16} />
-          </button>
-        </div>
+        <PortalToast
+          message={actionMessage}
+          onDismiss={() => setActionMessage(null)}
+          title={actionToastMeta(actionMessage).title}
+          tone={actionToastMeta(actionMessage).tone}
+        />
       ) : null}
 
       {selectedCount > 0 ? (
@@ -2708,6 +2886,14 @@ export function AdminStudentsPage() {
           selectedCount={selectedCount}
           setForm={setBulkAssignForm}
           submitting={bulkUpdateStudents.isPending}
+        />
+      ) : null}
+      {pendingRosterRestore && canManageStudents ? (
+        <RosterRestoreOtpModal
+          onClose={() => setPendingRosterRestore(null)}
+          onConfirm={() => void confirmRestoreRosterSnapshot()}
+          pending={pendingRosterRestore}
+          submitting={restoreRosterSnapshot.isPending}
         />
       ) : null}
       {pendingStatusChange && canManageStudents ? (

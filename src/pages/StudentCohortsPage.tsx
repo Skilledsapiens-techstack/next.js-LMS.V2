@@ -36,6 +36,50 @@ function displayProgramName(cohort: StudentCohort) {
   return 'Enrolled Program';
 }
 
+function displayLearningTrackName(cohort: StudentCohort) {
+  const key = programKeyFor(cohort);
+  const label = displayProgramName(cohort).toLowerCase();
+  if (key.includes('smlp') || label.includes('sales') || label.includes('marketing')) return 'Marketing Track';
+  if (key.includes('mclp') || label.includes('management consulting')) return 'Consulting & Business Analyst Track';
+  if (key.includes('hrlp') || label.includes('human resources') || label.includes('hr leadership')) return 'HR Track';
+  if (key.includes('pevc') || label.includes('private equity') || label.includes('venture capital')) return 'Finance - Private Equity & Venture Capital';
+  if (key.includes('qf') || label.includes('quantitative finance') || label.includes('portfolio')) return 'Finance - Quantitative Finance';
+  if (key.includes('er') || label.includes('equity research') || label.includes('financial modeling')) return 'Finance - Equity Research & Financial Modeling';
+  if (key.includes('pmlp') || label.includes('product management')) return 'Product Management Track';
+  return displayProgramName(cohort);
+}
+
+function normalizeLabelKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function humanizeRoleId(value: string) {
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function uniqueLabels(values: Array<string | undefined>) {
+  const seen = new Set<string>();
+  return values
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value))
+    .filter((value) => {
+      const key = normalizeLabelKey(value);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function displayLiveProjectRoles(cohort: StudentCohort) {
+  const namedRoles = uniqueLabels(cohort.liveProjectRoles ?? []);
+  if (namedRoles.length > 0) return namedRoles.join(', ');
+  return uniqueLabels((cohort.liveProjectRoleIds ?? []).map(humanizeRoleId)).join(', ');
+}
+
 function programKeyFor(cohort: StudentCohort) {
   return (cohort.domainKey ?? cohort.programKey ?? '').trim().toLowerCase();
 }
@@ -59,7 +103,7 @@ function certificateMatchesProgram(certificate: { cohortName?: string; programKe
 
 function programLink(path: string, cohort: StudentCohort) {
   const programKey = programKeyFor(cohort);
-  return programKey && path === '/student/resources' ? `${path}?programKey=${encodeURIComponent(programKey)}` : path;
+  return programKey && (path === '/student/resources' || path === '/student/recordings') ? `${path}?programKey=${encodeURIComponent(programKey)}` : path;
 }
 
 function normalizeExternalLink(value: string | undefined) {
@@ -78,23 +122,35 @@ type ProgramStats = {
 
 function ProgramCard({ cohort, stats }: { cohort: StudentCohort; stats: ProgramStats }) {
   const programTitle = displayProgramName(cohort);
+  const learningTrackTitle = displayLearningTrackName(cohort);
+  const liveProjectRoles = displayLiveProjectRoles(cohort);
+  const hasLiveProjectRole = Boolean(liveProjectRoles);
+  const cardTitle = hasLiveProjectRole ? liveProjectRoles : programTitle;
   const whatsappLink = normalizeExternalLink(cohort.whatsappLink);
   const whatsappLabel = cohort.whatsappGroupName ? `WhatsApp Group: ${cohort.whatsappGroupName}` : 'WhatsApp Group';
 
   return (
-    <article className="program-card">
+    <article className={`program-card${hasLiveProjectRole ? ' program-card--role-based' : ''}`}>
       <div className="program-card__head">
         <div className="program-card__icon" aria-hidden="true">
           <GraduationCap size={24} />
         </div>
         <div>
-          <span className="eyebrow">Enrolled program</span>
-          <h2>{programTitle}</h2>
+          <span className="eyebrow">{hasLiveProjectRole ? 'Your role' : 'Enrolled program'}</span>
+          <h2>{cardTitle}</h2>
         </div>
         <StatusBadge tone={statusTone(cohort.status)}>{formatStatus(cohort.status)}</StatusBadge>
       </div>
 
       <div className="program-card__body">
+        {hasLiveProjectRole ? (
+          <div className="program-card__learning-map">
+            <p>
+              <strong>Learning Track</strong>
+              <span>{learningTrackTitle}</span>
+            </p>
+          </div>
+        ) : null}
         <p className="program-card__cohort-name">
           <strong>Your Cohort Name:</strong> {cohort.name}
         </p>
@@ -105,7 +161,7 @@ function ProgramCard({ cohort, stats }: { cohort: StudentCohort; stats: ProgramS
         ) : null}
       </div>
 
-      <div className="program-card__stats" aria-label={`${programTitle} learning counts`}>
+      <div className="program-card__stats" aria-label={`${cardTitle} learning counts`}>
         <span>
           <b>{stats.recordings}</b>
           Watch Recordings
@@ -116,12 +172,12 @@ function ProgramCard({ cohort, stats }: { cohort: StudentCohort; stats: ProgramS
         </span>
       </div>
 
-      <div className="program-card__actions" aria-label={`${programTitle} shortcuts`}>
+      <div className="program-card__actions" aria-label={`${cardTitle} shortcuts`}>
         <Link className="student-action" to="/student/schedule">
           <CalendarDays size={16} />
           Upcoming Workshops
         </Link>
-        <Link className="student-action" to="/student/recordings">
+        <Link className="student-action" to={programLink('/student/recordings', cohort)}>
           <PlayCircle size={16} />
           Watch Recordings
         </Link>

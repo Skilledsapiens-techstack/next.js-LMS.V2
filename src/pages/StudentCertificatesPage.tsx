@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react';
+import { ExternalLink } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { StudentCertificate, useGenerateStudentCertificatePdf, useStudentCertificates } from '../features/student/useStudentCertificates';
+
+const certificateVerificationUrl = 'https://skilledsapiens.com/verify-your-certificate/';
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
@@ -125,6 +128,15 @@ function CertificateCard({
   );
 }
 
+function CertificateVerifyAction() {
+  return (
+    <a className="student-action student-action--primary certificate-verify-action" href={certificateVerificationUrl} rel="noreferrer" target="_blank">
+      <ExternalLink size={16} />
+      Verify Your Certificate
+    </a>
+  );
+}
+
 export function StudentCertificatesPage() {
   const [searchParams] = useSearchParams();
   const page = asPositiveInteger(searchParams.get('page'), 1);
@@ -180,7 +192,7 @@ export function StudentCertificatesPage() {
   if (certificatesQuery.isLoading) {
     return (
       <div className="page-stack">
-        <PageHeader description="Loading certificates linked to your student profile." eyebrow="Student certificates" title="Certificates" />
+        <PageHeader actions={<CertificateVerifyAction />} description="Loading certificates linked to your student profile." eyebrow="Student certificates" title="Certificates" />
         <LoadingState />
       </div>
     );
@@ -189,7 +201,7 @@ export function StudentCertificatesPage() {
   if (certificatesQuery.isError) {
     return (
       <div className="page-stack">
-        <PageHeader description="Certificates could not be loaded right now." eyebrow="Student certificates" title="Certificates unavailable" />
+        <PageHeader actions={<CertificateVerifyAction />} description="Certificates could not be loaded right now." eyebrow="Student certificates" title="Certificates unavailable" />
         <ErrorState />
       </div>
     );
@@ -197,7 +209,7 @@ export function StudentCertificatesPage() {
 
   return (
     <div className="page-stack">
-      <PageHeader description="Verify your issued certificates and track certificate readiness." eyebrow="Verified achievements" title="My Certificates" />
+      <PageHeader actions={<CertificateVerifyAction />} description="Verify your issued certificates and track certificate readiness." eyebrow="Verified achievements" title="My Certificates" />
 
       {data && data.items.length > 0 ? (
         <section className="certificate-card-grid" aria-label="Certificate records">

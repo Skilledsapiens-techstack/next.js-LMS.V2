@@ -18,6 +18,7 @@ const resourceTypeOptions = [
   { label: 'Placement Resource', value: 'placement_resource' },
   { label: 'Assignment Reference', value: 'assignment_reference' }
 ];
+const resourceTypeOrder = resourceTypeOptions.map((option) => option.value);
 
 const bookmarkStorageKey = 'skilled-sapiens-student-resource-bookmarks';
 
@@ -36,11 +37,10 @@ function formatDate(value: string | undefined) {
 }
 
 function formatPrice(resource: StudentResource) {
-  if (resource.price == null) {
-    return resource.accessType === 'paid' ? 'Paid' : 'Free';
-  }
+  const price = Number(resource.price);
+  if (resource.price == null || !Number.isFinite(price) || price <= 0) return resource.accessType === 'paid' ? 'Paid' : '';
 
-  return `${resource.currency ?? 'INR'} ${resource.price}`;
+  return `${resource.currency ?? 'INR'} ${price}`;
 }
 
 function hasResourceAccess(resource: StudentResource) {
@@ -147,7 +147,7 @@ function ResourceCard({
       <div className="resource-card__body">
         <div className="resource-card__header">
           <StatusBadge tone={resource.locked ? 'warning' : 'safe'}>{resource.locked ? 'Locked' : 'Available'}</StatusBadge>
-          <StatusBadge>{formatPrice(resource)}</StatusBadge>
+          {priceLabel ? <StatusBadge>{priceLabel}</StatusBadge> : null}
           {isPaymentPending ? <StatusBadge tone="warning">Payment pending</StatusBadge> : null}
           {isRecentlyAdded(resource) ? <StatusBadge tone="safe">Recently added</StatusBadge> : null}
         </div>
@@ -216,6 +216,7 @@ export function StudentResourcesPage() {
   const [isCheckingAccess, setIsCheckingAccess] = useState(false);
   const [bookmarkedResourceIds, setBookmarkedResourceIds] = useState<string[]>([]);
   const resourcesQuery = useStudentResources({ locked: 'all', page, programKey, resourceType });
+  const resourceTypeOptionsQuery = useStudentResources({ locked: 'all', limit: 500, page: 1, programKey });
   const paymentOrdersQuery = useStudentPaymentOrders({ itemType: 'resource', limit: 100, page: 1, status: 'all' });
   const data = resourcesQuery.data;
   const paymentOrders = paymentOrdersQuery.data?.items ?? [];
@@ -242,6 +243,22 @@ export function StudentResourcesPage() {
   );
   const bookmarkedResources = useMemo(() => sortedResources.filter((resource) => bookmarkedResourceIds.includes(resourceBookmarkId(resource))), [bookmarkedResourceIds, sortedResources]);
   const groupedResources = useMemo(() => groupResourcesByType(sortedResources), [sortedResources]);
+  const availableResourceTypeOptions = useMemo(() => {
+    const counts = resourceTypeOptionsQuery.data?.summary?.typeCounts ?? {};
+    const typeOptions = Object.entries(counts)
+      .filter(([, count]) => count > 0)
+      .map(([value]) => ({
+        label: resourceTypeOptions.find((option) => option.value === value)?.label ?? formatReadableLabel(value),
+        value
+      }))
+      .sort((left, right) => {
+        const leftRank = resourceTypeOrder.includes(left.value) ? resourceTypeOrder.indexOf(left.value) : resourceTypeOrder.length;
+        const rightRank = resourceTypeOrder.includes(right.value) ? resourceTypeOrder.indexOf(right.value) : resourceTypeOrder.length;
+        if (leftRank !== rightRank) return leftRank - rightRank;
+        return left.label.localeCompare(right.label);
+      });
+    return [{ label: 'All resource types', value: '' }, ...typeOptions];
+  }, [resourceTypeOptionsQuery.data?.summary?.typeCounts]);
   const hasPendingPayment = useMemo(() => pageResources.some((resource) => matchingPaymentOrder(resource, paymentOrders)?.status === 'created'), [pageResources, paymentOrders]);
 
   useEffect(() => {
@@ -252,6 +269,17 @@ export function StudentResourcesPage() {
       setBookmarkedResourceIds([]);
     }
   }, []);
+
+  useEffect(() => {
+    if (resourceTypeOptionsQuery.isLoading || resourceTypeOptionsQuery.isFetching || !resourceType) return;
+    const isVisibleOption = availableResourceTypeOptions.some((option) => option.value === resourceType);
+    if (isVisibleOption) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('page', '1');
+    next.delete('resourceType');
+    setResourceTypeInput('');
+    setSearchParams(next);
+  }, [availableResourceTypeOptions, resourceType, resourceTypeOptionsQuery.isFetching, resourceTypeOptionsQuery.isLoading, searchParams, setSearchParams]);
 
   function updateBookmarks(nextIds: string[]) {
     setBookmarkedResourceIds(nextIds);
@@ -353,7 +381,7 @@ export function StudentResourcesPage() {
             Resource type
           </label>
           <select id="resource-type" value={resourceTypeInput} onChange={(event) => setResourceTypeInput(event.target.value)}>
-            {resourceTypeOptions.map((option) => (
+            {availableResourceTypeOptions.map((option) => (
               <option key={option.value || 'all'} value={option.value}>
                 {option.label}
               </option>

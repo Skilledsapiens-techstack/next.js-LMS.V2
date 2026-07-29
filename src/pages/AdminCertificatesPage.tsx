@@ -25,6 +25,7 @@ import {
   useIssueLeadershipCertificates,
   useIssueLiveProjectCertificate,
   useIssueManualCertificate,
+  useRejectLiveProjectCertificateRequest,
   useRevokeAdminCertificate,
   useSaveCertificateProgramSetting
 } from '../features/admin/useAdminCertificates';
@@ -63,6 +64,11 @@ function addDaysInput(value: string, days: number) {
   const date = new Date(`${value}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function compareDateInput(left: string, right: string) {
+  if (!isValidDateInput(left) || !isValidDateInput(right)) return 0;
+  return left.localeCompare(right);
 }
 
 function formatDate(value: string | undefined) {
@@ -213,28 +219,61 @@ function moduleTextFromSetting(setting: AdminCertificateProgramSetting | undefin
   return setting?.modulesCovered?.length ? setting.modulesCovered.join('\n') : fallback;
 }
 
+function defaultLiveProjectStartDate(request: AdminCertificateRequest) {
+  return request.projectStartDate?.slice(0, 10) ?? request.cohortStartDate?.slice(0, 10) ?? '';
+}
+
+function defaultLiveProjectEndDate(request: AdminCertificateRequest) {
+  const startDate = defaultLiveProjectStartDate(request);
+  return request.projectEndDate?.slice(0, 10) ?? addDaysInput(startDate, 4 * 7 - 1);
+}
+
 function FinalIssuanceModal({
   error,
   isIssuing,
   onClose,
   onIssue,
+  projectRoles,
   request
 }: {
   error?: string;
   isIssuing: boolean;
   onClose: () => void;
   onIssue: (input: IssueLiveProjectCertificateInput) => Promise<void>;
+  projectRoles: AdminProjectRole[];
   request: AdminCertificateRequest;
 }) {
   const hasStudentDates = Boolean(request.projectStartDate && request.projectEndDate);
-  const defaultStartDate = request.projectStartDate?.slice(0, 10) ?? request.cohortStartDate?.slice(0, 10) ?? '';
-  const defaultEndDate = request.projectEndDate?.slice(0, 10) ?? addDaysInput(defaultStartDate, 4 * 7 - 1);
+  const defaultStartDate = defaultLiveProjectStartDate(request);
+  const defaultEndDate = defaultLiveProjectEndDate(request);
   const [durationMode, setDurationMode] = useState<LiveProjectDurationMode>(hasStudentDates ? 'custom' : '4');
   const [issueDate, setIssueDate] = useState(todayInputValue());
   const [sendEmail, setSendEmail] = useState(true);
   const [startDate, setStartDate] = useState(defaultStartDate);
   const [endDate, setEndDate] = useState(defaultEndDate);
+  const [projectRole, setProjectRole] = useState(request.projectRole);
+  const projectRoleOptions = useMemo(() => {
+    const options = projectRoles.map((role) => ({
+      id: role.id,
+      label: [role.name, role.category, role.status === 'inactive' ? 'Inactive' : ''].filter(Boolean).join(' · '),
+      name: role.name
+    }));
+
+    if (request.projectRole && !options.some((role) => role.name === request.projectRole)) {
+      options.push({
+        id: `current-${request.id}`,
+        label: `${request.projectRole} · Current request`,
+        name: request.projectRole
+      });
+    }
+
+    return options.sort((a, b) => a.name.localeCompare(b.name));
+  }, [projectRoles, request.id, request.projectRole]);
   const missingStartDate = !defaultStartDate;
+  const projectRoleError = projectRole.trim() ? '' : 'Project role is required before issuing certificate.';
+  const futureEndDateError = isValidDateInput(endDate) && compareDateInput(endDate, todayInputValue()) > 0
+    ? 'End date is a future date, please edit it before issuing certificate.'
+    : '';
 
   useEffect(() => {
     const nextStartDate = request.projectStartDate?.slice(0, 10) ?? request.cohortStartDate?.slice(0, 10) ?? '';
@@ -244,6 +283,7 @@ function FinalIssuanceModal({
     setSendEmail(true);
     setStartDate(nextStartDate);
     setEndDate(request.projectEndDate?.slice(0, 10) ?? addDaysInput(nextStartDate, 4 * 7 - 1));
+    setProjectRole(request.projectRole);
   }, [request]);
 
   function handleDurationModeChange(nextMode: LiveProjectDurationMode) {
@@ -260,12 +300,20 @@ function FinalIssuanceModal({
     }
   }
 
+  function handleEndDateChange(nextEndDate: string) {
+    setEndDate(nextEndDate);
+    setDurationMode('custom');
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (projectRoleError) return;
+    if (futureEndDateError) return;
     await onIssue({
       durationWeeks: durationMode === 'custom' ? undefined : Number(durationMode),
       endDate,
       issueDate,
+      projectRole: projectRole.trim(),
       requestId: request.id,
       sendEmail,
       startDate
@@ -300,7 +348,7 @@ function FinalIssuanceModal({
             </div>
             <div>
               <span>Role</span>
-              <strong>{request.projectRole}</strong>
+              <strong>{projectRole.trim() || request.projectRole}</strong>
             </div>
             <div>
               <span>Program</span>
@@ -339,9 +387,17 @@ function FinalIssuanceModal({
               <span>Student</span>
               <input readOnly value={`${request.studentName} · ${request.studentEmail}`} />
             </label>
-            <label className="certificate-field">
+            <label className={projectRoleError ? 'certificate-field certificate-field--error' : 'certificate-field'}>
               <span>Project role *</span>
-              <input readOnly value={request.projectRole} />
+              <select aria-invalid={Boolean(projectRoleError)} onChange={(event) => setProjectRole(event.target.value)} required value={projectRole}>
+                <option value="">Select project role</option>
+                {projectRoleOptions.map((role) => (
+                  <option key={role.id} value={role.name}>
+                    {role.label}
+                  </option>
+                ))}
+              </select>
+              {projectRoleError ? <small className="certificate-field__error">{projectRoleError}</small> : null}
             </label>
             <label className="certificate-field">
               <span>Cohort *</span>
@@ -362,9 +418,10 @@ function FinalIssuanceModal({
               <span>Start date *</span>
               <input onChange={(event) => handleStartDateChange(event.target.value)} required type="date" value={startDate} />
             </label>
-            <label className="certificate-field">
+            <label className={futureEndDateError ? 'certificate-field certificate-field--error' : 'certificate-field'}>
               <span>End date *</span>
-              <input onChange={(event) => setEndDate(event.target.value)} readOnly={durationMode !== 'custom'} required type="date" value={endDate} />
+              <input aria-invalid={Boolean(futureEndDateError)} onChange={(event) => handleEndDateChange(event.target.value)} required type="date" value={endDate} />
+              {futureEndDateError ? <small className="certificate-field__error">{futureEndDateError}</small> : null}
             </label>
             <label className="certificate-field">
               <span>Issue date *</span>
@@ -381,7 +438,7 @@ function FinalIssuanceModal({
           <button className="segmented-button" disabled={isIssuing} onClick={onClose} type="button">
             Cancel
           </button>
-          <button className="button-primary" disabled={isIssuing || !startDate || !endDate || !issueDate} type="submit">
+          <button className="button-primary" disabled={isIssuing || !projectRole.trim() || !startDate || !endDate || !issueDate || Boolean(futureEndDateError)} type="submit">
             {isIssuing ? 'Issuing...' : 'Issue Certificate →'}
           </button>
         </footer>
@@ -390,7 +447,29 @@ function FinalIssuanceModal({
   );
 }
 
-function RequestQueue({ isLoading, items, onReview }: { isLoading: boolean; items: AdminCertificateRequest[]; onReview: (request: AdminCertificateRequest) => void }) {
+function RequestQueue({
+  isLoading,
+  items,
+  onClearSearch,
+  onReject,
+  onReview,
+  onSearchInputChange,
+  onSearchSubmit,
+  searchInput,
+  searchTerm,
+  total
+}: {
+  isLoading: boolean;
+  items: AdminCertificateRequest[];
+  onClearSearch: () => void;
+  onReject: (request: AdminCertificateRequest) => void;
+  onReview: (request: AdminCertificateRequest) => void;
+  onSearchInputChange: (value: string) => void;
+  onSearchSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  searchInput: string;
+  searchTerm: string;
+  total: number;
+}) {
   return (
     <section className="certificate-section">
       <header className="certificate-section__header">
@@ -400,6 +479,24 @@ function RequestQueue({ isLoading, items, onReview }: { isLoading: boolean; item
         </div>
       </header>
       <div className="certificate-section__body">
+        <div className="certificate-request-toolbar">
+          <form className="certificate-request-search" onSubmit={onSearchSubmit}>
+            <label>
+              <Search size={15} />
+              <span className="sr-only">Search live project certificate requests</span>
+              <input onChange={(event) => onSearchInputChange(event.target.value)} placeholder="Search name, email, request, project..." type="search" value={searchInput} />
+            </label>
+            <button className="segmented-button" type="submit">
+              Search
+            </button>
+            {searchTerm ? (
+              <button className="segmented-button" onClick={onClearSearch} type="button">
+                Clear
+              </button>
+            ) : null}
+          </form>
+          <span>{total} matching</span>
+        </div>
         {isLoading ? <p className="certificate-muted">Loading live project certificate requests.</p> : null}
         {!isLoading && items.length === 0 ? (
           <div className="certificate-empty-inline">
@@ -444,6 +541,9 @@ function RequestQueue({ isLoading, items, onReview }: { isLoading: boolean; item
                   <button className="segmented-button" onClick={() => onReview(request)} type="button">
                     Review & Issue
                   </button>
+                  <button className="segmented-button segmented-button--danger" onClick={() => onReject(request)} type="button">
+                    Reject
+                  </button>
                 </div>
               </article>
             ))}
@@ -451,6 +551,73 @@ function RequestQueue({ isLoading, items, onReview }: { isLoading: boolean; item
         ) : null}
       </div>
     </section>
+  );
+}
+
+function RejectCertificateRequestModal({
+  error,
+  isRejecting,
+  onClose,
+  onReject,
+  reason,
+  request,
+  setReason
+}: {
+  error?: string;
+  isRejecting: boolean;
+  onClose: () => void;
+  onReject: (reason: string) => Promise<void>;
+  reason: string;
+  request: AdminCertificateRequest;
+  setReason: (reason: string) => void;
+}) {
+  const trimmedReason = reason.trim();
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (trimmedReason.length < 8) return;
+    await onReject(trimmedReason);
+  }
+
+  return (
+    <div className="student-modal-backdrop" role="presentation">
+      <form aria-labelledby="certificate-request-reject-title" aria-modal="true" className="student-modal certificate-revoke-modal" onSubmit={handleSubmit} role="dialog">
+        <header className="student-modal__header">
+          <div>
+            <span className="certificate-section-eyebrow">Reject Request</span>
+            <h2 id="certificate-request-reject-title">{request.requestNumber ?? request.requestId}</h2>
+          </div>
+          <button aria-label="Close reject request" className="student-modal__icon-button" onClick={onClose} type="button">
+            ×
+          </button>
+        </header>
+        <div className="student-modal__body">
+          <div className="certificate-muted-card certificate-muted-card--warning">
+            <ShieldCheck size={17} />
+            <span>This will remove the live project certificate request from the issuance queue. Add a clear reason for the rejection before confirming.</span>
+          </div>
+          <label className={trimmedReason.length > 0 && trimmedReason.length < 8 ? 'certificate-field certificate-field--error' : 'certificate-field'}>
+            <span>Reason *</span>
+            <textarea
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Explain why this project certificate request is being rejected."
+              required
+              value={reason}
+            />
+            {trimmedReason.length > 0 && trimmedReason.length < 8 ? <small className="certificate-field__error">Reason must be at least 8 characters.</small> : null}
+          </label>
+          {error ? <p className="admin-submission-message admin-submission-message--error">{error}</p> : null}
+        </div>
+        <footer className="student-modal__footer">
+          <button className="segmented-button" disabled={isRejecting} onClick={onClose} type="button">
+            Cancel
+          </button>
+          <button className="segmented-button segmented-button--danger" disabled={isRejecting || trimmedReason.length < 8} type="submit">
+            {isRejecting ? 'Rejecting...' : 'Reject request'}
+          </button>
+        </footer>
+      </form>
+    </div>
   );
 }
 
@@ -781,6 +948,8 @@ export function AdminCertificatesPage() {
   const [moduleStatus, setModuleStatus] = useState<'active' | 'inactive'>('active');
   const [moduleText, setModuleText] = useState('');
   const [selectedRequest, setSelectedRequest] = useState<AdminCertificateRequest | null>(null);
+  const [requestSearchInput, setRequestSearchInput] = useState('');
+  const [requestSearch, setRequestSearch] = useState('');
   const [certificateToRevoke, setCertificateToRevoke] = useState<AdminCertificate | null>(null);
   const [certificateMessage, setCertificateMessage] = useState('');
   const [manualCertificateType, setManualCertificateType] = useState<AdminCertificateType>('leadership');
@@ -798,6 +967,8 @@ export function AdminCertificatesPage() {
   const [manualProjectEndDate, setManualProjectEndDate] = useState(addDaysInput(todayInputValue(), 4 * 7 - 1));
   const [manualDurationMode, setManualDurationMode] = useState<LiveProjectDurationMode>('4');
   const [manualDuplicateOverride, setManualDuplicateOverride] = useState(false);
+  const [requestToReject, setRequestToReject] = useState<AdminCertificateRequest | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   const adminProfileQuery = useAdminProfile();
   const adminRole = adminProfileQuery.data?.role;
@@ -811,12 +982,14 @@ export function AdminCertificatesPage() {
   });
   const requestsQuery = useAdminCertificateRequests({
     adminStatus: 'pending',
-    limit: 10,
+    limit: 500,
     moderatorStatus: 'approved',
-    page: 1
+    page: 1,
+    search: requestSearch || undefined
   });
   const certificateSettingsQuery = useAdminCertificateProgramSettings();
   const issueCertificateMutation = useIssueLiveProjectCertificate();
+  const rejectCertificateRequestMutation = useRejectLiveProjectCertificateRequest();
   const issueLeadershipMutation = useIssueLeadershipCertificates();
   const issueManualMutation = useIssueManualCertificate();
   const generateCertificatePdfMutation = useGenerateAdminCertificatePdf();
@@ -828,10 +1001,10 @@ export function AdminCertificatesPage() {
     status: 'active'
   });
   const projectRolesQuery = useAdminProjectRoles({
-    enabled: canIssueCertificates && activeTab === 'manual' && manualCertificateType === 'live_project',
+    enabled: canIssueCertificates && (activeTab === 'live-projects' || (activeTab === 'manual' && manualCertificateType === 'live_project') || Boolean(selectedRequest)),
     limit: 500,
     page: 1,
-    status: 'active'
+    status: 'all'
   });
   const cohortsPageOneQuery = useAdminCohorts({
     limit: 100,
@@ -940,6 +1113,16 @@ export function AdminCertificatesPage() {
       next.delete('search');
     }
     setSearchParams(next);
+  }
+
+  function handleRequestSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setRequestSearch(requestSearchInput.trim());
+  }
+
+  function clearRequestSearch() {
+    setRequestSearchInput('');
+    setRequestSearch('');
   }
 
   function setFilter(key: 'certificateType' | 'generationStatus' | 'status', value: string) {
@@ -1084,6 +1267,23 @@ export function AdminCertificatesPage() {
     });
     setCertificateMessage(`${result.certificateId} revoked.`);
     setCertificateToRevoke(null);
+  }
+
+  function openRejectCertificateRequest(request: AdminCertificateRequest) {
+    rejectCertificateRequestMutation.reset();
+    setRejectReason('');
+    setRequestToReject(request);
+  }
+
+  async function handleRejectCertificateRequest(reason: string) {
+    if (!requestToReject) return;
+    const result = await rejectCertificateRequestMutation.mutateAsync({
+      reason,
+      requestId: requestToReject.id
+    });
+    setCertificateMessage(result.message);
+    setRequestToReject(null);
+    setRejectReason('');
   }
 
   async function handleGenerateCertificatePdf(certificate: AdminCertificate) {
@@ -1329,7 +1529,20 @@ export function AdminCertificatesPage() {
         </section>
       ) : null}
 
-      {activeTab === 'live-projects' && canIssueCertificates ? <RequestQueue isLoading={requestsQuery.isLoading} items={requestsQuery.data?.items ?? []} onReview={setSelectedRequest} /> : null}
+      {activeTab === 'live-projects' && canIssueCertificates ? (
+        <RequestQueue
+          isLoading={requestsQuery.isLoading}
+          items={requestsQuery.data?.items ?? []}
+          onClearSearch={clearRequestSearch}
+          onReject={openRejectCertificateRequest}
+          onReview={setSelectedRequest}
+          onSearchInputChange={setRequestSearchInput}
+          onSearchSubmit={handleRequestSearch}
+          searchInput={requestSearchInput}
+          searchTerm={requestSearch}
+          total={requestsQuery.data?.total ?? 0}
+        />
+      ) : null}
 
       {activeTab === 'manual' && canIssueCertificates ? (
         <ManualCertificateIssueForm
@@ -1517,6 +1730,7 @@ export function AdminCertificatesPage() {
           isIssuing={issueCertificateMutation.isPending}
           onClose={() => setSelectedRequest(null)}
           onIssue={handleIssueLiveProjectCertificate}
+          projectRoles={projectRoles}
           request={selectedRequest}
         />
       ) : null}
@@ -1527,6 +1741,21 @@ export function AdminCertificatesPage() {
           isRevoking={revokeCertificateMutation.isPending}
           onClose={() => setCertificateToRevoke(null)}
           onRevoke={handleRevokeCertificate}
+        />
+      ) : null}
+      {requestToReject && canIssueCertificates ? (
+        <RejectCertificateRequestModal
+          error={rejectCertificateRequestMutation.isError ? rejectCertificateRequestMutation.error.message : undefined}
+          isRejecting={rejectCertificateRequestMutation.isPending}
+          onClose={() => {
+            rejectCertificateRequestMutation.reset();
+            setRequestToReject(null);
+            setRejectReason('');
+          }}
+          onReject={handleRejectCertificateRequest}
+          reason={rejectReason}
+          request={requestToReject}
+          setReason={setRejectReason}
         />
       ) : null}
     </div>

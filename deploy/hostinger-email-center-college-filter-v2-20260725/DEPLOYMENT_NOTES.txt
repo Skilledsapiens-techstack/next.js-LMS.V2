@@ -1,0 +1,24 @@
+Hostinger deployment package: Email Center college filter fix v2
+Date: 2026-07-25
+
+Scope:
+- Adds Email Center quick filter: Active students by college.
+- Selecting a college targets All active LMS students when no cohort is selected.
+- Prevents the no-cohort selected college-filter path from continuing in cohort mode.
+- Improves frontend Edge Function error handling so the real server message is shown instead of only "Edge Function returned a non-2xx status code".
+- Updates the send summary to show the active college audience.
+
+Backend:
+- Supabase Edge Function transactional-email was deployed separately.
+- Confirmed active version: transactional-email v38 on project olgihgkyteumndphxsut.
+- No Supabase database migration required.
+
+Hostinger upload:
+- Upload the contents of this folder to the site public_html root.
+- Keep .htaccess in the public_html root for SPA route refresh support.
+- After upload, hard refresh the Email Center page to clear cached JS.
+
+Validation:
+- npm run lint passed.
+- npm run build passed.
+- npm test -- --runInBand passed: 112 suites, 454 tests.

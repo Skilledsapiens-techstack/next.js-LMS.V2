@@ -32,6 +32,8 @@ type WorkshopPayload = {
     durationMinutes?: number;
     customJoinUrl?: string | null;
     programKey?: string | null;
+    replaceDuplicateRecording?: boolean;
+    sessionType?: string | null;
     time?: string;
     title?: string;
     workshopStatus?: string;
@@ -54,6 +56,7 @@ type WorkshopRow = {
   title: string;
   workshop_id: string | null;
   workshop_status: string;
+  session_type?: string | null;
   zoom_account: string | null;
   zoom_id: string | null;
 };
@@ -162,6 +165,10 @@ function readDurationMinutes(value: unknown, fallback = 90) {
   return duration;
 }
 
+function normalizeSessionType(value: unknown) {
+  return String(value ?? '').trim().toLowerCase() === 'doubt_session' ? 'doubt_session' : 'workshop';
+}
+
 async function getZoomAccessToken(account: ZoomAccountLabel) {
   const prefix = zoomAccountPrefix(account);
   const accountId = readFirstRequiredEnv([`${prefix}_ACCOUNT_ID`, `${prefix}_ID`]);
@@ -237,6 +244,7 @@ function buildWorkshopRow(body: NonNullable<WorkshopPayload['body']>, zoomMeetin
     date,
     duration_minutes: readDurationMinutes(body.durationMinutes),
     join_url: typeof zoomMeeting.join_url === 'string' ? zoomMeeting.join_url : null,
+    session_type: normalizeSessionType(body.sessionType),
     time: typeof body.time === 'string' && body.time ? body.time : null,
     title,
     workshop_id: `WS-${Date.now()}`,
@@ -254,6 +262,7 @@ function buildCustomWorkshopRow(body: NonNullable<WorkshopPayload['body']>) {
     date,
     duration_minutes: readDurationMinutes(body.durationMinutes),
     join_url: requireHttpUrl(body.customJoinUrl, 'Add a valid custom meeting link before saving.'),
+    session_type: normalizeSessionType(body.sessionType),
     time: typeof body.time === 'string' && body.time ? body.time : null,
     title,
     workshop_id: `WS-${Date.now()}`,
@@ -268,6 +277,7 @@ function buildWorkshopUpdateRow(body: NonNullable<WorkshopPayload['body']>, work
     cohort_names: Array.isArray(body.cohortNames) ? body.cohortNames.map(String).filter(Boolean) : workshop.cohort_names,
     date: requireText(body.date, 'Meeting date is required.'),
     duration_minutes: readDurationMinutes(body.durationMinutes, workshop.duration_minutes ?? 90),
+    session_type: normalizeSessionType(body.sessionType ?? workshop.session_type),
     time: typeof body.time === 'string' && body.time ? body.time : null,
     title: requireText(body.title, 'Meeting title is required.'),
     updated_at: new Date().toISOString(),
@@ -336,6 +346,45 @@ function sortedAudienceValues(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))).sort();
 }
 
+function normalizeWorkshopTitle(value: unknown) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function uniqueTextValues(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function hasPublishedRecordingLink(workshop: WorkshopPortalRow) {
+  const row = workshopRecord(workshop);
+  return Boolean(ensureHttpUrl(row.youtube_video_url) || ensureHttpUrl(row.zoom_recording_url));
+}
+
+function duplicateRecordingCohortMatches(workshop: WorkshopPortalRow, selectedCohorts: Set<string>) {
+  return workshopCohortNames(workshop).filter((cohortName) => selectedCohorts.has(cohortName));
+}
+
+async function findDuplicatePublishedRecordings(supabase: ReturnType<typeof createClient>, workshopId: string, title: string, cohortNames: string[]) {
+  const normalizedTitle = normalizeWorkshopTitle(title);
+  const selectedCohorts = new Set(uniqueTextValues(cohortNames));
+  if (!normalizedTitle || selectedCohorts.size === 0) return [];
+
+  const { data, error } = await supabase.from('workshops').select('*').neq('id', workshopId).eq('workshop_status', 'Completed').limit(1000);
+  if (error) throw error;
+
+  return (data ?? [])
+    .filter((workshop) => normalizeWorkshopTitle((workshop as Record<string, unknown>).title) === normalizedTitle && hasPublishedRecordingLink(workshop as WorkshopPortalRow))
+    .map((workshop) => ({
+      cohortNames: duplicateRecordingCohortMatches(workshop as WorkshopPortalRow, selectedCohorts),
+      workshop: workshop as Record<string, unknown>
+    }))
+    .filter((match) => match.cohortNames.length > 0);
+}
+
 function hasWorkshopAudienceChanged(previousWorkshop: WorkshopPortalRow, nextWorkshop: WorkshopPortalRow) {
   const previousProgramKeys = sortedAudienceValues(workshopProgramKeys(previousWorkshop));
   const nextProgramKeys = sortedAudienceValues(workshopProgramKeys(nextWorkshop));
@@ -354,10 +403,17 @@ function workshopScheduleSummary(workshop: WorkshopPortalRow) {
   return [row.date, row.time, row.duration_minutes ? `${row.duration_minutes} min` : undefined].filter(Boolean).join(' · ') || 'A new session has been added to your schedule.';
 }
 
+function workshopStudentSchedulePath(workshop: WorkshopPortalRow) {
+  const row = workshopRecord(workshop);
+  return String(row.session_type ?? '').trim().toLowerCase() === 'doubt_session' ? '/student/doubt-sessions' : '/student/schedule';
+}
+
 function workshopPortalUpdateCopy(eventType: PortalWorkshopEvent, workshop: WorkshopPortalRow) {
   const row = workshopRecord(workshop);
   const title = String(row.title ?? 'Workshop').trim() || 'Workshop';
   const schedule = workshopScheduleSummary(workshop);
+  const schedulePath = workshopStudentSchedulePath(workshop);
+  const sessionLabel = schedulePath === '/student/doubt-sessions' ? 'Doubt session' : 'Workshop';
 
   if (eventType === 'recording_published') {
     return {
@@ -372,39 +428,39 @@ function workshopPortalUpdateCopy(eventType: PortalWorkshopEvent, workshop: Work
   if (eventType === 'session_rescheduled') {
     return {
       linkLabel: 'View schedule',
-      linkUrl: '/student/schedule',
+      linkUrl: schedulePath,
       sourceType: 'workshop_session',
       summary: `The session schedule has been updated: ${schedule}.`,
-      title: `Workshop rescheduled: ${title}`
+      title: `${sessionLabel} rescheduled: ${title}`
     };
   }
 
   if (eventType === 'session_cancelled') {
     return {
       linkLabel: 'View schedule',
-      linkUrl: '/student/schedule',
+      linkUrl: schedulePath,
       sourceType: 'workshop_session',
       summary: 'This session has been cancelled.',
-      title: `Workshop cancelled: ${title}`
+      title: `${sessionLabel} cancelled: ${title}`
     };
   }
 
   if (eventType === 'session_completed') {
     return {
       linkLabel: 'View schedule',
-      linkUrl: '/student/schedule',
+      linkUrl: schedulePath,
       sourceType: 'workshop_session',
       summary: 'This session has been marked completed.',
-      title: `Workshop completed: ${title}`
+      title: `${sessionLabel} completed: ${title}`
     };
   }
 
   return {
     linkLabel: 'View schedule',
-    linkUrl: '/student/schedule',
+    linkUrl: schedulePath,
     sourceType: 'workshop_session',
     summary: schedule,
-    title: `New session scheduled: ${title}`
+    title: `New ${sessionLabel.toLowerCase()} scheduled: ${title}`
   };
 }
 
@@ -674,9 +730,20 @@ async function editPublishedRecording(supabase: ReturnType<typeof createClient>,
         : null
       : previousProgramKey;
   const passcode = typeof body.zoomRecordingPassword === 'string' && body.zoomRecordingPassword.trim() ? body.zoomRecordingPassword.trim() : null;
+  const duplicateMatches = await findDuplicatePublishedRecordings(supabase, workshopId, title, cohortNames);
+  const duplicateCohortNames = uniqueTextValues(duplicateMatches.flatMap((match) => match.cohortNames)).sort();
+  const replaceDuplicateRecording = body.replaceDuplicateRecording === true;
+  if (duplicateCohortNames.length > 0 && !replaceDuplicateRecording) {
+    throw new Error(
+      `This workshop is already added for ${duplicateCohortNames.join(', ')} cohort${duplicateCohortNames.length === 1 ? '' : 's'}. Confirm replacement before saving.`
+    );
+  }
+
+  const duplicateCohortSet = new Set(duplicateCohortNames);
+  const currentCohortNames = replaceDuplicateRecording ? cohortNames.filter((cohortName) => !duplicateCohortSet.has(cohortName)) : cohortNames;
 
   const updateRow = {
-    cohort_names: cohortNames,
+    cohort_names: currentCohortNames,
     program_key: programKey,
     title,
     updated_at: new Date().toISOString(),
@@ -689,8 +756,38 @@ async function editPublishedRecording(supabase: ReturnType<typeof createClient>,
   const { data, error } = await supabase.from('workshops').update(updateRow).eq('id', workshopId).select('*').single();
   if (error) throw error;
 
+  const replacedWorkshops: Record<string, unknown>[] = [];
+  if (replaceDuplicateRecording && duplicateMatches.length > 0) {
+    const duplicateUpdateRow = {
+      title,
+      updated_at: new Date().toISOString(),
+      youtube_video_url: youtubeUrl,
+      zoom_recording_password: passcode,
+      zoom_recording_url: alternateUrl
+    };
+    for (const duplicateMatch of duplicateMatches) {
+      const duplicateId = String(duplicateMatch.workshop.id ?? '');
+      if (!duplicateId) continue;
+      const { data: replacedWorkshop, error: replaceError } = await supabase
+        .from('workshops')
+        .update(duplicateUpdateRow)
+        .eq('id', duplicateId)
+        .select('*')
+        .single();
+      if (replaceError) throw replaceError;
+      replacedWorkshops.push(replacedWorkshop);
+      await writeAudit(supabase, actorEmail, 'admin_published_recording_duplicate_replaced', replacedWorkshop, {
+        changedFields: Object.keys(duplicateUpdateRow).sort(),
+        replacedCohorts: duplicateMatch.cohortNames,
+        sourceWorkshopId: workshopId
+      });
+    }
+  }
+
   await writeAudit(supabase, actorEmail, 'admin_published_recording_updated', data, {
     changedFields: Object.keys(updateRow).sort(),
+    replacedDuplicateCohorts: replaceDuplicateRecording ? duplicateCohortNames : [],
+    replacedDuplicateWorkshopIds: replacedWorkshops.map((item) => item.id).filter(Boolean),
     previous: {
       cohort_names: workshop.cohort_names,
       program_key: (workshop as Record<string, unknown>).program_key ?? null,
@@ -704,7 +801,7 @@ async function editPublishedRecording(supabase: ReturnType<typeof createClient>,
     await recordPortalUpdate(supabase, actorEmail, 'recording_published', data);
   }
 
-  return { workshop: data };
+  return { replacedDuplicateCohorts: duplicateCohortNames, replacedDuplicateWorkshops: replacedWorkshops.length, workshop: data };
 }
 
 async function cancelMeeting(supabase: ReturnType<typeof createClient>, actorEmail: string, payload: WorkshopPayload) {

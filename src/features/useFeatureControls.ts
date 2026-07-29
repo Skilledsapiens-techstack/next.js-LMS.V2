@@ -4,6 +4,7 @@ import { apiGet, apiPatch } from '../lib/supabaseApi';
 import { PaginatedResponse } from './student/useStudentAnnouncements';
 
 export type FeatureControlStatus = 'show' | 'upcoming' | 'hide';
+export type RecordingPlaybackMode = 'external' | 'popup';
 
 export type FeatureControl = {
   createdAt?: string;
@@ -31,6 +32,8 @@ export const defaultFeatureMessages: Record<string, string> = {
   certificates: 'Certificates will be available after admin verification.',
   cohorts: 'Program details will be available shortly.',
   community: 'Community access is coming soon.',
+  'doubt-sessions': 'Doubt Sessions will be visible once a mentor schedules them.',
+  'email-service': 'Email delivery is temporarily paused.',
   payments: 'Payments and access details will be available soon.',
   'project-submissions': 'Project submissions will be available soon.',
   projects: 'Live Project Hub will be enabled soon.',
@@ -45,6 +48,12 @@ export const defaultFeatureMessages: Record<string, string> = {
 export function getFeatureMessage(feature?: Pick<FeatureControl, 'moduleId' | 'studentLabel' | 'upcomingMessage'> | null) {
   if (!feature) return 'This module will be available soon.';
   return feature.upcomingMessage?.trim() || defaultFeatureMessages[feature.moduleId] || `${feature.studentLabel} will be available soon.`;
+}
+
+export function getRecordingPlaybackMode(feature?: Pick<FeatureControl, 'moduleId' | 'settings'> | null): RecordingPlaybackMode {
+  if (!feature || feature.moduleId !== 'recordings') return 'external';
+  const value = feature.settings?.recording_playback_mode ?? feature.settings?.recordingPlaybackMode;
+  return value === 'popup' ? 'popup' : 'external';
 }
 
 export function useStudentFeatureControls(query: { enabled?: boolean } = {}) {
@@ -74,6 +83,15 @@ export function useLoginCreatePasswordFeatureControl() {
   return useQuery({
     queryFn: () => apiGet<FeatureControl>('/public/feature-controls/login-create-password'),
     queryKey: ['public-feature-control', 'login-create-password'],
+    staleTime: 120_000
+  });
+}
+
+export function usePublicWhatsAppWidgetFeatureControl(query: { enabled?: boolean } = {}) {
+  return useQuery({
+    enabled: query.enabled !== false,
+    queryFn: () => apiGet<FeatureControl>('/public/feature-controls/whatsapp-widget'),
+    queryKey: ['public-feature-control', 'whatsapp-widget'],
     staleTime: 120_000
   });
 }

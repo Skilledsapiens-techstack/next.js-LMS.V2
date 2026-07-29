@@ -4,6 +4,7 @@ import { apiGet, apiInvokeFunction } from '../../lib/supabaseApi';
 import { PaginatedResponse } from '../student/useStudentAnnouncements';
 
 export type AdminWorkshopAccessType = 'free' | 'paid';
+export type AdminWorkshopSessionType = 'workshop' | 'doubt_session';
 export type AdminWorkshopStatus = 'Upcoming' | 'Scheduled' | 'Live' | 'Completed' | 'Cancelled' | 'Inactive';
 
 export type AdminWorkshop = {
@@ -18,6 +19,7 @@ export type AdminWorkshop = {
   paymentLink?: string;
   price?: number;
   programKey?: string;
+  sessionType?: AdminWorkshopSessionType;
   status: AdminWorkshopStatus;
   time?: string;
   title: string;
@@ -44,6 +46,7 @@ export type AdminWorkshopWritePayload = {
   customJoinUrl?: string;
   date: string;
   durationMinutes?: number;
+  sessionType?: AdminWorkshopSessionType;
   time?: string;
   title: string;
   workshopStatus?: AdminWorkshopStatus;
@@ -53,6 +56,7 @@ export type AdminWorkshopWritePayload = {
 export type AdminWorkshopRecordingPayload = {
   cohortNames?: string[];
   programKey?: string | null;
+  replaceDuplicateRecording?: boolean;
   title?: string;
   zoomRecordingPassword?: string | null;
   youtubeVideoUrl?: string | null;
@@ -64,6 +68,8 @@ export type ZoomMeetingFunctionResponse = {
   candidates?: unknown[];
   count?: number;
   duplicateCount?: number;
+  replacedDuplicateCohorts?: string[];
+  replacedDuplicateWorkshops?: number;
   workshop?: AdminWorkshop;
 };
 

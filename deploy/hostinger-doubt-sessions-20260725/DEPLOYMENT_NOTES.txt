@@ -1,0 +1,30 @@
+Hostinger deployment package: Doubt Sessions module
+Date: 2026-07-25
+
+Scope:
+- Adds the student-side Doubt Sessions module and navigation entry.
+- Adds session type support in Admin > Schedule Meeting:
+  - Workshop sessions show in student Upcoming Workshops.
+  - Doubt Session sessions show in student Doubt Sessions.
+- Keeps Upcoming Workshops and Doubt Sessions available even when counts are 0.
+- Shows upcoming and past session counts consistently.
+- Polishes the Admin Schedule Meeting form alignment for Session Type, Date, Time, Duration, and helper text.
+
+Database:
+- Migration is included in this package under supabase-migrations/:
+  20260725123922_doubt_sessions_module.sql
+- This migration has already been pushed to the linked Supabase project.
+
+Edge Function:
+- The zoom-meetings Supabase Edge Function was already deployed separately after the auto-announcement/session-type changes.
+- Hostinger upload only updates the static frontend files.
+
+Hostinger upload:
+- Upload the contents of this folder to the site public_html root.
+- Keep .htaccess in the public_html root for SPA route refresh support.
+
+Validation:
+- npm run lint passed.
+- npm run build passed.
+- npm test -- --runInBand passed: 112 suites, 454 tests.
+- Local UI QA passed on http://127.0.0.1:5173/admin/workshops with authenticated Chrome session.

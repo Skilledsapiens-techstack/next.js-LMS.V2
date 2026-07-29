@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, BriefcaseBusiness, ExternalLink, FileCheck2, FileText, MailCheck, MessageSquareText, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BriefcaseBusiness, ExternalLink, FileCheck2, FileText, Info, MailCheck, MessageSquareText, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
@@ -38,7 +38,9 @@ const categoryMeta: Record<string, { description: string; icon: typeof FileText;
   }
 };
 
-const categoryOrder = ['cv_points_guide', 'sample_cv_points', 'resume_resources', 'interview_prep', 'cv_approval_process'];
+const categoryOrder = ['cv_points_guide', 'resume_resources', 'interview_prep', 'sample_cv_points', 'cv_approval_process'];
+const internalReferenceCategories = new Set(['sample_cv_points', 'cv_approval_process']);
+const internalReferenceHelpText = 'Internal reference workspace for understanding Skilled Sapiens Live Project standards, approved examples, and CV approval guidance.';
 
 function formatDate(value: string | undefined) {
   if (!value) return '';
@@ -274,8 +276,16 @@ export function StudentCareerReadinessPage() {
                   <span className="career-readiness-section__icon">
                     <Icon size={21} />
                   </span>
-                  <strong>{group.label}</strong>
-                  <small>{group.items.length} guide{group.items.length === 1 ? '' : 's'}</small>
+                  <span className="career-readiness-category-tile__body">
+                    <strong>{group.label}</strong>
+                    {internalReferenceCategories.has(group.category) ? (
+                      <span className="career-readiness-internal-help" aria-label={internalReferenceHelpText} tabIndex={0}>
+                        <Info size={16} />
+                        <span role="tooltip">{internalReferenceHelpText}</span>
+                      </span>
+                    ) : null}
+                    <small>{group.items.length} guide{group.items.length === 1 ? '' : 's'}</small>
+                  </span>
                 </button>
               );
             })}

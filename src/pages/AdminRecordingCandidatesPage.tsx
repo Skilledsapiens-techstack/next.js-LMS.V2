@@ -1,14 +1,15 @@
-import { AlertTriangle, CheckCircle2, Clock3, Edit3, ExternalLink, Link2, ListOrdered, Loader2, Play, RefreshCw, Save, Search, Trash2, Video, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock3, Edit3, ExternalLink, GripVertical, Link2, ListOrdered, Loader2, Play, Plus, RefreshCw, Save, Search, Trash2, Video, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { StatusBadge } from '../components/StatusBadge';
 import { AdminCohort, useAdminCohorts } from '../features/admin/useAdminCohorts';
 import { AdminProgram, useAdminPrograms } from '../features/admin/useAdminPrograms';
-import { customWorkshopTopicValue, loadSavedWorkshopTopics, uniqueTitles } from '../lib/workshopTopics';
+import { loadSavedWorkshopTopics, uniqueTitles } from '../lib/workshopTopics';
 import {
   AdminRecordingCandidate,
   AdminRecordingSection,
   AdminRecordingSequenceRule,
+  AdminRecordingSequenceRulePayload,
   useAdminRecordingCandidates,
   useAdminRecordingResourceLinks,
   useAdminRecordingResourceSummary,
@@ -43,12 +44,7 @@ type RecordingEditForm = {
   youtubeUrl: string;
 };
 type RecordingSequenceForm = {
-  aliases: string;
   programKeys: string[];
-  recordingSection: AdminRecordingSection;
-  sequenceNumber: string;
-  status: 'active' | 'inactive';
-  title: string;
 };
 
 type ResourceManagerState = {
@@ -67,12 +63,7 @@ const recordingSortOptions: Array<{ label: string; value: RecordingSortOption }>
 ];
 
 const emptySequenceForm: RecordingSequenceForm = {
-  aliases: '',
-  programKeys: [],
-  recordingSection: 'other_workshops',
-  sequenceNumber: '',
-  status: 'active',
-  title: ''
+  programKeys: []
 };
 
 const recordingSectionOptions: Array<{ label: string; value: AdminRecordingSection }> = [
@@ -169,6 +160,24 @@ function sequenceRuleMatchesWorkshop(workshop: AdminWorkshop, rule: AdminRecordi
 
 function sequenceMatchForWorkshop(workshop: AdminWorkshop, rules: AdminRecordingSequenceRule[]) {
   return rules.find((rule) => rule.status === 'active' && sequenceRuleMatchesWorkshop(workshop, rule));
+}
+
+function duplicatePublishedRecordingCohorts(workshops: AdminWorkshop[], currentWorkshopId: string, title: string, cohortNames: string[]) {
+  const normalizedTitle = normalizeSequenceText(title);
+  const selectedCohorts = new Set(cohortNames.map((cohortName) => cohortName.trim()).filter(Boolean));
+  if (!normalizedTitle || selectedCohorts.size === 0) return [];
+
+  return workshops
+    .filter((workshop) => workshop.id !== currentWorkshopId && normalizeSequenceText(workshop.title) === normalizedTitle && hasRecordingLink(workshop))
+    .flatMap((workshop) =>
+      workshop.cohortNames
+        .filter((cohortName) => selectedCohorts.has(cohortName))
+        .map((cohortName) => ({
+          cohortName,
+          workshopId: workshop.id,
+          workshopTitle: workshop.title
+        }))
+    );
 }
 
 function comparePublishedWorkshops(
@@ -384,8 +393,7 @@ export function AdminRecordingCandidatesPage() {
   const [recordingEditForm, setRecordingEditForm] = useState<RecordingEditForm | null>(null);
   const [showSequenceManager, setShowSequenceManager] = useState(false);
   const [sequenceForm, setSequenceForm] = useState<RecordingSequenceForm>(emptySequenceForm);
-  const [editingSequenceId, setEditingSequenceId] = useState<string | null>(null);
-  const [sequenceCustomTitleMode, setSequenceCustomTitleMode] = useState(false);
+  const [draggedSequenceRuleId, setDraggedSequenceRuleId] = useState<string | null>(null);
   const [resourceManager, setResourceManager] = useState<ResourceManagerState | null>(null);
   const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
   const [savedWorkshopTopics] = useState<string[]>(loadSavedWorkshopTopics);
@@ -427,7 +435,7 @@ export function AdminRecordingCandidatesPage() {
     const workshopProgramKeys = workshops.map((item) => item.programKey).filter((value): value is string => Boolean(value));
     return Array.from(new Set([...activeProgramKeys, ...cohortProgramKeys, ...workshopProgramKeys]));
   }, [activeCohorts, programs, workshops]);
-  const workshopTopicOptions = useMemo(() => uniqueTitles(savedWorkshopTopics), [savedWorkshopTopics]);
+  const workshopTopicOptions = useMemo(() => uniqueTitles([...savedWorkshopTopics, ...workshops.map((workshop) => workshop.title)]), [savedWorkshopTopics, workshops]);
 
   const cohortOptions = useMemo(() => {
     const eligibleCohorts = programFilter === 'all' ? activeCohorts : activeCohorts.filter((cohort) => cohortProgramMatches(cohort, programFilter));
@@ -595,6 +603,7 @@ export function AdminRecordingCandidatesPage() {
     const title = recordingEditForm.title.trim();
     const youtubeUrl = recordingEditForm.youtubeUrl.trim();
     const alternateUrl = recordingEditForm.alternateUrl.trim();
+    const duplicateCohorts = duplicatePublishedRecordingCohorts(workshops, workshop.id, title, recordingEditForm.cohortNames);
 
     setActionMessage(null);
     if (!title) {
@@ -613,12 +622,23 @@ export function AdminRecordingCandidatesPage() {
       setActionMessage('Zoom/manual URL must start with http:// or https://.');
       return;
     }
+    if (duplicateCohorts.length > 0) {
+      const affectedCohorts = Array.from(new Set(duplicateCohorts.map((duplicate) => duplicate.cohortName))).sort((left, right) => left.localeCompare(right));
+      const confirmed = window.confirm(
+        `This workshop is already added for ${affectedCohorts.join(', ')} cohort${affectedCohorts.length === 1 ? '' : 's'}.\n\nDo you want to replace the existing recording link for those cohort${affectedCohorts.length === 1 ? '' : 's'} instead of creating duplicate visibility?`
+      );
+      if (!confirmed) {
+        setActionMessage('Save cancelled. Remove the duplicate cohort tag or confirm replacement to continue.');
+        return;
+      }
+    }
 
     try {
-      await editPublishedRecordingMutation.mutateAsync({
+      const result = await editPublishedRecordingMutation.mutateAsync({
         body: {
           cohortNames: recordingEditForm.cohortNames,
           programKey: recordingEditForm.programKey || null,
+          replaceDuplicateRecording: duplicateCohorts.length > 0,
           title,
           youtubeVideoUrl: youtubeUrl || null,
           zoomRecordingPassword: recordingEditForm.passcode.trim() || null,
@@ -628,7 +648,11 @@ export function AdminRecordingCandidatesPage() {
       });
       await refetchRecordingData();
       setRecordingEditForm(null);
-      setActionMessage('Published recording updated. Student visibility rules are unchanged.');
+      setActionMessage(
+        result.replacedDuplicateCohorts?.length
+          ? `Published recording updated. Existing recording links were replaced for ${result.replacedDuplicateCohorts.join(', ')}.`
+          : 'Published recording updated. Student visibility rules are unchanged.'
+      );
     } catch (error) {
       setActionMessage(readableError(error, 'Published recording could not be updated.'));
     }
@@ -678,36 +702,6 @@ export function AdminRecordingCandidatesPage() {
     });
   }
 
-  function resetSequenceForm(nextProgramKeys = sequenceForm.programKeys) {
-    setEditingSequenceId(null);
-    setSequenceCustomTitleMode(false);
-    setSequenceForm({ ...emptySequenceForm, programKeys: nextProgramKeys });
-  }
-
-  function handleSequenceTopicSelect(value: string) {
-    if (value === customWorkshopTopicValue) {
-      setSequenceCustomTitleMode(true);
-      setSequenceForm((current) => ({ ...current, title: '' }));
-      return;
-    }
-    setSequenceCustomTitleMode(false);
-    setSequenceForm((current) => ({ ...current, title: value }));
-  }
-
-  function startEditingSequence(rule: AdminRecordingSequenceRule) {
-    setEditingSequenceId(rule.id);
-    setSequenceCustomTitleMode(!workshopTopicOptions.includes(rule.title));
-    setSequenceForm({
-      aliases: (rule.matchAliases ?? []).join('\n'),
-      programKeys: [rule.programKey],
-      recordingSection: rule.recordingSection ?? 'other_workshops',
-      sequenceNumber: String(rule.sequenceNumber),
-      status: rule.status,
-      title: rule.title
-    });
-    setShowSequenceManager(true);
-  }
-
   function toggleSequenceProgram(programKey: string) {
     setSequenceForm((current) => {
       const normalizedProgramKey = programKey.trim().toLowerCase();
@@ -726,83 +720,126 @@ export function AdminRecordingCandidatesPage() {
     setSequenceForm((current) => ({ ...current, programKeys: [] }));
   }
 
-  async function saveSequenceRule() {
-    const selectedProgramKeys = Array.from(new Set(sequenceForm.programKeys.map((programKey) => programKey.trim().toLowerCase()).filter(Boolean)));
-    const title = sequenceForm.title.trim();
-    const sequenceNumber = Number(sequenceForm.sequenceNumber);
+  function selectedSequenceProgramKeys() {
+    return Array.from(new Set(sequenceForm.programKeys.map((programKey) => programKey.trim().toLowerCase()).filter(Boolean)));
+  }
+
+  function sequencePayloadFromRule(rule: AdminRecordingSequenceRule, overrides: Partial<AdminRecordingSequenceRulePayload> = {}): AdminRecordingSequenceRulePayload {
+    return {
+      matchAliases: rule.matchAliases ?? [],
+      programKey: rule.programKey,
+      recordingSection: rule.recordingSection ?? 'other_workshops',
+      sequenceNumber: rule.sequenceNumber,
+      status: rule.status,
+      title: rule.title,
+      ...overrides
+    };
+  }
+
+  async function addSequenceRow(section: AdminRecordingSection) {
+    const selectedProgramKeys = selectedSequenceProgramKeys();
     setActionMessage(null);
 
     if (selectedProgramKeys.length === 0) {
-      setActionMessage('Select at least one program before saving sequence.');
+      setActionMessage('Select at least one program before adding a sequence row.');
       return;
     }
-    if (editingSequenceId && selectedProgramKeys.length !== 1) {
-      setActionMessage('Editing an existing sequence supports one program. Select one program or reset before bulk adding.');
+    if (workshopTopicOptions.length === 0) {
+      setActionMessage('No workshop titles are available yet.');
       return;
     }
-    if (!Number.isInteger(sequenceNumber) || sequenceNumber < 1) {
-      setActionMessage('Sequence number must be 1 or higher.');
-      return;
-    }
-    if (!title) {
-      setActionMessage('Workshop title is required for sequence matching.');
-      return;
-    }
-
-    const baseBody = {
-      matchAliases: splitSequenceAliases(sequenceForm.aliases),
-      recordingSection: sequenceForm.recordingSection,
-      sequenceNumber,
-      status: sequenceForm.status,
-      title
-    };
 
     try {
-      if (editingSequenceId) {
-        await updateSequenceRuleMutation.mutateAsync({ body: { ...baseBody, programKey: selectedProgramKeys[0] }, id: editingSequenceId });
-        await sequenceRulesQuery.refetch();
-        resetSequenceForm(selectedProgramKeys);
-        setActionMessage('Recording sequence updated.');
-      } else {
-        const skippedProgramKeys =
-          sequenceForm.status === 'active'
-            ? selectedProgramKeys.filter((programKey) =>
-                sequenceRules.some(
-                  (rule) =>
-                    rule.status === 'active' &&
-                    rule.programKey === programKey &&
-                    rule.recordingSection === sequenceForm.recordingSection &&
-                    rule.sequenceNumber === sequenceNumber
-                )
-              )
-            : [];
-        const creatableProgramKeys = selectedProgramKeys.filter((programKey) => !skippedProgramKeys.includes(programKey));
-
-        if (creatableProgramKeys.length === 0) {
-          setActionMessage(`Sequence ${sequenceNumber} already exists for the selected program${selectedProgramKeys.length === 1 ? '' : 's'}. No changes were saved.`);
-          return;
-        }
-
-        const createResults = await Promise.allSettled(
-          creatableProgramKeys.map((programKey) => createSequenceRuleMutation.mutateAsync({ ...baseBody, programKey }))
-        );
-        const savedCount = createResults.filter((result) => result.status === 'fulfilled').length;
-        const failedResults = createResults.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
-        await sequenceRulesQuery.refetch();
-        resetSequenceForm(selectedProgramKeys);
-        const createdText = savedCount
-          ? `Recording sequence added for ${savedCount} program${savedCount === 1 ? '' : 's'}.`
-          : 'No new recording sequences were added.';
-        const skippedText = skippedProgramKeys.length
-          ? ` Skipped ${skippedProgramKeys.length} program${skippedProgramKeys.length === 1 ? '' : 's'} with existing Seq ${sequenceNumber} in ${recordingSectionLabel(sequenceForm.recordingSection)}.`
-          : '';
-        const failedText = failedResults.length
-          ? ` ${failedResults.length} program${failedResults.length === 1 ? '' : 's'} could not be saved: ${readableError(failedResults[0].reason, 'Unknown error')}`
-          : '';
-        setActionMessage(`${createdText}${skippedText}${failedText}`);
-      }
+      const createResults = await Promise.allSettled(
+        selectedProgramKeys.map((programKey) => {
+          const nextSequence =
+            Math.max(
+              0,
+              ...sequenceRules
+                .filter((rule) => rule.programKey === programKey && (rule.recordingSection ?? 'other_workshops') === section)
+                .map((rule) => rule.sequenceNumber)
+            ) + 1;
+          return createSequenceRuleMutation.mutateAsync({
+            matchAliases: [],
+            programKey,
+            recordingSection: section,
+            sequenceNumber: nextSequence,
+            status: 'active',
+            title: workshopTopicOptions[0]
+          });
+        })
+      );
+      await sequenceRulesQuery.refetch();
+      const savedCount = createResults.filter((result) => result.status === 'fulfilled').length;
+      const failedResult = createResults.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      setActionMessage(
+        failedResult
+          ? `Added ${savedCount} row${savedCount === 1 ? '' : 's'}, but one or more rows could not be added: ${readableError(failedResult.reason, 'Unknown error')}`
+          : `Added ${savedCount} sequence row${savedCount === 1 ? '' : 's'} to ${recordingSectionLabel(section)}.`
+      );
     } catch (error) {
-      setActionMessage(readableError(error, 'Recording sequence could not be saved.'));
+      setActionMessage(readableError(error, 'Sequence row could not be added.'));
+    }
+  }
+
+  async function updateSequenceRule(rule: AdminRecordingSequenceRule, overrides: Partial<AdminRecordingSequenceRulePayload>, successMessage = 'Sequence row updated.') {
+    setActionMessage(null);
+    try {
+      await updateSequenceRuleMutation.mutateAsync({ body: sequencePayloadFromRule(rule, overrides), id: rule.id });
+      await sequenceRulesQuery.refetch();
+      setActionMessage(successMessage);
+    } catch (error) {
+      setActionMessage(readableError(error, 'Sequence row could not be updated.'));
+    }
+  }
+
+  function sequenceRowsFor(section: AdminRecordingSection, rules: AdminRecordingSequenceRule[], programKey?: string) {
+    return rules
+      .filter((rule) => (rule.recordingSection ?? 'other_workshops') === section && (!programKey || rule.programKey === programKey))
+      .sort((left, right) => left.programKey.localeCompare(right.programKey) || left.sequenceNumber - right.sequenceNumber || left.title.localeCompare(right.title));
+  }
+
+  async function moveSequenceRule(draggedRuleId: string, targetRule: AdminRecordingSequenceRule) {
+    if (draggedRuleId === targetRule.id) return;
+    const draggedRule = sequenceRules.find((rule) => rule.id === draggedRuleId);
+    if (!draggedRule || draggedRule.programKey !== targetRule.programKey || draggedRule.recordingSection !== targetRule.recordingSection) {
+      setActionMessage('Drag rows within the same program and section.');
+      return;
+    }
+
+    const sectionRows = sequenceRowsFor(targetRule.recordingSection ?? 'other_workshops', sequenceRules, targetRule.programKey);
+    const fromIndex = sectionRows.findIndex((rule) => rule.id === draggedRuleId);
+    const toIndex = sectionRows.findIndex((rule) => rule.id === targetRule.id);
+    if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return;
+
+    const reorderedRows = [...sectionRows];
+    const [movedRow] = reorderedRows.splice(fromIndex, 1);
+    reorderedRows.splice(toIndex, 0, movedRow);
+    setActionMessage(null);
+
+    try {
+      await Promise.all(
+        reorderedRows.map((rule, index) =>
+          updateSequenceRuleMutation.mutateAsync({
+            body: sequencePayloadFromRule(rule, { sequenceNumber: 10_000 + index + 1 }),
+            id: rule.id
+          })
+        )
+      );
+      await Promise.all(
+        reorderedRows.map((rule, index) =>
+          updateSequenceRuleMutation.mutateAsync({
+            body: sequencePayloadFromRule(rule, { sequenceNumber: index + 1 }),
+            id: rule.id
+          })
+        )
+      );
+      await sequenceRulesQuery.refetch();
+      setActionMessage(`Updated ${recordingSectionLabel(targetRule.recordingSection)} sequence order.`);
+    } catch (error) {
+      setActionMessage(readableError(error, 'Sequence order could not be updated.'));
+    } finally {
+      setDraggedSequenceRuleId(null);
     }
   }
 
@@ -811,8 +848,16 @@ export function AdminRecordingCandidatesPage() {
     setActionMessage(null);
     try {
       await deleteSequenceRuleMutation.mutateAsync(rule.id);
+      const sectionRows = sequenceRowsFor(rule.recordingSection ?? 'other_workshops', sequenceRules, rule.programKey).filter((row) => row.id !== rule.id);
+      await Promise.all(
+        sectionRows.map((row, index) =>
+          updateSequenceRuleMutation.mutateAsync({
+            body: sequencePayloadFromRule(row, { sequenceNumber: index + 1 }),
+            id: row.id
+          })
+        )
+      );
       await sequenceRulesQuery.refetch();
-      if (editingSequenceId === rule.id) resetSequenceForm([rule.programKey]);
       setActionMessage('Recording sequence deleted.');
     } catch (error) {
       setActionMessage(readableError(error, 'Recording sequence could not be deleted.'));
@@ -920,30 +965,102 @@ export function AdminRecordingCandidatesPage() {
 
   function renderSequenceManager() {
     if (!showSequenceManager) return null;
-    const selectedProgramKeys = Array.from(new Set(sequenceForm.programKeys.map((programKey) => programKey.trim().toLowerCase()).filter(Boolean)));
+    const selectedProgramKeys = selectedSequenceProgramKeys();
     const visibleRules = sequenceRules
       .filter((rule) => selectedProgramKeys.length === 0 || selectedProgramKeys.includes(rule.programKey))
-      .sort((left, right) => left.programKey.localeCompare(right.programKey) || left.sequenceNumber - right.sequenceNumber);
+      .sort((left, right) => left.programKey.localeCompare(right.programKey) || (left.recordingSection ?? '').localeCompare(right.recordingSection ?? '') || left.sequenceNumber - right.sequenceNumber);
     const isBusy = createSequenceRuleMutation.isPending || updateSequenceRuleMutation.isPending || deleteSequenceRuleMutation.isPending;
-    const selectedSequenceTitleValue =
-      sequenceCustomTitleMode || (sequenceForm.title && !workshopTopicOptions.includes(sequenceForm.title)) ? customWorkshopTopicValue : sequenceForm.title;
+
+    function titleOptionsFor(ruleTitle: string) {
+      return workshopTopicOptions.includes(ruleTitle) ? workshopTopicOptions : [ruleTitle, ...workshopTopicOptions].filter(Boolean);
+    }
+
+    function renderSection(section: AdminRecordingSection) {
+      const sectionRules = sequenceRowsFor(section, visibleRules);
+      return (
+        <section className="admin-recording-sequence-section" key={section}>
+          <header>
+            <div>
+              <h3>{recordingSectionLabel(section)}</h3>
+              <p>{sectionRules.length} workshop{sectionRules.length === 1 ? '' : 's'} sequenced</p>
+            </div>
+            <button className="admin-recording-mini-action" disabled={isBusy || selectedProgramKeys.length === 0 || workshopTopicOptions.length === 0} onClick={() => void addSequenceRow(section)} type="button">
+              <Plus size={13} />
+              Add workshop
+            </button>
+          </header>
+          <div className="admin-recording-sequence-section__rows">
+            {sectionRules.length > 0 ? (
+              sectionRules.map((rule) => (
+                <article
+                  className="admin-recording-sequence-builder-row"
+                  draggable={!isBusy}
+                  key={rule.id}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDragEnd={() => setDraggedSequenceRuleId(null)}
+                  onDragStart={() => setDraggedSequenceRuleId(rule.id)}
+                  onDrop={() => {
+                    if (draggedSequenceRuleId) void moveSequenceRule(draggedSequenceRuleId, rule);
+                  }}
+                >
+                  <button aria-label={`Drag sequence ${rule.sequenceNumber}`} className="admin-recording-sequence-drag" disabled={isBusy} type="button">
+                    <GripVertical size={16} />
+                  </button>
+                  <strong>Seq {rule.sequenceNumber}</strong>
+                  <label>
+                    <span>Workshop title</span>
+                    <select disabled={isBusy} value={rule.title} onChange={(event) => void updateSequenceRule(rule, { title: event.target.value }, 'Workshop title updated.')}>
+                      {titleOptionsFor(rule.title).map((title) => (
+                        <option key={title} value={title}>
+                          {title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Aliases</span>
+                    <input
+                      defaultValue={(rule.matchAliases ?? []).join(', ')}
+                      disabled={isBusy}
+                      onBlur={(event) => void updateSequenceRule(rule, { matchAliases: splitSequenceAliases(event.target.value) }, 'Aliases updated.')}
+                      placeholder="Optional aliases"
+                    />
+                  </label>
+                  <label>
+                    <span>Status</span>
+                    <select disabled={isBusy} value={rule.status} onChange={(event) => void updateSequenceRule(rule, { status: event.target.value as 'active' | 'inactive' }, 'Status updated.')}>
+                      <option value="active">Active</option>
+                      <option value="inactive">Inactive</option>
+                    </select>
+                  </label>
+                  <span>{programLabelFor(programs, rule.programKey)}</span>
+                  <button className="admin-recording-mini-action admin-recording-mini-action--danger" disabled={isBusy} onClick={() => void deleteSequenceRule(rule)} type="button">
+                    <Trash2 size={13} />
+                    Delete
+                  </button>
+                </article>
+              ))
+            ) : (
+              <p className="admin-recording-sequence-empty">No workshops sequenced in this section yet.</p>
+            )}
+          </div>
+        </section>
+      );
+    }
 
     return (
       <section className="admin-recording-sequence-manager" aria-label="Recording sequence manager">
         <div className="admin-recording-panel__header">
           <div>
             <h2>Sequence Manager</h2>
-            <p>Define program-level recording order by workshop title and optional aliases. Unmatched recordings stay latest-first.</p>
+            <p>Build section-wise recording playlists by selecting workshop titles. Drag rows within a section to adjust their sequence.</p>
           </div>
           <button className="admin-recording-action" onClick={() => setShowSequenceManager(false)} type="button">
             Close
           </button>
         </div>
         {sequenceRulesQuery.isError ? <div className="workshop-error-note">Sequence rules could not be loaded. Existing recording operations are still available.</div> : null}
-        <form className="admin-recording-sequence-form" onSubmit={(event) => {
-          event.preventDefault();
-          if (!isBusy) void saveSequenceRule();
-        }}>
+        <div className="admin-recording-sequence-form">
           <fieldset className="admin-recording-sequence-programs">
             <div className="admin-recording-sequence-programs__head">
               <span>Programs</span>
@@ -982,104 +1099,10 @@ export function AdminRecordingCandidatesPage() {
                 : 'Select one or more programs for this sequence.'}
             </small>
           </fieldset>
-          <label>
-            <span>Seq #</span>
-            <input
-              min="1"
-              onChange={(event) => setSequenceForm((current) => ({ ...current, sequenceNumber: event.target.value }))}
-              placeholder="1"
-              type="number"
-              value={sequenceForm.sequenceNumber}
-            />
-          </label>
-          <label className="admin-recording-sequence-form__wide admin-recording-sequence-form__title">
-            <span>Workshop title to match</span>
-            <select value={selectedSequenceTitleValue} onChange={(event) => handleSequenceTopicSelect(event.target.value)}>
-              <option value="">Select workshop title</option>
-              {workshopTopicOptions.map((title) => (
-                <option key={title} value={title}>
-                  {title}
-                </option>
-              ))}
-              <option value={customWorkshopTopicValue}>Custom title</option>
-            </select>
-            {sequenceCustomTitleMode || selectedSequenceTitleValue === customWorkshopTopicValue ? (
-              <input
-                onChange={(event) => setSequenceForm((current) => ({ ...current, title: event.target.value }))}
-                placeholder="Type custom workshop title..."
-                value={sequenceForm.title}
-              />
-            ) : null}
-          </label>
-          <label>
-            <span>Section</span>
-            <select
-              value={sequenceForm.recordingSection}
-              onChange={(event) => setSequenceForm((current) => ({ ...current, recordingSection: event.target.value as AdminRecordingSection }))}
-            >
-              {recordingSectionOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Status</span>
-            <select value={sequenceForm.status} onChange={(event) => setSequenceForm((current) => ({ ...current, status: event.target.value as 'active' | 'inactive' }))}>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-            </select>
-          </label>
-          <label className="admin-recording-sequence-form__wide admin-recording-sequence-form__aliases">
-            <span>Aliases</span>
-            <textarea
-              onChange={(event) => setSequenceForm((current) => ({ ...current, aliases: event.target.value }))}
-              placeholder="Live Project Briefing Session&#10;Live Project Overview & Doubt Session"
-              rows={3}
-              value={sequenceForm.aliases}
-            />
-          </label>
-          <div className="admin-recording-edit-form__actions admin-recording-sequence-form__actions">
-            <button className="admin-recording-action admin-recording-action--primary" disabled={isBusy} type="submit">
-              {isBusy ? <Loader2 className="admin-spin" size={14} /> : <Save size={14} />}
-              {editingSequenceId ? 'Update sequence' : 'Add sequence'}
-            </button>
-            <button className="admin-recording-action" disabled={isBusy} onClick={() => resetSequenceForm()} type="button">
-              Reset
-            </button>
-          </div>
-        </form>
+        </div>
         {actionMessage ? <div className="workshop-error-note admin-recording-sequence-message">{actionMessage}</div> : null}
-        <div className="admin-recording-sequence-list">
-          {visibleRules.length > 0 ? (
-            visibleRules.map((rule) => (
-              <article className="admin-recording-sequence-row" key={rule.id}>
-                <div>
-                  <strong>Seq {rule.sequenceNumber}</strong>
-                  <span>{programLabelFor(programs, rule.programKey)}</span>
-                </div>
-                <div>
-                  <strong>{rule.title}</strong>
-                  <span>{recordingSectionLabel(rule.recordingSection)}</span>
-                  <span>{rule.matchAliases?.length ? `Aliases: ${rule.matchAliases.join(', ')}` : 'No aliases'}</span>
-                </div>
-                <StatusBadge tone={rule.status === 'active' ? 'safe' : 'neutral'}>{rule.status}</StatusBadge>
-                <div className="admin-recording-row__actions">
-                  <button className="admin-recording-action" disabled={isBusy} onClick={() => startEditingSequence(rule)} type="button">
-                    <Edit3 size={14} />
-                    Edit
-                  </button>
-                  <button className="admin-recording-action" disabled={isBusy} onClick={() => void deleteSequenceRule(rule)} type="button">
-                    <Trash2 size={14} />
-                    Delete
-                  </button>
-                </div>
-              </article>
-            ))
-          ) : (
-            <p className="admin-recording-sequence-empty">No sequence rules yet for this view.</p>
-          )}
+        <div className="admin-recording-sequence-builder">
+          {recordingSectionOptions.map((option) => renderSection(option.value))}
         </div>
       </section>
     );

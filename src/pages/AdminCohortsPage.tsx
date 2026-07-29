@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
+import { PortalToast } from '../components/PortalToast';
 import { StatusBadge } from '../components/StatusBadge';
 import {
   AdminCohort,
@@ -1276,13 +1277,12 @@ export function AdminCohortsPage() {
       </section>
 
       {actionMessage ? (
-        <div className={isFailureMessage(actionMessage) ? 'admin-student-toast admin-student-toast--error' : 'admin-student-toast'} role="status">
-          <strong>{isFailureMessage(actionMessage) ? 'Action failed' : 'Saved'}</strong>
-          <span>{actionMessage}</span>
-          <button aria-label="Dismiss message" onClick={() => setActionMessage(null)} type="button">
-            <X size={14} />
-          </button>
-        </div>
+        <PortalToast
+          message={actionMessage}
+          onDismiss={() => setActionMessage(null)}
+          title={isFailureMessage(actionMessage) ? 'Action failed' : 'Saved'}
+          tone={isFailureMessage(actionMessage) ? 'error' : 'success'}
+        />
       ) : null}
 
       {visibleCohorts.length > 0 ? (

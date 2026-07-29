@@ -18,6 +18,8 @@ const DAILY_EMAIL_LIMIT = 300;
 const DEFAULT_BATCH_SIZE = 50;
 const MAX_BATCH_SIZE = 100;
 const AUTH_EMAIL_COOLDOWN_MS = 60_000;
+const EMAIL_SERVICE_FEATURE_ID = 'email-service';
+const EMAIL_SERVICE_DISABLED_MESSAGE = 'Email delivery is temporarily disabled from Feature Control. Re-enable Email Delivery before sending emails.';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -74,6 +76,14 @@ function uniqueText(values: unknown[]) {
   return items;
 }
 
+function chunks<T>(values: T[], size: number) {
+  const batches: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    batches.push(values.slice(index, index + size));
+  }
+  return batches;
+}
+
 function splitTextList(value: unknown) {
   return text(value)
     .split(',')
@@ -104,6 +114,19 @@ function escHtml(value: unknown) {
 
 function plainTextToHtml(value: unknown) {
   return '<p>' + escHtml(value).replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
+}
+
+async function assertEmailServiceEnabled() {
+  const { data, error } = await admin
+    .from('feature_controls')
+    .select('status')
+    .eq('module_id', EMAIL_SERVICE_FEATURE_ID)
+    .maybeSingle();
+
+  if (error) throw new Error(`Email delivery switch could not be checked: ${error.message}`);
+  if (data && text(data.status).toLowerCase() !== 'show') {
+    throw new Error(EMAIL_SERVICE_DISABLED_MESSAGE);
+  }
 }
 
 function looksLikeHtml(value: unknown) {
@@ -217,8 +240,15 @@ async function assertPublicCaller(req: Request) {
   if (req.method !== 'POST') throw new Error('POST is required.');
 }
 
-function adminHasPermission(role: string, permission: AdminPermission) {
+function adminHasPermission(row: JsonRecord, permission: AdminPermission) {
+  const role = text(row.role, 'admin');
   if (role === 'super_admin') return true;
+
+  if (Array.isArray(row.permissions)) {
+    const permissions = row.permissions.map((item) => text(item)).filter(Boolean);
+    return permissions.includes(permission);
+  }
+
   if (role === 'admin') return permission === 'admin.students.invite';
   return false;
 }
@@ -227,23 +257,38 @@ async function assertAdminCaller(req: Request, permission: AdminPermission) {
   const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
   if (!bearer || bearer === anonKey) throw new Error('Admin session is required.');
 
-  const authClient = createClient(supabaseUrl, anonKey, {
-    auth: { persistSession: false },
-    global: { headers: { Authorization: `Bearer ${bearer}` } },
-  });
-  const { data: userData, error: userError } = await authClient.auth.getUser(bearer);
+  let userData: { user?: { email?: string | null; id?: string | null } | null };
+  let userError: { message?: string } | null = null;
+  try {
+    const result = await admin.auth.getUser(bearer);
+    userData = result.data;
+    userError = result.error;
+  } catch (error) {
+    throw new Error(`Admin session lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const email = normalizeEmail(userData.user?.email);
-  if (userError || !userData.user?.id || !email) throw new Error('Admin session is invalid.');
+  if (userError || !userData.user?.id || !email) throw new Error(`Admin session is invalid${userError?.message ? `: ${userError.message}` : '.'}`);
 
-  const { data, error } = await admin
+  const { data: authRows, error: authLookupError } = await admin
     .from('admin_users')
-    .select('id,email,status,role,auth_user_id,full_name')
-    .or(`auth_user_id.eq.${userData.user.id},email.eq.${email}`)
-    .limit(2);
-  if (error) throw new Error(error.message);
-  const row = (data || []).find((item) => item.auth_user_id === userData.user?.id) || (data || []).find((item) => normalizeEmail(item.email) === email);
+    .select('id,email,status,role,auth_user_id,full_name,permissions')
+    .eq('auth_user_id', userData.user.id)
+    .limit(1);
+  if (authLookupError) throw new Error(`Admin profile auth lookup failed: ${authLookupError.message}`);
+
+  let row = authRows?.[0] || null;
+  if (!row) {
+    const { data: emailRows, error: emailLookupError } = await admin
+      .from('admin_users')
+      .select('id,email,status,role,auth_user_id,full_name,permissions')
+      .eq('email', email)
+      .limit(1);
+    if (emailLookupError) throw new Error(`Admin profile email lookup failed: ${emailLookupError.message}`);
+    row = emailRows?.[0] || null;
+  }
+
   if (!row || row.status !== 'active') throw new Error('Active admin access is required.');
-  if (!adminHasPermission(text(row.role, 'admin'), permission)) throw new Error('This admin role is not allowed to send this email.');
+  if (!adminHasPermission(asRecord(row), permission)) throw new Error('This admin role is not allowed to send this email.');
   return asRecord(row);
 }
 
@@ -453,8 +498,12 @@ async function activeLmsStudents() {
     .select('id,student_id,email,full_name,active,auth_user_id,cohort_name,college_name,duration,live_project_role_ids,onboarding_mail_status,program_name,project_start_date,track_role_ids,you_are_from')
     .eq('active', true)
     .limit(10000);
-  if (error) throw new Error(error.message);
-  return enrichStudentsWithCohortDetails((data || []).map(asRecord));
+  if (error) throw new Error(`Students table lookup failed: ${error.message}`);
+  try {
+    return await enrichStudentsWithCohortDetails((data || []).map(asRecord));
+  } catch (error) {
+    throw new Error(`Student enrichment failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 async function cohortsByNames(cohortNames: string[]) {
@@ -487,35 +536,43 @@ async function enrichStudentsWithCohortDetails(students: JsonRecord[]) {
   const studentIds = students.map((student) => text(student.id)).filter(Boolean);
   if (studentIds.length === 0) return students;
 
-  const { data: links, error: linkError } = await admin
-    .from('student_cohorts')
-    .select('student_id,cohort_name')
-    .in('student_id', studentIds)
-    .limit(20000);
-  if (linkError) throw new Error(linkError.message);
+  const links: JsonRecord[] = [];
+  for (const studentIdBatch of chunks(studentIds, 200)) {
+    const { data, error } = await admin
+      .from('student_cohorts')
+      .select('student_id,cohort_name')
+      .in('student_id', studentIdBatch)
+      .limit(5000);
+    if (error) throw new Error(`Student cohort links lookup failed: ${error.message}`);
+    links.push(...(data || []).map(asRecord));
+  }
 
-  const { data: programLinks, error: programLinkError } = await admin
-    .from('student_programs')
-    .select('student_id,program_key')
-    .in('student_id', studentIds)
-    .limit(20000);
-  if (programLinkError) throw new Error(programLinkError.message);
+  const programLinks: JsonRecord[] = [];
+  for (const studentIdBatch of chunks(studentIds, 200)) {
+    const { data, error } = await admin
+      .from('student_programs')
+      .select('student_id,program_key')
+      .in('student_id', studentIdBatch)
+      .limit(5000);
+    if (error) throw new Error(`Student program links lookup failed: ${error.message}`);
+    programLinks.push(...(data || []).map(asRecord));
+  }
 
-  const cohortNames = Array.from(new Set((links || []).map((row) => text(row.cohort_name)).filter(Boolean)));
+  const cohortNames = Array.from(new Set(links.map((row) => text(row.cohort_name)).filter(Boolean)));
   const cohorts = await cohortsByNames(cohortNames);
   const cohortByName = new Map(cohorts.map((cohort) => [text(cohort.name), cohort]));
   const programNameByKey = await programsByKeys([
     ...cohorts.map((cohort) => text(cohort.program_key)).filter(Boolean),
-    ...(programLinks || []).map((link) => text(link.program_key)).filter(Boolean),
+    ...programLinks.map((link) => text(link.program_key)).filter(Boolean),
   ]);
   const linksByStudent = new Map<string, JsonRecord[]>();
-  (links || []).forEach((link) => {
+  links.forEach((link) => {
     const studentId = text(link.student_id);
     if (!studentId) return;
     linksByStudent.set(studentId, [...(linksByStudent.get(studentId) || []), asRecord(link)]);
   });
   const programsByStudent = new Map<string, JsonRecord[]>();
-  (programLinks || []).forEach((link) => {
+  programLinks.forEach((link) => {
     const studentId = text(link.student_id);
     if (!studentId) return;
     programsByStudent.set(studentId, [...(programsByStudent.get(studentId) || []), asRecord(link)]);
@@ -797,7 +854,13 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
 
   if (sendMode === 'cohort_students') {
     if (cohortNames.length === 0) throw new Error('Select at least one cohort.');
-    const students = await applyRecipientFilters(await studentsForCohorts(cohortNames), recipientFilters);
+    let students: JsonRecord[];
+    try {
+      students = await studentsForCohorts(cohortNames);
+      students = await applyRecipientFilters(students, recipientFilters);
+    } catch (error) {
+      throw new Error(`Cohort recipient lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     recipients = students
       .map((student) => {
         const email = normalizeEmail(student.email);
@@ -805,7 +868,13 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
       })
       .filter((item) => item.email);
   } else if (sendMode === 'all_active_students') {
-    const students = await applyRecipientFilters(await activeLmsStudents(), recipientFilters);
+    let students: JsonRecord[];
+    try {
+      students = await activeLmsStudents();
+      students = await applyRecipientFilters(students, recipientFilters);
+    } catch (error) {
+      throw new Error(`Active student recipient lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     recipients = students
       .map((student) => {
         const email = normalizeEmail(student.email);
@@ -814,7 +883,12 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
       .filter((item) => item.email);
   } else if (sendMode === 'cohort_google_group') {
     if (cohortNames.length === 0) throw new Error('Select one cohort with a Google Group email.');
-    const cohorts = await cohortsByNames(cohortNames);
+    let cohorts: JsonRecord[];
+    try {
+      cohorts = await cohortsByNames(cohortNames);
+    } catch (error) {
+      throw new Error(`Google Group cohort lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     recipients = cohorts
       .map((cohort) => {
         const email = normalizeEmail(payload.googleGroupEmail || payload.google_group_email || cohort.google_group);
@@ -823,7 +897,12 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
       .filter((item) => item.email);
   } else {
     if (directEmails.length === 0) throw new Error('Add at least one email recipient.');
-    const studentsByEmail = await studentsByEmails(directEmails);
+    let studentsByEmail: Map<string, JsonRecord>;
+    try {
+      studentsByEmail = await studentsByEmails(directEmails);
+    } catch (error) {
+      throw new Error(`Direct recipient lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     recipients = directEmails.map((email) => {
       const student = studentsByEmail.get(email) || { email };
       return { email, name: text(student.full_name, email), relatedId: text(student.id, email), relatedType: student.id ? 'student' : 'email', vars: studentVars(student, email, params) };
@@ -833,9 +912,19 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
   const recipientLimit = sendMode === 'all_active_students' ? 10000 : 1000;
   recipients = Array.from(new Map(recipients.map((recipient) => [recipient.email, recipient])).values()).slice(0, recipientLimit);
 
-  const alreadySentEmails = testMode ? new Set<string>() : await sentEmailsToday(templateUsedKey, category);
+  let alreadySentEmails: Set<string>;
+  try {
+    alreadySentEmails = testMode ? new Set<string>() : await sentEmailsToday(templateUsedKey, category);
+  } catch (error) {
+    throw new Error(`Sent-today lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const deliverableRecipients = recipients.filter((recipient) => !alreadySentEmails.has(recipient.email));
-  const usedToday = await sentCountToday();
+  let usedToday: number;
+  try {
+    usedToday = await sentCountToday();
+  } catch (error) {
+    throw new Error(`Daily usage lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const remainingToday = Math.max(0, DAILY_EMAIL_LIMIT - usedToday);
   const batchSize = clampBatchSize(payload.batchSize || payload.batch_size);
   const willSend = Math.min(deliverableRecipients.length, batchSize, remainingToday);
@@ -1318,14 +1407,17 @@ Deno.serve(async (req) => {
     const action = text(payload.action);
     if (action === 'sendSupabaseStudentPasswordSetup') {
       await assertPublicCaller(req);
+      await assertEmailServiceEnabled();
       return json(200, await handlePasswordSetup(payload));
     }
     if (action === 'sendAdminStudentCommunication') {
       const actor = await assertAdminCaller(req, 'admin.email.manage');
+      await assertEmailServiceEnabled();
       return json(200, await handleAdminStudentCommunication(payload, actor));
     }
     if (action === 'processQueuedStudentEmail') {
       const actor = await assertAdminCaller(req, 'admin.students.invite');
+      await assertEmailServiceEnabled();
       return json(200, await processQueuedStudentEmail(payload, actor));
     }
     if (action === 'resolveAdminStudentCommunication') {
