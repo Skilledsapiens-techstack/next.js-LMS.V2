@@ -1,0 +1,23 @@
+Hostinger deployment package: student portal UX + recordings alignment
+Date: 2026-07-30
+
+Build command:
+npm run build
+
+Package contents:
+- Fresh Vite production build from dist/
+- Includes .htaccess for SPA route refresh support on Hostinger
+
+Main included updates:
+- Student portal My Programs role/learning-track display improvements
+- Recording tabs open by selected program from program cards
+- Recording tab labels and active-chip visual balance
+- Dashboard learner profile live project role wording and styling
+- Dashboard Certificate Path moved above Student Action Center
+- Student Action Center text and Live Project summary copy cleanup
+- Removed visible duration metadata from student recordings, workshops, doubt sessions, and dashboard next session
+- Project submissions labels updated: Submitted on, Submission ID
+- Sidebar label updated: My Project Submissions
+
+Deploy instruction:
+Upload/extract the contents of this folder into Hostinger public_html.
