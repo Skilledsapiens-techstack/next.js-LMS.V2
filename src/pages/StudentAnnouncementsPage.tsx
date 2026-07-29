@@ -75,6 +75,28 @@ function isExpired(announcement: StudentAnnouncement) {
   return endDate.getTime() < Date.now();
 }
 
+function announcementDateTime(announcement: StudentAnnouncement) {
+  const candidates = [announcement.startDate, announcement.updatedAt, announcement.endDate];
+  for (const value of candidates) {
+    if (!value) continue;
+    const time = new Date(value).getTime();
+    if (!Number.isNaN(time)) return time;
+  }
+  return 0;
+}
+
+function compareAnnouncementsLatestFirst(left: StudentAnnouncement, right: StudentAnnouncement) {
+  const dateDifference = announcementDateTime(right) - announcementDateTime(left);
+  if (dateDifference !== 0) return dateDifference;
+  if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
+  if (left.priority !== right.priority) return left.priority === 'urgent' ? -1 : 1;
+  return right.title.localeCompare(left.title);
+}
+
+function isAutoPortalUpdateAnnouncement(announcement: StudentAnnouncement) {
+  return announcement.systemGenerated === true && announcement.sourceType === 'daily_portal_updates';
+}
+
 function matchesFilters(announcement: StudentAnnouncement, filters: FilterState) {
   if (filters.date === 'active' && isExpired(announcement)) return false;
   if (filters.date === 'expired' && !isExpired(announcement)) return false;
@@ -90,6 +112,7 @@ function matchesFilters(announcement: StudentAnnouncement, filters: FilterState)
 function AnnouncementCard({ announcement }: { announcement: StudentAnnouncement }) {
   const dateWindow =
     announcement.startDate || announcement.endDate ? `${formatDate(announcement.startDate)} - ${formatDate(announcement.endDate)}` : formatDate(announcement.updatedAt);
+  const showLink = Boolean(announcement.linkUrl) && !isAutoPortalUpdateAnnouncement(announcement);
 
   return (
     <article className={announcement.pinned ? 'announcement-card announcement-card--pinned' : 'announcement-card'}>
@@ -110,7 +133,7 @@ function AnnouncementCard({ announcement }: { announcement: StudentAnnouncement 
         </div>
       </div>
 
-      {announcement.linkUrl ? (
+      {showLink ? (
         <a className="action-button announcement-card__link" href={announcement.linkUrl} rel="noreferrer" target="_blank">
           <ExternalLink size={16} />
           {announcement.linkLabel ?? 'Open link'}
@@ -133,7 +156,10 @@ export function StudentAnnouncementsPage() {
   const totalPages = data?.totalPages ?? 1;
   const hasPagination = useMemo(() => Boolean(data && (data.hasPreviousPage || data.hasNextPage || totalPages > 1)), [data, totalPages]);
   const cohortOptions = useMemo(() => uniqueSorted(cohortsQuery.data?.items.map((cohort) => cohort.name) ?? []), [cohortsQuery.data?.items]);
-  const filteredItems = useMemo(() => data?.items.filter((announcement) => matchesFilters(announcement, filters)) ?? [], [data?.items, filters.audience, filters.date]);
+  const filteredItems = useMemo(
+    () => [...(data?.items ?? [])].filter((announcement) => matchesFilters(announcement, filters)).sort(compareAnnouncementsLatestFirst),
+    [data?.items, filters.audience, filters.date]
+  );
 
   function setFilter(key: keyof FilterState, value: string) {
     const next = new URLSearchParams(searchParams);

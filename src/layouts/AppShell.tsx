@@ -1,4 +1,4 @@
-import { Bell, LogOut, Menu, MessageCircle, ShieldCheck, X } from 'lucide-react';
+import { Bell, ExternalLink, LogOut, Menu, ShieldCheck, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
@@ -6,6 +6,7 @@ import { NavItem, Portal } from '../app/routeConfig';
 import { useAuth } from '../auth/AuthProvider';
 import { MODULE_VIEW_PERMISSIONS, hasAdminPermission, type AdminPermission } from '../auth/adminPermissions';
 import { StatusBadge } from '../components/StatusBadge';
+import { WhatsAppContactWidget } from '../components/WhatsAppContactWidget';
 import { useStudentFeatureControls } from '../features/useFeatureControls';
 import { StudentAnnouncement, useStudentAnnouncements } from '../features/student/useStudentAnnouncements';
 import { apiGet, apiPost } from '../lib/supabaseApi';
@@ -26,7 +27,7 @@ type AdminProfile = {
 };
 
 const studentSections: NavSection[] = [
-  { title: 'Main', moduleIds: ['dashboard', 'cohorts', 'recordings', 'schedule', 'resources', 'career-readiness'] },
+  { title: 'Main', moduleIds: ['dashboard', 'cohorts', 'recordings', 'schedule', 'doubt-sessions', 'resources', 'career-readiness'] },
   { title: 'My Progress', moduleIds: ['projects', 'project-submissions', 'certificates'] },
   { title: 'Community', moduleIds: ['community'] },
   { title: 'Help', moduleIds: ['announcements', 'support', 'email-center'] },
@@ -85,13 +86,6 @@ function announcementMeta(announcement: StudentAnnouncement) {
   return 'Announcement';
 }
 
-function normalizeWhatsAppNumber(value: unknown) {
-  if (typeof value !== 'string') return '';
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-  return trimmed.replace(/[^\d]/g, '');
-}
-
 export function AppShell({ navItems, portal }: AppShellProps) {
   const isLearnerShell = portal === 'student' || portal === 'guest';
   const portalLabel = isLearnerShell ? 'Student Portal' : 'Admin Portal';
@@ -128,12 +122,6 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   const countLabel = activeAnnouncementCount > 99 ? '99+' : String(activeAnnouncementCount);
   const bannerAnnouncement = announcementItems.find((item) => item.pinned || item.priority === 'urgent');
   const whatsappFeature = featureControlsQuery.data?.items.find((item) => item.moduleId === 'whatsapp-widget');
-  const whatsappNumber = normalizeWhatsAppNumber(whatsappFeature?.settings?.whatsapp_number ?? whatsappFeature?.settings?.whatsappNumber);
-  const whatsappLabel = whatsappFeature?.upcomingMessage?.trim() || 'Contact Program Coordinator';
-  const whatsappUrl = whatsappNumber
-    ? `https://wa.me/${whatsappNumber}?text=${encodeURIComponent('Hi, I need help with my Skilled Sapiens LMS account.')}`
-    : '';
-  const showWhatsAppWidget = portal === 'student' && whatsappFeature?.status === 'show' && Boolean(whatsappUrl);
 
   useEffect(() => {
     setIsAnnouncementOpen(false);
@@ -221,6 +209,10 @@ export function AppShell({ navItems, portal }: AppShellProps) {
         </nav>
 
         <div className="sidebar-footer">
+          <a className="sidebar-website-link" href="https://skilledsapiens.com/" rel="noreferrer" target="_blank">
+            <ExternalLink size={14} />
+            <span>Visit our website</span>
+          </a>
           <button className="sidebar-logout" type="button" onClick={handleSignOut}>
             <LogOut size={18} />
             <span>Log out</span>
@@ -308,12 +300,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
           <Outlet />
         </main>
 
-        {showWhatsAppWidget ? (
-          <a className="whatsapp-contact-widget" href={whatsappUrl} rel="noreferrer" target="_blank">
-            <MessageCircle size={18} />
-            <span>{whatsappLabel}</span>
-          </a>
-        ) : null}
+        <WhatsAppContactWidget feature={portal === 'student' ? whatsappFeature : undefined} />
       </div>
     </div>
   );

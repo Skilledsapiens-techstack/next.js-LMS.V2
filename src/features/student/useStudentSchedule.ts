@@ -4,6 +4,7 @@ import { apiGet } from '../../lib/supabaseApi';
 import { PaginatedResponse } from './useStudentAnnouncements';
 
 export type StudentScheduleAccessType = 'free' | 'paid';
+export type StudentSessionType = 'workshop' | 'doubt_session';
 export type StudentScheduleStatus = 'Upcoming' | 'Scheduled' | 'Live' | 'Completed';
 
 export type StudentScheduleItem = {
@@ -21,6 +22,7 @@ export type StudentScheduleItem = {
   paymentLink?: string;
   price?: number | null;
   programKey?: string;
+  sessionType?: StudentSessionType;
   status: StudentScheduleStatus;
   time?: string;
   title: string;
@@ -33,6 +35,7 @@ export type StudentScheduleQuery = {
   limit?: number;
   page?: number;
   search?: string;
+  sessionType?: StudentSessionType | 'all';
   status?: StudentScheduleStatus | 'all';
 };
 
@@ -43,6 +46,7 @@ export function useStudentSchedule(query: StudentScheduleQuery) {
   const page = query.page ?? 1;
   const includePast = query.includePast ?? false;
   const search = query.search?.trim();
+  const sessionType = query.sessionType ?? 'all';
   const status = query.status ?? 'all';
 
   return useQuery({
@@ -56,10 +60,13 @@ export function useStudentSchedule(query: StudentScheduleQuery) {
           limit,
           page,
           search,
+          sessionType,
           status
         }
       }),
-    queryKey: ['student-schedule', accessToken, page, limit, accessType, includePast, status, search],
+    queryKey: ['student-schedule', accessToken, page, limit, accessType, includePast, status, search, sessionType],
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
     staleTime: 60_000
   });
 }

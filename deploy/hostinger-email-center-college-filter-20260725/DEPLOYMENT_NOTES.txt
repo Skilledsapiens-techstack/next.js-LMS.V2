@@ -1,0 +1,23 @@
+Hostinger deployment package: Email Center active students by college quick filter
+Date: 2026-07-25
+
+Scope:
+- Adds Email Center quick filter: Active students by college.
+- Selecting a college automatically targets All active LMS students.
+- Prevents the previous no-cohort selected flow from triggering a generic Edge Function error.
+- Updates the send summary to show the active college audience.
+- Adds responsive styling for the quick filter panel.
+
+Backend:
+- No Supabase migration required.
+- No Supabase Edge Function deployment required for this package.
+- Existing transactional-email Edge Function already supports all_active_students with collegeName recipientFilters.
+
+Hostinger upload:
+- Upload the contents of this folder to the site public_html root.
+- Keep .htaccess in the public_html root for SPA route refresh support.
+
+Validation:
+- npm run lint passed.
+- npm run build passed.
+- npm test -- --runInBand passed: 112 suites, 454 tests.

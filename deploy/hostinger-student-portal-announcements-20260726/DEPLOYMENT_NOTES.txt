@@ -1,0 +1,19 @@
+Hostinger Deployment Package
+Package: hostinger-student-portal-announcements-20260726
+Prepared: 26 Jul 2026
+
+Upload instructions:
+1. Upload the contents of this folder to Hostinger public_html.
+2. Keep .htaccess at the public_html root so direct routes such as /student/announcements work.
+3. Do not upload this zip file inside public_html after extraction.
+
+Included frontend changes:
+- Student announcements page shows scoped announcement history, including past announcements.
+- Student announcements sort latest first.
+- Auto-generated daily portal update announcements no longer show the Open dashboard CTA.
+- Auto-generated daily portal update title convention is now: Today's Portal Updates | DD Mon YYYY.
+- Recent student sidebar, certificates, resources, recordings, submissions, career readiness, and doubt-session UI updates from the current build are included.
+
+Supabase status:
+- The related database migrations were already pushed to the linked Supabase project.
+- Copies are included under supabase-migrations/ for audit/reference only.

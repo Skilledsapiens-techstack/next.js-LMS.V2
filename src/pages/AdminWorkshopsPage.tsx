@@ -8,6 +8,7 @@ import { AdminCohort, useAdminCohorts } from '../features/admin/useAdminCohorts'
 import { createTopicDraft, customWorkshopTopicValue, loadSavedWorkshopTopics, saveWorkshopTopics, uniqueTitles, WorkshopTopicDraft } from '../lib/workshopTopics';
 import {
   AdminWorkshop,
+  AdminWorkshopSessionType,
   AdminWorkshopStatus,
   useCancelAdminWorkshop,
   useAdminWorkshops,
@@ -26,6 +27,7 @@ type WorkshopForm = {
   date: string;
   durationMinutes: string;
   selectedWorkshopId?: string;
+  sessionType: AdminWorkshopSessionType;
   time: string;
   title: string;
   zoomAccount: string;
@@ -37,6 +39,7 @@ const emptyWorkshopForm: WorkshopForm = {
   customJoinUrl: '',
   date: '',
   durationMinutes: '90',
+  sessionType: 'workshop',
   time: '',
   title: '',
   zoomAccount: 'Zoom Account 1'
@@ -57,6 +60,10 @@ function formatDate(value: string | undefined) {
 
 function formatDateTime(item: AdminWorkshop) {
   return [item.cohortNames[0] ?? item.programKey ?? 'No cohort', formatDate(item.date), item.time, item.durationMinutes].filter(Boolean).join(' · ');
+}
+
+function sessionTypeLabel(value: AdminWorkshopSessionType | undefined) {
+  return value === 'doubt_session' ? 'Doubt Session' : 'Workshop';
 }
 
 function statusTone(status: AdminWorkshopStatus) {
@@ -131,6 +138,7 @@ function workshopToForm(item: AdminWorkshop): WorkshopForm {
     date: toDateInput(item.date),
     durationMinutes: item.durationMinutes ? String(item.durationMinutes) : '90',
     selectedWorkshopId: item.id,
+    sessionType: item.sessionType ?? 'workshop',
     time: item.time ?? '',
     title: item.title,
     zoomAccount
@@ -335,6 +343,7 @@ export function AdminWorkshopsPage() {
       customJoinUrl: isCustomLinkSource(form.zoomAccount) ? form.customJoinUrl.trim() : undefined,
       date: form.date,
       durationMinutes: durationMinutes || undefined,
+      sessionType: form.sessionType,
       time: form.time || undefined,
       title,
       workshopStatus: 'Scheduled' as AdminWorkshopStatus,
@@ -363,9 +372,9 @@ export function AdminWorkshopsPage() {
     setActionMessage(null);
     try {
       await markCompletedMutation.mutateAsync(item.id);
-      setActionMessage('Workshop marked completed and moved to Recordings > Add Link.');
+      setActionMessage('Meeting marked completed and moved to Recordings > Add Link.');
     } catch (error) {
-      setActionMessage(readableError(error, 'Workshop could not be marked completed.'));
+      setActionMessage(readableError(error, 'Meeting could not be marked completed.'));
     }
   }
 
@@ -398,7 +407,7 @@ export function AdminWorkshopsPage() {
       setCustomTitleMode(false);
       setForm((current) => ({ ...current, title: '' }));
     }
-    setActionMessage('Workshop topic dropdown updated.');
+    setActionMessage('Meeting topic dropdown updated.');
     window.setTimeout(() => setIsSavingTopics(false), 700);
   }
 
@@ -446,7 +455,7 @@ export function AdminWorkshopsPage() {
       <div className="metric-grid workshop-kpi-grid">
         <article className="metric-tile">
           <CalendarDays size={18} />
-          <span>Total Workshops</span>
+          <span>Total Meetings</span>
           <strong>{total}</strong>
         </article>
         <article className="metric-tile">
@@ -484,7 +493,7 @@ export function AdminWorkshopsPage() {
                 Session Title <b>*</b>
               </span>
               <select value={selectedTopicValue} onChange={(event) => handleTopicSelect(event.target.value)}>
-                <option value="">Select workshop topic</option>
+                <option value="">Select meeting topic</option>
                 {workshopTopicOptions.map((title) => (
                   <option key={title} value={title}>
                     {title}
@@ -493,8 +502,18 @@ export function AdminWorkshopsPage() {
                 <option value={customWorkshopTopicValue}>Custom topic</option>
               </select>
               {selectedTopicValue === customWorkshopTopicValue ? (
-                <input value={form.title} onChange={(event) => updateForm('title', event.target.value)} placeholder="Type custom workshop title..." />
+                <input value={form.title} onChange={(event) => updateForm('title', event.target.value)} placeholder="Type custom meeting title..." />
               ) : null}
+            </label>
+
+            <label className="announcement-field">
+              <span>
+                Session Type <b>*</b>
+              </span>
+              <select value={form.sessionType} onChange={(event) => updateForm('sessionType', event.target.value as AdminWorkshopSessionType)}>
+                <option value="workshop">Workshop</option>
+                <option value="doubt_session">Doubt Session</option>
+              </select>
             </label>
 
             <label className="announcement-field">
@@ -503,6 +522,9 @@ export function AdminWorkshopsPage() {
               </span>
               <input value={form.date} onChange={(event) => updateForm('date', event.target.value)} type="date" />
             </label>
+            <p className="workshop-field-note announcement-field--wide">
+              {form.sessionType === 'doubt_session' ? 'Shown in the student Doubt Sessions module.' : 'Shown in the student Upcoming Workshops module.'}
+            </p>
             <label className="announcement-field">
               <span>
                 Time (IST) <b>*</b>
@@ -657,6 +679,7 @@ export function AdminWorkshopsPage() {
                           <h3>{item.title}</h3>
                           <p>
                             <StatusBadge tone={isAdminCompleted ? 'safe' : statusTone(item.status)}>{isAdminCompleted ? 'Completed' : isCancelled ? 'Archived' : item.status}</StatusBadge>
+                            <StatusBadge tone="neutral">{sessionTypeLabel(item.sessionType)}</StatusBadge>
                             <span>{formatDateTime(item)}</span>
                           </p>
                           <p>
@@ -715,7 +738,7 @@ export function AdminWorkshopsPage() {
         <div className="announcement-panel__header announcement-panel__header--row">
           <div>
             <span className="section-eyebrow">DROPDOWN CONTROLLER</span>
-            <h2 id="workshop-topic-manager-title">Workshop Topics</h2>
+            <h2 id="workshop-topic-manager-title">Meeting Topics</h2>
           </div>
           <div className="workshop-topic-header-actions">
             {isTopicManagerOpen ? (
@@ -735,11 +758,11 @@ export function AdminWorkshopsPage() {
             {topicDrafts.map((topic) => (
               <div className="workshop-topic-row" key={topic.id}>
                 <input
-                  aria-label="Workshop topic"
+                  aria-label="Meeting topic"
                   readOnly={!topic.isEditing}
                   value={topic.title}
                   onChange={(event) => updateTopicDraft(topic.id, event.target.value)}
-                  placeholder="Workshop topic title"
+                  placeholder="Meeting topic title"
                   type="text"
                 />
                 <button className={topic.isEditing ? 'workshop-topic-action workshop-topic-action--done' : 'workshop-topic-action workshop-topic-action--edit'} onClick={() => toggleTopicDraftEditing(topic.id)} type="button">

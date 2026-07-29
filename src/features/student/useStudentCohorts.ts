@@ -10,6 +10,8 @@ export type StudentCohort = {
   domainKey?: string;
   endDate?: string;
   id: string;
+  liveProjectRoleIds?: string[];
+  liveProjectRoles?: string[];
   name: string;
   programKey?: string;
   programName?: string;

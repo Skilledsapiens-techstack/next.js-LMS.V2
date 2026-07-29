@@ -4,6 +4,9 @@ const SHEET_NAMES = {
   liveProjects: 'Live Projects - Import Ready',
   config: 'Mapping / Config',
   errors: 'Errors / Needs Review',
+  certificateRequests: 'Certificate Requests',
+  certificateLog: 'Certificate Log',
+  certificateConfig: 'Certificate Config',
 };
 
 const IMPORT_HEADERS = [
@@ -71,6 +74,88 @@ const ERROR_HEADERS = [
   'review_notes',
 ];
 
+const CERTIFICATE_REQUEST_HEADERS = [
+  'generate',
+  'certificateType',
+  'fullName',
+  'email',
+  'programName',
+  'projectRoleName',
+  'issueDate',
+  'startDate',
+  'endDate',
+  'certificateId',
+  'status',
+  'pdfUrl',
+  'generatedAt',
+  'notes',
+];
+
+const CERTIFICATE_LOG_HEADERS = [
+  'generatedAt',
+  'certificateType',
+  'certificateId',
+  'fullName',
+  'email',
+  'title',
+  'templateId',
+  'pdfFileId',
+  'pdfUrl',
+  'status',
+  'notes',
+];
+
+const CERTIFICATE_TYPES = {
+  program: 'Program Completion',
+  liveProject: 'Live Project',
+};
+
+const CERTIFICATE_CONFIG = {
+  programTemplateId: '1Ns4_j5iXBqZuwLUPwav_0iVraBU9HZCGyVh9ezTRPPU',
+  liveProjectTemplateId: '1GcwPuBEKjVui5oZCbcZV_QAhn8mhfmWOhLa0cWc-t2I',
+  programFolderId: '1DboLyHaKHsWcutPKIWxAxbAgm0w2_6U5',
+  liveProjectFolderId: '1H6dWXL0duWRB_DiGgNfN9Y_lIhGCQPs1',
+  programPrefix: 'CAP-PC-2026',
+  liveProjectPrefix: 'CAP-LP-2026',
+};
+
+const PROGRAM_PLACEHOLDERS = [
+  '{{Student Name}}',
+  '{{Program Name}}',
+  '{{Certificate ID}}',
+  '{{Issue Date}}',
+];
+
+const LIVE_PROJECT_PLACEHOLDERS = [
+  '{{Student Name}}',
+  '{{Project Role Name}}',
+  '{{Certificate ID}}',
+  '{{Start Date}}',
+  '{{End Date}}',
+];
+
+const DROPDOWN_VALUES = {
+  certificateTypes: [
+    CERTIFICATE_TYPES.program,
+    CERTIFICATE_TYPES.liveProject,
+  ],
+  certificateStatuses: [
+    'Ready',
+    'Generated',
+    'Failed',
+    'Hold',
+  ],
+  personalMentor: [
+    'Yes',
+    'No',
+  ],
+  yearFrom: [
+    '1st Year',
+    '2nd Year',
+    'others',
+  ],
+};
+
 const CEP_ROLES = [
   'Equity Research & Financial Modeling Analyst (Sell Side Role)',
   'Portfolio Manager - Quantitative Finance (Buy Side Role)',
@@ -110,6 +195,16 @@ function onOpen() {
     .addItem('Run Sample CEP Test', 'testCepPayment')
     .addItem('Run Sample Live Project Test', 'testLiveProjectPayment')
     .addToUi();
+
+  SpreadsheetApp.getUi()
+    .createMenu('Certificates')
+    .addItem('Setup Certificate Tabs', 'setupCertificateWorkbook')
+    .addItem('Verify Template Placeholders', 'verifyCertificateTemplates')
+    .addItem('Repair Template Placeholders', 'repairCertificateTemplates')
+    .addSeparator()
+    .addItem('Generate Selected Certificates', 'generateSelectedCertificates')
+    .addItem('Generate All Ready Certificates', 'generateReadyCertificates')
+    .addToUi();
 }
 
 function setupWorkbook() {
@@ -118,7 +213,10 @@ function setupWorkbook() {
   setupSheet_(ss, SHEET_NAMES.cep, IMPORT_HEADERS);
   setupSheet_(ss, SHEET_NAMES.liveProjects, IMPORT_HEADERS);
   setupSheet_(ss, SHEET_NAMES.errors, ERROR_HEADERS);
+  applyImportReadyValidations_(ss.getSheetByName(SHEET_NAMES.cep));
+  applyImportReadyValidations_(ss.getSheetByName(SHEET_NAMES.liveProjects));
   setupConfigSheet_(ss);
+  setupCertificateWorkbook();
   return ok_({ message: 'Workbook setup completed.' });
 }
 
@@ -476,6 +574,447 @@ function setupConfigSheet_(ss) {
     .setFontWeight('bold')
     .setBackground('#f3f6fb');
   sheet.autoResizeColumns(1, rows[0].length);
+}
+
+function setupCertificateWorkbook() {
+  const ss = getSpreadsheet_();
+  setupSheet_(ss, SHEET_NAMES.certificateRequests, CERTIFICATE_REQUEST_HEADERS);
+  setupSheet_(ss, SHEET_NAMES.certificateLog, CERTIFICATE_LOG_HEADERS);
+  setupCertificateConfigSheet_(ss);
+  applyCertificateRequestValidations_(ss.getSheetByName(SHEET_NAMES.certificateRequests));
+  return ok_({ message: 'Certificate tabs setup completed.' });
+}
+
+function setupCertificateConfigSheet_(ss) {
+  const sheet = getOrCreateSheet_(ss, SHEET_NAMES.certificateConfig);
+  const rows = [
+    ['Key', 'Value', 'Notes'],
+    ['programTemplateId', CERTIFICATE_CONFIG.programTemplateId, 'Google Slides template for Program Completion certificates'],
+    ['liveProjectTemplateId', CERTIFICATE_CONFIG.liveProjectTemplateId, 'Google Slides template for Live Project certificates'],
+    ['programFolderId', CERTIFICATE_CONFIG.programFolderId, 'PDF output folder for Program Completion certificates'],
+    ['liveProjectFolderId', CERTIFICATE_CONFIG.liveProjectFolderId, 'PDF output folder for Live Project certificates'],
+    ['programPrefix', CERTIFICATE_CONFIG.programPrefix, 'Program Completion certificate ID prefix'],
+    ['liveProjectPrefix', CERTIFICATE_CONFIG.liveProjectPrefix, 'Live Project certificate ID prefix'],
+    ['programPlaceholders', PROGRAM_PLACEHOLDERS.join(', '), 'Required placeholders in Program Completion template'],
+    ['liveProjectPlaceholders', LIVE_PROJECT_PLACEHOLDERS.join(', '), 'Required placeholders in Live Project template'],
+  ];
+
+  sheet.clear();
+  sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
+  sheet.setFrozenRows(1);
+  sheet.getRange(1, 1, 1, rows[0].length)
+    .setFontWeight('bold')
+    .setBackground('#f3f6fb');
+  sheet.autoResizeColumns(1, rows[0].length);
+}
+
+function applyImportReadyValidations_(sheet) {
+  if (!sheet) return;
+  const maxRows = Math.max(sheet.getMaxRows() - 1, 1);
+
+  setDropdownByHeader_(sheet, IMPORT_HEADERS, 'personalmentor', DROPDOWN_VALUES.personalMentor, maxRows);
+  setDropdownByHeader_(sheet, IMPORT_HEADERS, 'you_are_from', DROPDOWN_VALUES.yearFrom, maxRows);
+}
+
+function applyCertificateRequestValidations_(sheet) {
+  if (!sheet) return;
+  const maxRows = Math.max(sheet.getMaxRows() - 1, 1);
+
+  setCheckboxByHeader_(sheet, CERTIFICATE_REQUEST_HEADERS, 'generate', maxRows);
+  setDropdownByHeader_(sheet, CERTIFICATE_REQUEST_HEADERS, 'certificateType', DROPDOWN_VALUES.certificateTypes, maxRows);
+  setDropdownByHeader_(sheet, CERTIFICATE_REQUEST_HEADERS, 'status', DROPDOWN_VALUES.certificateStatuses, maxRows);
+  setDateValidationByHeader_(sheet, CERTIFICATE_REQUEST_HEADERS, 'issueDate', maxRows);
+  setDateValidationByHeader_(sheet, CERTIFICATE_REQUEST_HEADERS, 'startDate', maxRows);
+  setDateValidationByHeader_(sheet, CERTIFICATE_REQUEST_HEADERS, 'endDate', maxRows);
+
+  setHeaderNote_(sheet, CERTIFICATE_REQUEST_HEADERS, 'generate', 'Tick this box to include the row when using Generate Selected Certificates.');
+  setHeaderNote_(sheet, CERTIFICATE_REQUEST_HEADERS, 'certificateType', 'Choose Program Completion or Live Project.');
+  setHeaderNote_(sheet, CERTIFICATE_REQUEST_HEADERS, 'programName', 'Required for Program Completion certificates.');
+  setHeaderNote_(sheet, CERTIFICATE_REQUEST_HEADERS, 'projectRoleName', 'Required for Live Project certificates.');
+  setHeaderNote_(sheet, CERTIFICATE_REQUEST_HEADERS, 'status', 'Use Ready to include this row in Generate All Ready Certificates.');
+  setHeaderNote_(sheet, CERTIFICATE_REQUEST_HEADERS, 'certificateId', 'Leave blank to auto-generate CAP-PC-2026-0001 or CAP-LP-2026-0001 style IDs.');
+}
+
+function setDropdownByHeader_(sheet, headers, header, values, maxRows) {
+  const index = headers.indexOf(header);
+  if (index === -1) return;
+
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(values, true)
+    .setAllowInvalid(false)
+    .build();
+  sheet.getRange(2, index + 1, maxRows, 1).setDataValidation(rule);
+}
+
+function setCheckboxByHeader_(sheet, headers, header, maxRows) {
+  const index = headers.indexOf(header);
+  if (index === -1) return;
+  sheet.getRange(2, index + 1, maxRows, 1).insertCheckboxes();
+}
+
+function setDateValidationByHeader_(sheet, headers, header, maxRows) {
+  const index = headers.indexOf(header);
+  if (index === -1) return;
+
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireDate()
+    .setAllowInvalid(true)
+    .build();
+  sheet.getRange(2, index + 1, maxRows, 1).setDataValidation(rule);
+}
+
+function setHeaderNote_(sheet, headers, header, note) {
+  const index = headers.indexOf(header);
+  if (index === -1) return;
+  sheet.getRange(1, index + 1).setNote(note);
+}
+
+function verifyCertificateTemplates() {
+  const program = verifyPresentationPlaceholders_(
+    getCertificateConfigValue_('programTemplateId'),
+    PROGRAM_PLACEHOLDERS,
+    CERTIFICATE_TYPES.program
+  );
+  const liveProject = verifyPresentationPlaceholders_(
+    getCertificateConfigValue_('liveProjectTemplateId'),
+    LIVE_PROJECT_PLACEHOLDERS,
+    CERTIFICATE_TYPES.liveProject
+  );
+
+  const message = [
+    `${program.label}: ${program.missing.length ? `Missing ${program.missing.join(', ')}` : 'All placeholders found'}`,
+    `${liveProject.label}: ${liveProject.missing.length ? `Missing ${liveProject.missing.join(', ')}` : 'All placeholders found'}`,
+  ].join('\n');
+
+  Logger.log(message);
+  try {
+    SpreadsheetApp.getUi().alert('Certificate Template Check', message, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (err) {
+    // Editor executions do not have a spreadsheet UI. Menu executions do.
+  }
+  return { ok: true, program: program, liveProject: liveProject };
+}
+
+function repairCertificateTemplates() {
+  const liveProjectTemplateId = getCertificateConfigValue_('liveProjectTemplateId');
+  const presentation = SlidesApp.openById(liveProjectTemplateId);
+  const replacements = {
+    '{{Project Name}}': '{{Project Role Name}}',
+    '{{Role Name}}': '{{Project Role Name}}',
+    'Project Role Name': '{{Project Role Name}}',
+    'Human Resources & People Management Analyst': '{{Project Role Name}}',
+  };
+
+  Object.keys(replacements).forEach(source => {
+    presentation.replaceAllText(source, replacements[source]);
+  });
+  presentation.saveAndClose();
+
+  const result = verifyCertificateTemplates();
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
+function generateSelectedCertificates() {
+  const sheet = SpreadsheetApp.getActiveSheet();
+  if (!sheet || sheet.getName() !== SHEET_NAMES.certificateRequests) {
+    SpreadsheetApp.getUi().alert('Open the Certificate Requests tab and select the rows you want to generate.');
+    return;
+  }
+
+  const range = sheet.getActiveRange();
+  if (!range || range.getRow() < 2) {
+    SpreadsheetApp.getUi().alert('Select one or more request rows, not the header row.');
+    return;
+  }
+
+  const startRow = range.getRow();
+  const endRow = startRow + range.getNumRows() - 1;
+  const result = generateCertificateRows_(startRow, endRow, { selectedOnly: true });
+  SpreadsheetApp.getUi().alert('Certificate Generation', result.message, SpreadsheetApp.getUi().ButtonSet.OK);
+  return result;
+}
+
+function generateReadyCertificates() {
+  const requestSheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.certificateRequests);
+  if (!requestSheet || requestSheet.getLastRow() < 2) {
+    SpreadsheetApp.getUi().alert('No certificate requests found.');
+    return;
+  }
+
+  const result = generateCertificateRows_(2, requestSheet.getLastRow(), { selectedOnly: false });
+  SpreadsheetApp.getUi().alert('Certificate Generation', result.message, SpreadsheetApp.getUi().ButtonSet.OK);
+  return result;
+}
+
+function generateCertificateRows_(startRow, endRow, options) {
+  const ss = getSpreadsheet_();
+  const requestSheet = getOrCreateSheet_(ss, SHEET_NAMES.certificateRequests);
+  ensureHeaders_(requestSheet, CERTIFICATE_REQUEST_HEADERS);
+
+  const headers = requestSheet.getRange(1, 1, 1, requestSheet.getLastColumn()).getValues()[0];
+  const rowCount = endRow - startRow + 1;
+  const rows = requestSheet.getRange(startRow, 1, rowCount, headers.length).getValues();
+
+  let generated = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  rows.forEach((values, offset) => {
+    const rowNumber = startRow + offset;
+    const request = rowToObject_(headers, values);
+    if (isBlankCertificateRequest_(request)) return;
+
+    const status = String(request.status || '').trim().toLowerCase();
+    const shouldGenerate = isTruthy_(request.generate) || status === 'ready';
+
+    if (!shouldGenerate || request.pdfUrl) {
+      skipped += 1;
+      return;
+    }
+
+    try {
+      const output = generateCertificate_(request);
+      writeCertificateResult_(requestSheet, headers, rowNumber, output);
+      appendCertificateLog_(output);
+      generated += 1;
+    } catch (err) {
+      const message = err && err.message ? err.message : String(err);
+      writeCertificateFailure_(requestSheet, headers, rowNumber, message);
+      appendCertificateLog_(Object.assign({}, request, {
+        generatedAt: formatDate_(new Date()),
+        status: 'Failed',
+        notes: message,
+      }));
+      failed += 1;
+    }
+  });
+
+  return {
+    ok: failed === 0,
+    generated: generated,
+    skipped: skipped,
+    failed: failed,
+    message: `Generated: ${generated}\nSkipped: ${skipped}\nFailed: ${failed}`,
+  };
+}
+
+function generateCertificate_(request) {
+  const type = normalizeCertificateType_(request.certificateType);
+  const isProgram = type === CERTIFICATE_TYPES.program;
+  const templateId = getCertificateConfigValue_(isProgram ? 'programTemplateId' : 'liveProjectTemplateId');
+  const folderId = getCertificateConfigValue_(isProgram ? 'programFolderId' : 'liveProjectFolderId');
+  const folder = DriveApp.getFolderById(folderId);
+  const certificateId = request.certificateId || getNextCertificateId_(type);
+  const title = isProgram ? request.programName : request.projectRoleName;
+
+  validateCertificateRequest_(request, type, title);
+
+  const safeName = sanitizeFileName_(`${certificateId} - ${request.fullName} - ${title}`);
+  const copy = DriveApp.getFileById(templateId).makeCopy(`${safeName} - source`, folder);
+  const presentation = SlidesApp.openById(copy.getId());
+
+  const replacements = isProgram
+    ? {
+      '{{Student Name}}': request.fullName,
+      '{{Program Name}}': request.programName,
+      '{{Certificate ID}}': certificateId,
+      '{{Issue Date}}': formatCertificateDate_(request.issueDate || new Date()),
+    }
+    : {
+      '{{Student Name}}': request.fullName,
+      '{{Project Role Name}}': request.projectRoleName,
+      '{{Project Name}}': request.projectRoleName,
+      '{{Role Name}}': request.projectRoleName,
+      'Project Role Name': request.projectRoleName,
+      'Human Resources & People Management Analyst': request.projectRoleName,
+      '{{Certificate ID}}': certificateId,
+      '{{Start Date}}': formatCertificateDate_(request.startDate),
+      '{{End Date}}': formatCertificateDate_(request.endDate),
+    };
+
+  Object.keys(replacements).forEach(placeholder => {
+    presentation.replaceAllText(placeholder, String(replacements[placeholder] || ''));
+  });
+  presentation.saveAndClose();
+
+  const pdfBlob = DriveApp.getFileById(copy.getId()).getBlob().getAs(MimeType.PDF).setName(`${safeName}.pdf`);
+  const pdfFile = folder.createFile(pdfBlob);
+  copy.setTrashed(true);
+
+  return {
+    generatedAt: formatDate_(new Date()),
+    certificateType: type,
+    certificateId: certificateId,
+    fullName: request.fullName,
+    email: request.email || '',
+    title: title,
+    templateId: templateId,
+    pdfFileId: pdfFile.getId(),
+    pdfUrl: pdfFile.getUrl(),
+    status: 'Generated',
+    notes: '',
+  };
+}
+
+function validateCertificateRequest_(request, type, title) {
+  const missing = [];
+  if (!request.fullName) missing.push('fullName');
+  if (!type) missing.push('certificateType');
+  if (!title) missing.push(type === CERTIFICATE_TYPES.program ? 'programName' : 'projectRoleName');
+  if (type === CERTIFICATE_TYPES.liveProject) {
+    if (!request.startDate) missing.push('startDate');
+    if (!request.endDate) missing.push('endDate');
+  }
+  if (missing.length) throw new Error(`Missing required fields: ${missing.join(', ')}`);
+}
+
+function writeCertificateResult_(sheet, headers, rowNumber, output) {
+  setCellByHeader_(sheet, headers, rowNumber, 'certificateId', output.certificateId);
+  setCellByHeader_(sheet, headers, rowNumber, 'status', output.status);
+  setCellByHeader_(sheet, headers, rowNumber, 'pdfUrl', output.pdfUrl);
+  setCellByHeader_(sheet, headers, rowNumber, 'generatedAt', output.generatedAt);
+  setCellByHeader_(sheet, headers, rowNumber, 'notes', output.notes);
+  setCellByHeader_(sheet, headers, rowNumber, 'generate', false);
+}
+
+function writeCertificateFailure_(sheet, headers, rowNumber, message) {
+  setCellByHeader_(sheet, headers, rowNumber, 'status', 'Failed');
+  setCellByHeader_(sheet, headers, rowNumber, 'notes', message);
+}
+
+function appendCertificateLog_(output) {
+  const row = CERTIFICATE_LOG_HEADERS.map(header => output[header] || '');
+  appendByHeaders_(SHEET_NAMES.certificateLog, CERTIFICATE_LOG_HEADERS, row);
+}
+
+function verifyPresentationPlaceholders_(presentationId, placeholders, label) {
+  const presentation = SlidesApp.openById(presentationId);
+  const text = presentation.getSlides()
+    .map(slide => slide.getPageElements().map(readPageElementText_).join('\n'))
+    .join('\n');
+  const missing = placeholders.filter(placeholder => text.indexOf(placeholder) === -1);
+  return {
+    label: label,
+    presentationId: presentationId,
+    missing: missing,
+    found: placeholders.filter(placeholder => missing.indexOf(placeholder) === -1),
+  };
+}
+
+function readPageElementText_(element) {
+  try {
+    if (element.asShape) {
+      const shape = element.asShape();
+      return shape.getText ? shape.getText().asString() : '';
+    }
+  } catch (err) {
+    return '';
+  }
+  return '';
+}
+
+function getCertificateConfigValue_(key) {
+  const sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.certificateConfig);
+  if (sheet && sheet.getLastRow() >= 2) {
+    const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+    for (let i = 0; i < values.length; i += 1) {
+      if (String(values[i][0]).trim() === key && String(values[i][1]).trim() !== '') return String(values[i][1]).trim();
+    }
+  }
+  return CERTIFICATE_CONFIG[key];
+}
+
+function getNextCertificateId_(type) {
+  const isProgram = type === CERTIFICATE_TYPES.program;
+  const prefix = getCertificateConfigValue_(isProgram ? 'programPrefix' : 'liveProjectPrefix');
+  const usedNumbers = [];
+
+  [SHEET_NAMES.certificateRequests, SHEET_NAMES.certificateLog].forEach(sheetName => {
+    const sheet = getSpreadsheet_().getSheetByName(sheetName);
+    if (!sheet || sheet.getLastRow() < 2) return;
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const idIndex = headers.indexOf('certificateId');
+    if (idIndex === -1) return;
+    const values = sheet.getRange(2, idIndex + 1, sheet.getLastRow() - 1, 1).getValues().flat();
+    values.forEach(value => {
+      const text = String(value || '').trim();
+      if (text.indexOf(`${prefix}-`) === 0) {
+        const number = Number(text.replace(`${prefix}-`, ''));
+        if (Number.isFinite(number)) usedNumbers.push(number);
+      }
+    });
+  });
+
+  const next = usedNumbers.length ? Math.max.apply(null, usedNumbers) + 1 : 1;
+  return `${prefix}-${String(next).padStart(4, '0')}`;
+}
+
+function normalizeCertificateType_(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (text === 'program' || text === 'program completion' || text === 'cep') return CERTIFICATE_TYPES.program;
+  if (text === 'live project' || text === 'live projects' || text === 'lp') return CERTIFICATE_TYPES.liveProject;
+  return '';
+}
+
+function rowToObject_(headers, values) {
+  return headers.reduce((acc, header, index) => {
+    acc[header] = values[index];
+    return acc;
+  }, {});
+}
+
+function isBlankCertificateRequest_(request) {
+  return [
+    'certificateType',
+    'fullName',
+    'email',
+    'programName',
+    'projectRoleName',
+    'issueDate',
+    'startDate',
+    'endDate',
+    'certificateId',
+    'status',
+    'pdfUrl',
+    'notes',
+  ].every(key => String(request[key] || '').trim() === '');
+}
+
+function setCellByHeader_(sheet, headers, rowNumber, header, value) {
+  const index = headers.indexOf(header);
+  if (index !== -1) sheet.getRange(rowNumber, index + 1).setValue(value);
+}
+
+function isTruthy_(value) {
+  const text = String(value || '').trim().toLowerCase();
+  return value === true || ['true', 'yes', 'y', '1', 'ready', 'generate'].indexOf(text) !== -1;
+}
+
+function sanitizeFileName_(value) {
+  return String(value || '')
+    .replace(/[\\/:*?"<>|#%{}~&]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
+}
+
+function formatDisplayDate_(date) {
+  return Utilities.formatDate(date, 'Asia/Kolkata', 'dd MMM yyyy');
+}
+
+function formatCertificateDate_(value) {
+  if (!value) return '';
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, 'Asia/Kolkata', 'dd MMM yyyy');
+  }
+
+  const text = String(value).trim();
+  const parsed = new Date(text);
+  if (!isNaN(parsed.getTime()) && /gmt|standard time|^\w{3}\s\w{3}\s\d{2}\s\d{4}/i.test(text)) {
+    return Utilities.formatDate(parsed, 'Asia/Kolkata', 'dd MMM yyyy');
+  }
+  return text;
 }
 
 function getOrCreateSheet_(ss, name) {

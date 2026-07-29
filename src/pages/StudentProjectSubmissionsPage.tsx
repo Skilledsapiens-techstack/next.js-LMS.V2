@@ -39,7 +39,7 @@ function statusTone(status: StudentProjectSubmissionStatus) {
 function SubmissionCard({ submission }: { submission: StudentProjectSubmission }) {
   const title = submission.projectTitle ?? submission.requestNumber ?? 'Project submission';
   const cohort = submission.cohortName ?? submission.cohortKey;
-  const context = [submission.roleName, submission.programKey, cohort].filter(Boolean).join(' · ');
+  const context = [submission.roleName, cohort].filter(Boolean).join(' · ');
 
   return (
     <article className="submission-card">
@@ -56,12 +56,12 @@ function SubmissionCard({ submission }: { submission: StudentProjectSubmission }
 
       <div className="submission-card__meta">
         <div>
-          <span>Submitted</span>
+          <span>Submitted on</span>
           <strong>{formatDate(submission.submittedAt)}</strong>
         </div>
         {submission.requestNumber ? (
           <div>
-            <span>Reference</span>
+            <span>Submission ID</span>
             <strong>{submission.requestNumber}</strong>
           </div>
         ) : null}

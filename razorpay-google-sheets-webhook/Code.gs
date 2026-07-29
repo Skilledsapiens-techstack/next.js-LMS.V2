@@ -108,10 +108,25 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Razorpay LMS')
     .addItem('Setup / Repair Workbook', 'setupWorkbook')
+    .addItem('Check Column Configuration', 'checkColumnConfiguration')
+    .addItem('Restore Columns', 'restoreColumns')
+    .addItem('Compare Leadership vs Sheet13', 'compareLeadershipWithSheet13')
+    .addSeparator()
     .addItem('Show Webhook URL', 'showWebhookUrl')
     .addItem('Run Sample Leadership Test', 'testLeadershipPayment')
     .addItem('Run Sample Live Project Test', 'testLiveProjectPayment')
     .addToUi();
+}
+
+function compareLeadershipWithSheet13() {
+  const ss = getSpreadsheet_();
+  const result = buildLeadershipSheet13Report_(ss);
+  SpreadsheetApp.getUi().alert(
+    'Leadership vs Sheet13 Comparison',
+    `Report created in "${result.reportSheetName}".\n\nDiscrepancies: ${result.discrepancyCount}\nMaster rows checked: ${result.masterCount}\nSheet13 rows checked: ${result.exportCount}`,
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+  return result;
 }
 
 function setupWorkbook() {
@@ -122,6 +137,172 @@ function setupWorkbook() {
   setupSheet_(ss, SHEET_NAMES.errors, ERROR_HEADERS);
   setupConfigSheet_(ss);
   return ok_({ message: 'Workbook setup completed.' });
+}
+
+function checkColumnConfiguration() {
+  const ss = getSpreadsheet_();
+  const checks = [
+    checkSheetColumns_(ss, SHEET_NAMES.raw, RAW_HEADERS),
+    checkSheetColumns_(ss, SHEET_NAMES.leadership, IMPORT_HEADERS),
+    checkSheetColumns_(ss, SHEET_NAMES.liveProjects, IMPORT_HEADERS),
+    checkSheetColumns_(ss, SHEET_NAMES.errors, ERROR_HEADERS),
+  ];
+
+  const mismatches = checks.filter(result => !result.ok);
+  const message = mismatches.length
+    ? mismatches.map(formatColumnCheckMessage_).join('\n\n')
+    : 'All Sheet 1 columns are correctly configured.';
+
+  SpreadsheetApp.getUi().alert('Column Configuration', message, SpreadsheetApp.getUi().ButtonSet.OK);
+  return {
+    ok: mismatches.length === 0,
+    checks: checks,
+  };
+}
+
+function restoreColumns() {
+  const ss = getSpreadsheet_();
+  const restored = [
+    restoreSheetColumns_(ss, SHEET_NAMES.raw, RAW_HEADERS),
+    restoreSheetColumns_(ss, SHEET_NAMES.leadership, IMPORT_HEADERS),
+    restoreSheetColumns_(ss, SHEET_NAMES.liveProjects, IMPORT_HEADERS),
+    restoreSheetColumns_(ss, SHEET_NAMES.errors, ERROR_HEADERS),
+  ];
+
+  setupConfigSheet_(ss);
+
+  const message = restored
+    .map(result => `${result.sheetName}: ${result.rowsRestored} data row(s), backup: ${result.backupName}`)
+    .join('\n');
+
+  SpreadsheetApp.getUi().alert('Columns Restored', message, SpreadsheetApp.getUi().ButtonSet.OK);
+  return {
+    ok: true,
+    restored: restored,
+  };
+}
+
+function buildLeadershipSheet13Report_(ss) {
+  const masterSheet = ss.getSheetByName(SHEET_NAMES.leadership);
+  const exportSheet = ss.getSheetByName('Sheet13');
+
+  if (!masterSheet) throw new Error(`Missing sheet: ${SHEET_NAMES.leadership}`);
+  if (!exportSheet) throw new Error('Missing sheet: Sheet13');
+
+  const masterData = readSheetObjects_(masterSheet);
+  const exportData = readSheetObjects_(exportSheet);
+  const masterEmailIndex = indexRowsByEmail_(masterData.rows);
+  const exportEmailIndex = indexRowsByEmail_(exportData.rows);
+  const reportRows = [];
+
+  const compareFields = [
+    'fullName',
+    'email',
+    'altEmail',
+    'phone',
+    'collegeName',
+    'cohortNames',
+    'programNames',
+    'waGroup',
+    'personalmentor',
+    'you_are_from',
+    'project_start_date',
+    'duration',
+    'onboardingMailStatus',
+    'active',
+  ];
+
+  compareFields.forEach(field => {
+    if (!masterData.headerMap[field]) {
+      reportRows.push(makeDiscrepancyRow_('MASTER_MISSING_COLUMN', '', '', '', field, '', '', `${SHEET_NAMES.leadership} missing ${field}`));
+    }
+    if (!exportData.headerMap[field]) {
+      reportRows.push(makeDiscrepancyRow_('SHEET13_MISSING_COLUMN', '', '', '', field, '', '', `Sheet13 missing ${field}`));
+    }
+  });
+
+  Object.keys(masterEmailIndex).forEach(email => {
+    const masterMatches = masterEmailIndex[email];
+    const exportMatches = exportEmailIndex[email] || [];
+
+    if (masterMatches.length > 1) {
+      masterMatches.forEach(match => {
+        reportRows.push(makeDiscrepancyRow_('MASTER_DUPLICATE_EMAIL', email, match.rowNumber, '', 'email', email, '', 'Duplicate email in master tab'));
+      });
+    }
+
+    if (!exportMatches.length) {
+      masterMatches.forEach(match => {
+        reportRows.push(makeDiscrepancyRow_('MISSING_IN_SHEET13', email, match.rowNumber, '', 'row', 'present', 'missing', 'Student exists in master but not in Sheet13'));
+      });
+      return;
+    }
+
+    if (exportMatches.length > 1) {
+      exportMatches.forEach(match => {
+        reportRows.push(makeDiscrepancyRow_('SHEET13_DUPLICATE_EMAIL', email, '', match.rowNumber, 'email', '', email, 'Duplicate email in Sheet13'));
+      });
+    }
+
+    const masterRow = masterMatches[0];
+    const exportRow = exportMatches[0];
+
+    compareFields.forEach(field => {
+      if (!masterData.headerMap[field] || !exportData.headerMap[field]) return;
+      const masterValue = normalizeComparableValue_(masterRow.values[field], field);
+      const exportValue = normalizeComparableValue_(exportRow.values[field], field);
+      if (masterValue !== exportValue) {
+        reportRows.push(makeDiscrepancyRow_(
+          'FIELD_MISMATCH',
+          email,
+          masterRow.rowNumber,
+          exportRow.rowNumber,
+          field,
+          masterRow.values[field],
+          exportRow.values[field],
+          'Sheet13 value differs from master'
+        ));
+      }
+    });
+  });
+
+  Object.keys(exportEmailIndex).forEach(email => {
+    if (masterEmailIndex[email]) return;
+    exportEmailIndex[email].forEach(match => {
+      reportRows.push(makeDiscrepancyRow_('EXTRA_IN_SHEET13', email, '', match.rowNumber, 'row', 'missing', 'present', 'Student exists in Sheet13 but not in master'));
+    });
+  });
+
+  const reportSheetName = 'Leadership vs Sheet13 Discrepancies';
+  const reportSheet = getOrCreateSheet_(ss, reportSheetName);
+  const reportHeaders = [
+    'issue_type',
+    'email',
+    'master_row',
+    'sheet13_row',
+    'field',
+    'master_value',
+    'sheet13_value',
+    'notes',
+  ];
+  const output = [reportHeaders].concat(reportRows);
+
+  reportSheet.clear();
+  reportSheet.getRange(1, 1, output.length, reportHeaders.length).setValues(output);
+  reportSheet.setFrozenRows(1);
+  reportSheet.getRange(1, 1, 1, reportHeaders.length).setFontWeight('bold').setBackground('#f3f6fb');
+  reportSheet.autoResizeColumns(1, reportHeaders.length);
+
+  const summarySheetName = 'Leadership vs Sheet13 Summary';
+  writeLeadershipSheet13Summary_(ss, summarySheetName, reportRows, masterData.rows.length, exportData.rows.length);
+
+  return {
+    reportSheetName: reportSheetName,
+    summarySheetName: summarySheetName,
+    discrepancyCount: reportRows.length,
+    masterCount: masterData.rows.length,
+    exportCount: exportData.rows.length,
+  };
 }
 
 function configureDeployment(spreadsheetId, webhookToken) {
@@ -450,6 +631,340 @@ function setupSheet_(ss, name, headers) {
   sheet.autoResizeColumns(1, Math.min(headers.length, 20));
   return sheet;
 }
+
+function checkSheetColumns_(ss, sheetName, expectedHeaders) {
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    return {
+      ok: false,
+      sheetName: sheetName,
+      missingSheet: true,
+      missing: expectedHeaders.slice(),
+      extra: [],
+      outOfOrder: [],
+    };
+  }
+
+  const width = Math.max(sheet.getLastColumn(), expectedHeaders.length);
+  const currentHeaders = sheet.getRange(1, 1, 1, width).getValues()[0]
+    .map(value => String(value || '').trim())
+    .filter(Boolean);
+
+  const expectedLookup = expectedHeaders.reduce((acc, header) => {
+    acc[header] = true;
+    return acc;
+  }, {});
+
+  const currentLookup = currentHeaders.reduce((acc, header) => {
+    acc[header] = true;
+    return acc;
+  }, {});
+
+  const missing = expectedHeaders.filter(header => !currentLookup[header]);
+  const extra = currentHeaders.filter(header => !expectedLookup[header]);
+  const outOfOrder = expectedHeaders.filter((header, index) => currentHeaders[index] !== header && currentLookup[header]);
+
+  return {
+    ok: missing.length === 0 && extra.length === 0 && outOfOrder.length === 0 && currentHeaders.length === expectedHeaders.length,
+    sheetName: sheetName,
+    missingSheet: false,
+    missing: missing,
+    extra: extra,
+    outOfOrder: outOfOrder,
+  };
+}
+
+function formatColumnCheckMessage_(result) {
+  if (result.missingSheet) {
+    return `${result.sheetName}: sheet is missing.`;
+  }
+
+  const lines = [`${result.sheetName}: columns need attention.`];
+  if (result.missing.length) lines.push(`Missing: ${result.missing.join(', ')}`);
+  if (result.extra.length) lines.push(`Extra: ${result.extra.join(', ')}`);
+  if (result.outOfOrder.length) lines.push(`Out of order: ${result.outOfOrder.join(', ')}`);
+  return lines.join('\n');
+}
+
+function restoreSheetColumns_(ss, sheetName, expectedHeaders) {
+  const sheet = getOrCreateSheet_(ss, sheetName);
+  const lastRow = sheet.getLastRow();
+  const lastColumn = Math.max(sheet.getLastColumn(), expectedHeaders.length);
+  const backupName = createSheetBackup_(ss, sheet);
+
+  const currentHeaders = lastRow > 0
+    ? sheet.getRange(1, 1, 1, lastColumn).getValues()[0].map(value => String(value || '').trim())
+    : [];
+
+  const dataRows = lastRow > 1
+    ? sheet.getRange(2, 1, lastRow - 1, lastColumn).getValues()
+    : [];
+
+  const headerIndex = currentHeaders.reduce((acc, header, index) => {
+    const normalized = normalizeHeader_(header);
+    if (normalized && acc[normalized] === undefined) acc[normalized] = index;
+    return acc;
+  }, {});
+
+  const restoredRows = dataRows.map(row => {
+    return expectedHeaders.map(header => {
+      const candidates = [header].concat(HEADER_ALIASES[header] || []);
+      for (let i = 0; i < candidates.length; i += 1) {
+        const index = headerIndex[normalizeHeader_(candidates[i])];
+        if (index !== undefined) return row[index];
+      }
+      return '';
+    });
+  }).filter(rowHasValue_);
+
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, expectedHeaders.length).setValues([expectedHeaders]);
+  if (restoredRows.length) {
+    sheet.getRange(2, 1, restoredRows.length, expectedHeaders.length).setValues(restoredRows);
+  }
+  sheet.setFrozenRows(1);
+  sheet.getRange(1, 1, 1, expectedHeaders.length).setFontWeight('bold').setBackground('#f3f6fb');
+  sheet.autoResizeColumns(1, Math.min(expectedHeaders.length, 20));
+
+  return {
+    sheetName: sheetName,
+    rowsRestored: restoredRows.length,
+    backupName: backupName,
+  };
+}
+
+function createSheetBackup_(ss, sheet) {
+  const timestamp = Utilities.formatDate(new Date(), 'Asia/Kolkata', 'yyyyMMdd-HHmmss');
+  const baseName = `Backup - ${sheet.getName()}`.slice(0, 82);
+  let backupName = `${baseName} - ${timestamp}`.slice(0, 100);
+  let suffix = 1;
+
+  while (ss.getSheetByName(backupName)) {
+    backupName = `${baseName} - ${timestamp}-${suffix}`.slice(0, 100);
+    suffix += 1;
+  }
+
+  sheet.copyTo(ss).setName(backupName);
+  return backupName;
+}
+
+function normalizeHeader_(header) {
+  return String(header || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function rowHasValue_(row) {
+  return row.some(value => String(value || '').trim() !== '');
+}
+
+function readSheetObjects_(sheet) {
+  const values = sheet.getDataRange().getValues();
+  if (!values.length) return { headerMap: {}, rows: [] };
+
+  const headers = values[0].map(value => String(value || '').trim());
+  const headerMap = headers.reduce((acc, header, index) => {
+    const canonical = canonicalHeaderName_(header);
+    if (canonical && acc[canonical] === undefined) acc[canonical] = index;
+    return acc;
+  }, {});
+
+  const rows = values.slice(1)
+    .map((row, rowIndex) => {
+      const rowValues = Object.keys(headerMap).reduce((acc, canonical) => {
+        acc[canonical] = row[headerMap[canonical]];
+        return acc;
+      }, {});
+      return {
+        rowNumber: rowIndex + 2,
+        values: rowValues,
+      };
+    })
+    .filter(row => rowHasValue_(Object.keys(row.values).map(key => row.values[key])));
+
+  return {
+    headerMap: headerMap,
+    rows: rows,
+  };
+}
+
+function indexRowsByEmail_(rows) {
+  return rows.reduce((acc, row) => {
+    const email = normalizeEmail_(row.values.email);
+    if (!email) return acc;
+    if (!acc[email]) acc[email] = [];
+    acc[email].push(row);
+    return acc;
+  }, {});
+}
+
+function makeDiscrepancyRow_(issueType, email, masterRow, sheet13Row, field, masterValue, sheet13Value, notes) {
+  return [
+    issueType,
+    email,
+    masterRow,
+    sheet13Row,
+    field,
+    masterValue === null || masterValue === undefined ? '' : String(masterValue),
+    sheet13Value === null || sheet13Value === undefined ? '' : String(sheet13Value),
+    notes,
+  ];
+}
+
+function writeLeadershipSheet13Summary_(ss, sheetName, reportRows, masterCount, exportCount) {
+  const issueCounts = countBy_(reportRows, 0);
+  const fieldMismatchCounts = countBy_(reportRows.filter(row => row[0] === 'FIELD_MISMATCH'), 4);
+  const sampleRows = reportRows.slice(0, 25);
+  const rows = [
+    ['Section', 'Item', 'Count', 'Notes'],
+    ['Totals', 'Master rows checked', masterCount, SHEET_NAMES.leadership],
+    ['Totals', 'Sheet13 rows checked', exportCount, 'LMS export tab'],
+    ['Totals', 'Total discrepancy rows', reportRows.length, 'Detailed rows are in Leadership vs Sheet13 Discrepancies'],
+    ['', '', '', ''],
+    ['Issue Type', 'FIELD_MISMATCH', issueCounts.FIELD_MISMATCH || 0, 'Same email found, but one or more compared fields differ'],
+    ['Issue Type', 'MISSING_IN_SHEET13', issueCounts.MISSING_IN_SHEET13 || 0, 'Student exists in master but not in Sheet13'],
+    ['Issue Type', 'EXTRA_IN_SHEET13', issueCounts.EXTRA_IN_SHEET13 || 0, 'Student exists in Sheet13 but not in master'],
+    ['Issue Type', 'MASTER_DUPLICATE_EMAIL', issueCounts.MASTER_DUPLICATE_EMAIL || 0, 'Duplicate email rows in master'],
+    ['Issue Type', 'SHEET13_DUPLICATE_EMAIL', issueCounts.SHEET13_DUPLICATE_EMAIL || 0, 'Duplicate email rows in Sheet13'],
+    ['Issue Type', 'MASTER_MISSING_COLUMN', issueCounts.MASTER_MISSING_COLUMN || 0, 'Expected comparison column missing in master'],
+    ['Issue Type', 'SHEET13_MISSING_COLUMN', issueCounts.SHEET13_MISSING_COLUMN || 0, 'Expected comparison column missing in Sheet13'],
+    ['', '', '', ''],
+    ['Field Mismatch', 'fullName', fieldMismatchCounts.fullName || 0, ''],
+    ['Field Mismatch', 'email', fieldMismatchCounts.email || 0, ''],
+    ['Field Mismatch', 'altEmail', fieldMismatchCounts.altEmail || 0, ''],
+    ['Field Mismatch', 'phone', fieldMismatchCounts.phone || 0, ''],
+    ['Field Mismatch', 'collegeName', fieldMismatchCounts.collegeName || 0, ''],
+    ['Field Mismatch', 'cohortNames', fieldMismatchCounts.cohortNames || 0, ''],
+    ['Field Mismatch', 'programNames', fieldMismatchCounts.programNames || 0, ''],
+    ['Field Mismatch', 'waGroup', fieldMismatchCounts.waGroup || 0, ''],
+    ['Field Mismatch', 'personalmentor', fieldMismatchCounts.personalmentor || 0, ''],
+    ['Field Mismatch', 'you_are_from', fieldMismatchCounts.you_are_from || 0, ''],
+    ['Field Mismatch', 'project_start_date', fieldMismatchCounts.project_start_date || 0, ''],
+    ['Field Mismatch', 'duration', fieldMismatchCounts.duration || 0, ''],
+    ['Field Mismatch', 'onboardingMailStatus', fieldMismatchCounts.onboardingMailStatus || 0, ''],
+    ['Field Mismatch', 'active', fieldMismatchCounts.active || 0, ''],
+    ['', '', '', ''],
+    ['Sample', 'issue_type', 'email / field', 'master_value -> sheet13_value'],
+  ];
+
+  sampleRows.forEach(row => {
+    rows.push([
+      'Sample',
+      row[0],
+      `${row[1]} / ${row[4]}`,
+      `${row[5]} -> ${row[6]}`,
+    ]);
+  });
+
+  const sheet = getOrCreateSheet_(ss, sheetName);
+  sheet.clear();
+  sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
+  sheet.setFrozenRows(1);
+  sheet.getRange(1, 1, 1, rows[0].length).setFontWeight('bold').setBackground('#f3f6fb');
+  sheet.autoResizeColumns(1, rows[0].length);
+}
+
+function countBy_(rows, index) {
+  return rows.reduce((acc, row) => {
+    const key = row[index] || '';
+    if (!key) return acc;
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+function canonicalHeaderName_(header) {
+  const normalized = normalizeHeader_(header);
+  const aliases = {
+    studentid: 'studentId',
+    fullname: 'fullName',
+    name: 'fullName',
+    studentname: 'fullName',
+    email: 'email',
+    officialemail: 'email',
+    primaryemail: 'email',
+    altemail: 'altEmail',
+    alternateemail: 'altEmail',
+    alternativeemail: 'altEmail',
+    phone: 'phone',
+    phonenumber: 'phone',
+    contact: 'phone',
+    mobilenumber: 'phone',
+    mobile: 'phone',
+    collegename: 'collegeName',
+    college: 'collegeName',
+    yourcollege: 'collegeName',
+    cohortnames: 'cohortNames',
+    cohortname: 'cohortNames',
+    cohorts: 'cohortNames',
+    cohort: 'cohortNames',
+    programnames: 'programNames',
+    programname: 'programNames',
+    programs: 'programNames',
+    program: 'programNames',
+    wagroup: 'waGroup',
+    whatsappgroup: 'waGroup',
+    personalmentor: 'personalmentor',
+    personalmentorstatus: 'personalmentor',
+    youarefrom: 'you_are_from',
+    year: 'you_are_from',
+    projectstartdate: 'project_start_date',
+    programstartdate: 'project_start_date',
+    startdate: 'project_start_date',
+    duration: 'duration',
+    onboardingmailstatus: 'onboardingMailStatus',
+    onboardingstatus: 'onboardingMailStatus',
+    active: 'active',
+  };
+  return aliases[normalized] || '';
+}
+
+function normalizeComparableValue_(value, field) {
+  if (value === null || value === undefined) return '';
+  if (value instanceof Date) return Utilities.formatDate(value, 'Asia/Kolkata', 'dd/MM/yyyy');
+
+  let text = String(value).trim();
+  if (!text) return '';
+
+  if (field === 'email' || field === 'altEmail') return normalizeEmail_(text);
+  if (field === 'phone') return normalizeComparablePhone_(text);
+  if (field === 'active' || field === 'personalmentor') return normalizeBooleanLike_(text);
+  if (field === 'programNames' || field === 'cohortNames' || field === 'waGroup') {
+    return text.split(/[|,]/).map(part => part.trim()).filter(Boolean).sort().join('|').toLowerCase();
+  }
+
+  return text.replace(/\s+/g, ' ').toLowerCase();
+}
+
+function normalizeEmail_(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeComparablePhone_(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (digits.length > 10 && digits.indexOf('91') === 0) return digits.slice(-10);
+  return digits;
+}
+
+function normalizeBooleanLike_(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (['true', 'yes', '1', 'active'].indexOf(text) !== -1) return 'true';
+  if (['false', 'no', '0', 'inactive'].indexOf(text) !== -1) return 'false';
+  return text;
+}
+
+const HEADER_ALIASES = {
+  fullName: ['full_name', 'name'],
+  email: ['official_email', 'customer_email'],
+  phone: ['phone_number', 'contact', 'customer_contact'],
+  collegeName: ['your_college', 'college_name', 'college'],
+  programNames: ['programName', 'program_name', 'role', 'roles'],
+  personalmentor: ['personal_mentor', 'personalMentor'],
+  project_start_date: ['select_your_project_start_date', 'select_your_program_start_date', 'start_date'],
+  duration: ['select_tentative_duration_of_your_project'],
+  payment_id: ['paymentId'],
+};
 
 function setupConfigSheet_(ss) {
   const sheet = getOrCreateSheet_(ss, SHEET_NAMES.config);

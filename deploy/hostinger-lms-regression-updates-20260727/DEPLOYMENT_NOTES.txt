@@ -1,0 +1,20 @@
+Hostinger deployment package: hostinger-lms-regression-updates-20260727
+
+Build command used:
+npm run build
+
+Deployment steps:
+1. Upload hostinger-lms-regression-updates-20260727.zip to Hostinger File Manager.
+2. Open public_html for the LMS domain.
+3. Extract the zip contents directly inside public_html.
+4. Confirm index.html and the assets folder are at the public_html root.
+
+Included frontend updates:
+- Recording duplicate validation/replacement UI support.
+- Admin recording sequence manager updates.
+- Admin project submission bulk approval controls.
+- Admin certificates live-project review, reject, role edit, and end-date validation updates.
+- Student portal UI updates across recordings, announcements, resources, certificates, login help widget, and related recent fixes.
+
+Supabase note:
+The zoom-meetings Edge Function was already deployed separately to Supabase project olgihgkyteumndphxsut and is ACTIVE at version 38.

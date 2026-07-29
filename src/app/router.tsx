@@ -52,6 +52,7 @@ const StudentAnnouncementsPage = lazy(() => import('../pages/StudentAnnouncement
 const StudentCareerReadinessPage = lazy(() => import('../pages/StudentCareerReadinessPage').then((module) => ({ default: module.StudentCareerReadinessPage })));
 const StudentCohortsPage = lazy(() => import('../pages/StudentCohortsPage').then((module) => ({ default: module.StudentCohortsPage })));
 const StudentDashboardPage = lazy(() => import('../pages/StudentDashboardPage').then((module) => ({ default: module.StudentDashboardPage })));
+const StudentDoubtSessionsPage = lazy(() => import('../pages/StudentDoubtSessionsPage').then((module) => ({ default: module.StudentDoubtSessionsPage })));
 const StudentCertificatesPage = lazy(() => import('../pages/StudentCertificatesPage').then((module) => ({ default: module.StudentCertificatesPage })));
 const StudentResourcesPage = lazy(() => import('../pages/StudentResourcesPage').then((module) => ({ default: module.StudentResourcesPage })));
 const StudentRecordingsPage = lazy(() => import('../pages/StudentRecordingsPage').then((module) => ({ default: module.StudentRecordingsPage })));
@@ -285,6 +286,16 @@ export const router = createBrowserRouter([
               <PageLoader>
                 <StudentFeaturePage moduleId="schedule">
                   <StudentSchedulePage />
+                </StudentFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'doubt-sessions',
+            element: (
+              <PageLoader>
+                <StudentFeaturePage moduleId="doubt-sessions">
+                  <StudentDoubtSessionsPage />
                 </StudentFeaturePage>
               </PageLoader>
             )

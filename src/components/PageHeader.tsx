@@ -2,7 +2,7 @@ import { ReactNode } from 'react';
 
 type PageHeaderProps = {
   actions?: ReactNode;
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
   description: string;
 };
@@ -11,7 +11,7 @@ export function PageHeader({ actions, eyebrow, title, description }: PageHeaderP
   return (
     <section className="page-heading">
       <div>
-        <span className="eyebrow">{eyebrow}</span>
+        {eyebrow ? <span className="eyebrow">{eyebrow}</span> : null}
         <h1>{title}</h1>
         <p>{description}</p>
       </div>

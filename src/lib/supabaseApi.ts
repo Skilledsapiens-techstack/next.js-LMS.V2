@@ -90,6 +90,7 @@ const ADMIN_READ_PERMISSIONS_BY_PATH: Record<string, AdminPermission> = {
   '/admins/recording-sequences': 'admin.recordings.view',
   '/admins/resources': 'admin.resources.view',
   '/admins/student-audit-logs': 'admin.observability.view',
+  '/admins/student-roster-snapshots': 'admin.students.manage',
   '/admins/students': 'admin.students.view',
   '/admins/students/college-options': 'admin.students.view',
   '/admins/support-categories': 'admin.support.view',
@@ -152,6 +153,29 @@ const STUDENT_WRITE_COLUMNS = new Set([
   'you_are_from'
 ]);
 
+const STUDENT_ROSTER_SNAPSHOT_COLUMNS = [
+  'active',
+  'alt_email',
+  'cohort_id',
+  'cohort_name',
+  'college_name',
+  'duration',
+  'email',
+  'full_name',
+  'live_project_role_ids',
+  'onboarding_mail_status',
+  'onboarding_sequence',
+  'personalmentor',
+  'phone',
+  'program_name',
+  'project_start_date',
+  'slot',
+  'student_id',
+  'track_role_ids',
+  'wa_group_name',
+  'you_are_from'
+];
+
 const COHORT_WRITE_COLUMNS = new Set([
   'cohort_id',
   'domain_key',
@@ -185,6 +209,7 @@ const WORKSHOP_WRITE_COLUMNS = new Set([
   'payment_link',
   'price',
   'program_key',
+  'session_type',
   'time',
   'title',
   'workshop_id',
@@ -638,6 +663,7 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   const cleanPath = stripQuery(path);
   if (cleanPath === '/public/feature-controls/guest-login') return getPublicGuestLoginFeatureControl() as Promise<TResponse>;
   if (cleanPath === '/public/feature-controls/login-create-password') return getPublicLoginCreatePasswordFeatureControl() as Promise<TResponse>;
+  if (cleanPath === '/public/feature-controls/whatsapp-widget') return getPublicWhatsAppWidgetFeatureControl() as Promise<TResponse>;
 
   const context = await createContext(options.accessToken);
 
@@ -657,6 +683,7 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/admins/student-audit-logs') return getStudentAuditLogs(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/certificate-requests') return getLiveProjectCertificateRequests(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/announcements/recipient-count') return getAnnouncementRecipientCount(context, options.query) as Promise<TResponse>;
+  if (cleanPath === '/admins/student-roster-snapshots') return getStudentRosterSnapshots(context) as Promise<TResponse>;
   if (cleanPath === '/support/categories') return getSupportCategories(context, options.query, false) as Promise<TResponse>;
   if (cleanPath === '/students/me/support-settings') return getSupportContactSettings(context, false) as Promise<TResponse>;
   if (cleanPath === '/students/me/support-faqs') return getStudentSupportFaqs(context, options.query) as Promise<TResponse>;
@@ -738,6 +765,10 @@ async function getPublicLoginCreatePasswordFeatureControl() {
   return getPublicFeatureControl('login-create-password', getDefaultLoginCreatePasswordFeatureControl);
 }
 
+async function getPublicWhatsAppWidgetFeatureControl() {
+  return getPublicFeatureControl('whatsapp-widget', getDefaultWhatsAppWidgetFeatureControl);
+}
+
 async function getPublicFeatureControl(moduleId: string, getDefaultFeatureControl: () => unknown) {
   const supabase = getSupabaseClient();
   if (!supabase) return getDefaultFeatureControl();
@@ -778,6 +809,20 @@ function getDefaultLoginCreatePasswordFeatureControl() {
     student_label: 'Create Password CTA',
     student_path: '/login?portal=student',
     upcoming_message: 'Create password is currently unavailable.'
+  });
+}
+
+function getDefaultWhatsAppWidgetFeatureControl() {
+  return camelize({
+    id: 'whatsapp-widget-default',
+    is_core: false,
+    module_id: 'whatsapp-widget',
+    settings: {},
+    sort_order: 160,
+    status: 'hide',
+    student_label: 'Contact Program Coordinator',
+    student_path: '/student',
+    upcoming_message: 'Contact Program Coordinator'
   });
 }
 
@@ -995,6 +1040,9 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/students/import') return importStudents(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/students/bulk') return bulkUpdateStudents(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/students/resend-invites') return resendStudentInvites(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/admins/student-roster-snapshots') return createStudentRosterSnapshot(context) as Promise<TResponse>;
+  const studentRosterRestore = cleanPath.match(/^\/admins\/student-roster-snapshots\/([^/]+)\/restore$/);
+  if (studentRosterRestore) return restoreStudentRosterSnapshot(context, decodeURIComponent(studentRosterRestore[1]), options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/students') return insertRow(context, 'students', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/cohorts') return insertRow(context, 'cohorts', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/workshops') return insertRow(context, 'workshops', options.body, 'created') as Promise<TResponse>;
@@ -1062,25 +1110,46 @@ export async function apiInvokeFunction<TResponse, TBody = unknown>(functionName
   const context = await createContext(options.accessToken);
   const functionPermission = getFunctionPermission(functionName, options.body);
   if (functionPermission) await requireAdminPermission(context, functionPermission);
-  const { data, error } = await context.supabase.functions.invoke(functionName, {
+  const { data, error, response } = await context.supabase.functions.invoke(functionName, {
     body: options.body as Record<string, unknown> | undefined
   });
 
   if (error) {
-    const message = getFunctionErrorMessage(data, error);
+    const message = await getFunctionErrorMessage(data, error, response);
     throw new ApiClientError(message, 503);
   }
   if (isRecord(data) && typeof data.error === 'string') throw new ApiClientError(data.error, 400);
   return data as TResponse;
 }
 
-function getFunctionErrorMessage(data: unknown, error: unknown) {
+async function getFunctionErrorMessage(data: unknown, error: unknown, response?: unknown) {
   if (isRecord(data)) {
     if (typeof data.error === 'string' && data.error.trim()) return data.error.trim();
     if (typeof data.message === 'string' && data.message.trim()) return data.message.trim();
   }
+  const context = response || (isRecord(error) ? error.context : undefined);
+  if (isFunctionErrorResponse(context)) {
+    try {
+      const payload = await context.clone().json();
+      if (isRecord(payload)) {
+        if (typeof payload.error === 'string' && payload.error.trim()) return payload.error.trim();
+        if (typeof payload.message === 'string' && payload.message.trim()) return payload.message.trim();
+      }
+    } catch (_jsonError) {
+      try {
+        const text = await context.clone().text();
+        if (text.trim()) return text.trim();
+      } catch (_textError) {
+        // Fall through to the Supabase client error message.
+      }
+    }
+  }
   if (isRecord(error) && typeof error.message === 'string' && error.message.trim()) return error.message.trim();
   return 'Request could not be completed. Please try again.';
+}
+
+function isFunctionErrorResponse(value: unknown): value is Response {
+  return Boolean(value && typeof value === 'object' && 'clone' in value && typeof (value as { clone?: unknown }).clone === 'function' && 'json' in value && typeof (value as { json?: unknown }).json === 'function');
 }
 
 function getAdminReadPermission(path: string): AdminPermission | undefined {
@@ -1100,6 +1169,7 @@ function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'pos
   if (!path.startsWith('/admins/')) return undefined;
 
   if (path === '/admins/students/import' || path === '/admins/students/bulk') return 'admin.students.import';
+  if (path === '/admins/student-roster-snapshots' || path.match(/^\/admins\/student-roster-snapshots\/[^/]+\/restore$/)) return 'admin.students.manage';
   if (path === '/admins/students/resend-invites') return 'admin.students.invite';
   if (path === '/admins/students') return 'admin.students.manage';
   if (path.match(/^\/admins\/students\/[^/]+\/lp-attempts$/)) return 'admin.students.manage';
@@ -1587,26 +1657,85 @@ async function enrichStudentCohortProgramNames(context: Awaited<ReturnType<typeo
   );
   if (programKeys.length === 0) return items;
 
-  const { data, error } = await context.supabase
-    .from('programs')
-    .select('program_key,name,short_name')
-    .in('program_key', programKeys)
-    .limit(500);
-  if (error) throw new ApiClientError(`Student program names could not be loaded: ${error.message}`, 503);
+  const student = await getStudentProfile(context);
+  const liveProjectRoleIds = asStringArray((student as Record<string, unknown>).liveProjectRoleIds);
+  const [programResult, roleResult] = await Promise.all([
+    context.supabase
+      .from('programs')
+      .select('program_key,name,short_name')
+      .in('program_key', programKeys)
+      .limit(500),
+    liveProjectRoleIds.length > 0
+      ? context.supabase
+        .from('role_master')
+        .select('role_id,role_name,program_key')
+        .in('role_id', liveProjectRoleIds)
+        .limit(500)
+      : Promise.resolve({ data: [], error: null })
+  ]);
+
+  if (programResult.error) throw new ApiClientError(`Student program names could not be loaded: ${programResult.error.message}`, 503);
+  if (roleResult.error) throw new ApiClientError(`Student live project roles could not be loaded: ${roleResult.error.message}`, 503);
 
   const programNameByKey = new Map(
-    (data ?? []).map((program) => [
+    (programResult.data ?? []).map((program) => [
       String(program.program_key ?? '').trim().toLowerCase(),
       String(program.name ?? program.short_name ?? program.program_key ?? '').trim()
     ])
   );
+  const liveProjectRoles = (roleResult.data ?? [])
+    .map((role) => ({
+      id: String(role.role_id ?? '').trim(),
+      name: String(role.role_name ?? role.role_id ?? '').trim(),
+      programKey: String(role.program_key ?? '').trim().toLowerCase()
+    }))
+    .filter((role) => role.id && role.name);
 
   return items.map((item) => {
     if (!isRecord(item)) return item;
     const programKey = String(item.program_key ?? item.programKey ?? '').trim().toLowerCase();
     const programName = programNameByKey.get(programKey);
-    return programName ? { ...item, program_name: programName } : item;
+    const matchingRoles = liveProjectRoles.filter((role) => roleMatchesCohortProgram(role, programKey));
+    const rolesForCohort = matchingRoles.length > 0 ? matchingRoles : liveProjectRoles.length === 1 ? liveProjectRoles : [];
+    return {
+      ...item,
+      ...(programName ? { program_name: programName } : {}),
+      live_project_role_ids: uniqueStrings(rolesForCohort.map((role) => role.id)),
+      live_project_roles: uniqueStrings(rolesForCohort.map((role) => role.name))
+    };
   });
+}
+
+function normalizeProgramMatchKey(value: string) {
+  const key = value.trim().toLowerCase();
+  if (key === 'flp_pvec') return 'flp_pevc';
+  return key;
+}
+
+function inferredProgramKeysForRole(role: { id: string; name: string; programKey: string }) {
+  const text = `${role.id} ${role.name} ${role.programKey}`.toLowerCase();
+  const keys = new Set<string>();
+  if (role.programKey) keys.add(normalizeProgramMatchKey(role.programKey));
+  if (/private[_\s-]*equity|venture[_\s-]*capital|pevc|pvec/.test(text)) keys.add('flp_pevc');
+  if (/equity[_\s-]*research|financial[_\s-]*model(l)?ing/.test(text)) keys.add('flp_er');
+  if (/portfolio|quantitative|quant|qf/.test(text)) keys.add('flp_qf');
+  if (/growth[_\s-]*strategy|business[_\s-]*(analyst|analysis)|consulting|management/.test(text)) {
+    keys.add('mclp');
+    keys.add('live_mgmt');
+  }
+  if (/digital[_\s-]*marketing|sales[_\s-]*marketing|market[_\s-]*research|product[_\s-]*marketing/.test(text)) {
+    keys.add('smlp');
+    keys.add('live_mgmt');
+  }
+  if (/product(?![_\s-]*marketing)|brand/.test(text)) keys.add('pmlp');
+  if (/\bhr\b|human[_\s-]*resources/.test(text)) keys.add('hrlp');
+  return keys;
+}
+
+function roleMatchesCohortProgram(role: { id: string; name: string; programKey: string }, programKey: string) {
+  const normalizedProgramKey = normalizeProgramMatchKey(programKey);
+  if (!normalizedProgramKey) return false;
+  return inferredProgramKeysForRole(role).has(normalizedProgramKey);
 }
 
 async function getStudentProjectToolkit(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
@@ -2468,7 +2597,25 @@ async function getRpcList(context: Awaited<ReturnType<typeof createContext>>, en
   if (endpoint.functionName === 'student_schedule_view' && query?.includePast === true) {
     params.p_include_past = true;
   }
-  const data = await callRpc(context, endpoint.functionName, params);
+  let requestedSessionType = '';
+  if (endpoint.functionName === 'student_schedule_view') {
+    const sessionType = String(query?.sessionType ?? '').trim();
+    if (sessionType && sessionType !== 'all') {
+      requestedSessionType = sessionType;
+      params.p_session_type = sessionType;
+    }
+  }
+  let data: unknown;
+  try {
+    data = await callRpc(context, endpoint.functionName, params);
+  } catch (error) {
+    if (endpoint.functionName !== 'student_schedule_view' || !requestedSessionType || !isScheduleSessionTypeRpcError(error)) {
+      throw error;
+    }
+    const fallbackParams = { ...params };
+    delete fallbackParams.p_session_type;
+    data = await callRpc(context, endpoint.functionName, fallbackParams);
+  }
   let items = extractItems(data, endpoint.section ?? ['items']);
   if (endpoint.functionName === 'student_projects_bundle') {
     const student = isRecord(data) && isRecord(data.student) ? data.student : {};
@@ -2476,6 +2623,11 @@ async function getRpcList(context: Awaited<ReturnType<typeof createContext>>, en
     items = items.map((item) => isRecord(item) ? { ...item, studentProjectStartDate: item.studentProjectStartDate ?? projectStartDate ?? null } : item);
   }
   return paginate(items, query);
+}
+
+function isScheduleSessionTypeRpcError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return /p_session_type|student_schedule_view|function.*not.*found|schema cache/i.test(error.message);
 }
 
 async function getTableList(context: Awaited<ReturnType<typeof createContext>>, endpoint: TableEndpoint, query: ApiClientOptions['query']) {
@@ -2556,6 +2708,200 @@ async function getAdminStudentCollegeOptions(context: Awaited<ReturnType<typeof 
   });
   const items = Array.from(collegeByNormalizedName.values()).sort((a, b) => a.localeCompare(b));
   return { items };
+}
+
+function pickSnapshotStudentFields(student: Record<string, unknown>) {
+  return {
+    id: student.id,
+    ...Object.fromEntries(STUDENT_ROSTER_SNAPSHOT_COLUMNS.map((column) => [column, student[column] ?? null]))
+  };
+}
+
+function normalizeSnapshotRows(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+async function buildStudentRosterSnapshotPayload(context: Awaited<ReturnType<typeof createContext>>) {
+  const [studentsResult, cohortsResult, programsResult] = await Promise.all([
+    context.supabase.from('students').select('*').order('onboarding_sequence', { ascending: true }).order('created_at', { ascending: true }).limit(10000),
+    context.supabase.from('student_cohorts').select('student_id,cohort_id,cohort_name').limit(20000),
+    context.supabase.from('student_programs').select('student_id,program_key,student_name').limit(20000)
+  ]);
+
+  if (studentsResult.error) throw new ApiClientError(`Student roster snapshot failed: ${studentsResult.error.message}`, 503);
+  if (cohortsResult.error) throw new ApiClientError(`Student cohort snapshot failed: ${cohortsResult.error.message}`, 503);
+  if (programsResult.error) throw new ApiClientError(`Student program snapshot failed: ${programsResult.error.message}`, 503);
+
+  const students = (studentsResult.data ?? []).filter(isRecord);
+  return {
+    capturedAt: new Date().toISOString(),
+    scope: 'student_roster',
+    studentCohorts: (cohortsResult.data ?? []).filter(isRecord),
+    studentPrograms: (programsResult.data ?? []).filter(isRecord),
+    students: students.map(pickSnapshotStudentFields),
+    version: 1
+  };
+}
+
+function studentRosterSnapshotSummary(row: Record<string, unknown>) {
+  return {
+    createdAt: row.created_at,
+    createdBy: row.created_by,
+    id: row.id,
+    restoredAt: row.restored_at,
+    restoredBy: row.restored_by,
+    restoreNote: row.restore_note,
+    snapshotDate: row.snapshot_date,
+    studentCount: row.student_count
+  };
+}
+
+async function pruneStudentRosterSnapshots(context: Awaited<ReturnType<typeof createContext>>) {
+  const { data, error } = await context.supabase
+    .from('student_roster_snapshots')
+    .select('id')
+    .order('snapshot_date', { ascending: false })
+    .order('created_at', { ascending: false })
+    .range(3, 100);
+  if (error) throw new ApiClientError(`Student roster snapshot cleanup failed: ${error.message}`, 503);
+  const oldIds = (data ?? []).map((row) => String(row.id ?? '')).filter(Boolean);
+  if (oldIds.length === 0) return;
+  const deleteResult = await context.supabase.from('student_roster_snapshots').delete().in('id', oldIds);
+  if (deleteResult.error) throw new ApiClientError(`Student roster snapshot cleanup failed: ${deleteResult.error.message}`, 503);
+}
+
+async function createStudentRosterSnapshot(context: Awaited<ReturnType<typeof createContext>>, snapshotDate = todayLocalDate()) {
+  const existing = await context.supabase.from('student_roster_snapshots').select('*').eq('snapshot_date', snapshotDate).limit(1).maybeSingle();
+  if (existing.error) throw new ApiClientError(`Student roster snapshot lookup failed: ${existing.error.message}`, 503);
+  if (existing.data) return { created: false, item: camelize(studentRosterSnapshotSummary(existing.data)) };
+
+  const payload = await buildStudentRosterSnapshotPayload(context);
+  const students = normalizeSnapshotRows((payload as Record<string, unknown>).students);
+  const { data, error } = await context.supabase
+    .from('student_roster_snapshots')
+    .insert({
+      created_by: context.email,
+      payload,
+      snapshot_date: snapshotDate,
+      student_count: students.length
+    })
+    .select('*')
+    .single();
+  if (error) throw new ApiClientError(`Student roster snapshot could not be created: ${error.message}`, 503);
+
+  await pruneStudentRosterSnapshots(context);
+  await writeAuditLog(context, 'students', 'roster_snapshot_created', data, { snapshot_date: snapshotDate, student_count: students.length });
+  return { created: true, item: camelize(studentRosterSnapshotSummary(data)) };
+}
+
+async function getStudentRosterSnapshots(context: Awaited<ReturnType<typeof createContext>>) {
+  if (webEnv.writeActionsEnabled) {
+    try {
+      await createStudentRosterSnapshot(context);
+    } catch (error) {
+      console.warn('Student roster auto-snapshot could not be created', error);
+    }
+  }
+  const { data, error } = await context.supabase
+    .from('student_roster_snapshots')
+    .select('id,snapshot_date,student_count,created_at,created_by,restored_at,restored_by,restore_note')
+    .order('snapshot_date', { ascending: false })
+    .limit(3);
+  if (error) throw new ApiClientError(`Student roster snapshots could not be loaded: ${error.message}`, 503);
+  return { items: (data ?? []).map((row) => camelize(studentRosterSnapshotSummary(row))) };
+}
+
+function restoreStudentUpdatePayload(student: Record<string, unknown>) {
+  return {
+    ...Object.fromEntries(STUDENT_ROSTER_SNAPSHOT_COLUMNS.map((column) => [column, student[column] ?? null])),
+    updated_at: new Date().toISOString()
+  };
+}
+
+async function restoreStudentRosterSnapshot(context: Awaited<ReturnType<typeof createContext>>, snapshotId: string, body: unknown) {
+  const confirmed = isRecord(body) && body.confirm === true;
+  const restoreNote = isRecord(body) && typeof body.restoreNote === 'string' ? body.restoreNote.trim().slice(0, 500) : '';
+  if (!confirmed) throw new ApiClientError('Confirm the student roster restore before applying it.', 400);
+
+  const snapshotResult = await context.supabase.from('student_roster_snapshots').select('*').eq('id', snapshotId).limit(1).maybeSingle();
+  if (snapshotResult.error) throw new ApiClientError(`Student roster snapshot lookup failed: ${snapshotResult.error.message}`, 503);
+  if (!snapshotResult.data) throw new ApiClientError('Student roster snapshot was not found.', 404);
+
+  const payload = isRecord(snapshotResult.data.payload) ? snapshotResult.data.payload : {};
+  const students = normalizeSnapshotRows(payload.students);
+  const studentIds = uniqueStrings(students.map((student) => String(student.id ?? '')).filter(Boolean));
+  if (studentIds.length === 0) throw new ApiClientError('Snapshot has no student roster rows to restore.', 400);
+
+  const currentStudentsResult = await context.supabase.from('students').select('id').in('id', studentIds).limit(10000);
+  if (currentStudentsResult.error) throw new ApiClientError(`Current roster lookup failed: ${currentStudentsResult.error.message}`, 503);
+  const existingIds = new Set((currentStudentsResult.data ?? []).map((student) => String(student.id ?? '')));
+
+  let restoredStudents = 0;
+  let skippedStudents = 0;
+  for (const student of students) {
+    const studentId = String(student.id ?? '');
+    if (!studentId || !existingIds.has(studentId)) {
+      skippedStudents += 1;
+      continue;
+    }
+    const { error } = await context.supabase.from('students').update(restoreStudentUpdatePayload(student)).eq('id', studentId);
+    if (error) throw new ApiClientError(`Student roster restore failed for ${student.email ?? studentId}: ${error.message}`, 503);
+    restoredStudents += 1;
+  }
+
+  const deleteCohorts = await context.supabase.from('student_cohorts').delete().in('student_id', studentIds);
+  if (deleteCohorts.error) throw new ApiClientError(`Student cohort restore cleanup failed: ${deleteCohorts.error.message}`, 503);
+  const snapshotCohorts = normalizeSnapshotRows(payload.studentCohorts)
+    .filter((row) => existingIds.has(String(row.student_id ?? '')))
+    .map((row) => ({
+      cohort_id: row.cohort_id,
+      cohort_name: row.cohort_name,
+      student_id: row.student_id
+    }));
+  if (snapshotCohorts.length > 0) {
+    const { error } = await context.supabase.from('student_cohorts').insert(snapshotCohorts);
+    if (error) throw new ApiClientError(`Student cohort restore failed: ${error.message}`, 503);
+  }
+
+  const deletePrograms = await context.supabase.from('student_programs').delete().in('student_id', studentIds);
+  if (deletePrograms.error) throw new ApiClientError(`Student program restore cleanup failed: ${deletePrograms.error.message}`, 503);
+  const snapshotPrograms = normalizeSnapshotRows(payload.studentPrograms)
+    .filter((row) => existingIds.has(String(row.student_id ?? '')))
+    .map((row) => ({
+      program_key: row.program_key,
+      student_id: row.student_id,
+      student_name: row.student_name
+    }));
+  if (snapshotPrograms.length > 0) {
+    const { error } = await context.supabase.from('student_programs').insert(snapshotPrograms);
+    if (error) throw new ApiClientError(`Student program restore failed: ${error.message}`, 503);
+  }
+
+  const restoredAt = new Date().toISOString();
+  const updateSnapshot = await context.supabase
+    .from('student_roster_snapshots')
+    .update({
+      restore_note: restoreNote || null,
+      restored_at: restoredAt,
+      restored_by: context.email
+    })
+    .eq('id', snapshotId)
+    .select('*')
+    .single();
+  if (updateSnapshot.error) throw new ApiClientError(`Student roster restore audit failed: ${updateSnapshot.error.message}`, 503);
+
+  await writeAuditLog(context, 'students', 'roster_restored', updateSnapshot.data, {
+    restored_students: restoredStudents,
+    skipped_students: skippedStudents,
+    snapshot_date: snapshotResult.data.snapshot_date
+  });
+
+  return {
+    item: camelize(studentRosterSnapshotSummary(updateSnapshot.data)),
+    restoredStudents,
+    skippedStudents,
+    status: 'restored'
+  };
 }
 
 async function getAnnouncementRecipientCount(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
@@ -3320,7 +3666,7 @@ async function getStudentAccessPreview(context: Awaited<ReturnType<typeof create
   const student = await getStudentById(context, studentId);
   const [dashboard, schedule, resources, projects, certificates, enrichedStudent] = await Promise.all([
     callRpc(context, 'student_dashboard_bundle', { p_student_email: student.email }),
-    callRpc(context, 'student_schedule_view', { p_student_email: student.email }),
+    callRpc(context, 'student_schedule_view', { p_session_type: 'workshop', p_student_email: student.email }),
     callRpc(context, 'student_resources_view', { p_student_email: student.email }),
     callRpc(context, 'student_projects_bundle', { p_student_email: student.email }),
     callRpc(context, 'student_certificates_bundle', { p_student_email: student.email }),
@@ -3347,7 +3693,7 @@ async function getAdminStudentPreview(context: Awaited<ReturnType<typeof createC
   const student = await getStudentById(context, studentId);
   const [dashboard, schedule, resources, projects, certificates, enrichedStudent] = await Promise.all([
     callRpc(context, 'student_dashboard_bundle', { p_student_email: student.email }),
-    callRpc(context, 'student_schedule_view', { p_student_email: student.email }),
+    callRpc(context, 'student_schedule_view', { p_session_type: 'workshop', p_student_email: student.email }),
     callRpc(context, 'student_resources_view', { p_student_email: student.email }),
     callRpc(context, 'student_projects_bundle', { p_student_email: student.email }),
     callRpc(context, 'student_certificates_bundle', { p_student_email: student.email }),
@@ -3880,6 +4226,7 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
   const startDate = String(payload.start_date ?? '').slice(0, 10);
   const submittedEndDate = String(payload.end_date ?? '').slice(0, 10);
   const issueDate = String(payload.issue_date ?? todayIsoDate()).slice(0, 10);
+  const submittedProjectRole = String(payload.project_role ?? '').trim();
   const sendEmail = payload.send_email !== false;
 
   if (!requestId) throw new ApiClientError('Certificate request is required.', 400);
@@ -3892,6 +4239,7 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
       : '';
   if (!isIsoDate(endDate)) throw new ApiClientError('End date is required before issuing a live project certificate.', 400);
   if (dateInputTime(endDate) < dateInputTime(startDate)) throw new ApiClientError('End date cannot be before the project start date.', 400);
+  if (dateInputTime(endDate) > dateInputTime(todayLocalDate())) throw new ApiClientError('End date is a future date, please edit it before issuing certificate.', 400);
   if (!isIsoDate(issueDate)) throw new ApiClientError('Issue date is required before issuing a live project certificate.', 400);
 
   const { data: submission, error: submissionError } = await context.supabase
@@ -3904,6 +4252,8 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
 
   if (submissionError) throw new ApiClientError(submissionError.message, 503);
   if (!submission) throw new ApiClientError('Approved project submission was not found.', 404);
+  const projectRole = submittedProjectRole || String(submission.role_name ?? submission.project_role ?? '').trim();
+  if (!projectRole) throw new ApiClientError('Project role is required before issuing a live project certificate.', 400);
 
   const { data: existingCertificates, error: existingError } = await context.supabase
     .from('certificates')
@@ -3935,6 +4285,7 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
       durationWeeks: rawDurationWeeks ?? null,
       issueDate,
       projectEndDate: endDate,
+      projectRole,
       projectStartDate: startDate,
       requestNumber: submission.request_number,
       submissionId: submission.request_id,
@@ -3947,16 +4298,16 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
     generation_status: 'pending',
     issue_date: issueDate,
     issued_by: adminEmail,
-    modules_covered: [String(submission.role_name ?? ''), String(submission.project_title ?? '')].filter(Boolean),
+    modules_covered: [projectRole, String(submission.project_title ?? '')].filter(Boolean),
     program_key: submission.program_key,
     program_name: programResult.data?.name ?? submission.program_key,
     project_end_date: endDate,
     project_id: submission.project_id,
-    project_role: submission.role_name,
+    project_role: projectRole,
     project_start_date: startDate,
     project_title: submission.project_title,
     role_id: submission.role_id,
-    role_name: submission.role_name,
+    role_name: projectRole,
     status: 'issued',
     student_email: submission.student_email,
     student_id: submission.student_id,
@@ -4918,6 +5269,11 @@ function matchesClientFilters(item: unknown, query: ApiClientOptions['query']) {
     const expected = String(value);
     const camelKey = toCamelCase(key);
     const actual = item[camelKey] ?? item[key];
+
+    if (key === 'sessionType') {
+      const normalizedActual = String(actual ?? 'workshop');
+      return normalizedActual === expected;
+    }
 
     if (key === 'programKey' && Array.isArray(item.programKeys)) {
       return item.programKeys.some((entry) => String(entry) === expected) || String(actual ?? '') === expected;

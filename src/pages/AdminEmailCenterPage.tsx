@@ -1,6 +1,7 @@
 import { AlertTriangle, Bold, CheckCircle, CheckSquare, Edit3, Italic, Link, List, ListOrdered, Plus, RefreshCw, RemoveFormatting, Search, Send, Square, Trash2, Underline, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PageHeader } from '../components/PageHeader';
+import { PortalToast } from '../components/PortalToast';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { StatusBadge } from '../components/StatusBadge';
 import { AdminCohort, useAdminCohorts } from '../features/admin/useAdminCohorts';
@@ -451,7 +452,9 @@ export function AdminEmailCenterPage() {
         : selectedCohorts.length;
   const recipientCount = resolvedSummary?.recipients ?? estimatedRecipientCount;
   const selectedTargetLabel = sendMode === 'all_active_students'
-    ? 'All active LMS students'
+    ? recipientFilters.collegeName
+      ? `Active LMS students · ${recipientFilters.collegeName}`
+      : 'All active LMS students'
     : selectedCohorts.length
       ? selectedCohorts.join(', ')
       : 'Not selected';
@@ -468,12 +471,6 @@ export function AdminEmailCenterPage() {
     setResolvedSummary(null);
     setConfirmSend(false);
   }, [batchSize, body, directEmails, googleGroupEmail, recipientFilters, relatedParams, selectedCohorts, sendMode, subject, templateKey]);
-
-  useEffect(() => {
-    if (!message) return undefined;
-    const timer = window.setTimeout(() => setMessage(null), message.tone === 'success' ? 5000 : 8000);
-    return () => window.clearTimeout(timer);
-  }, [message]);
 
   function handlePhaseChange(nextPhase: string) {
     setPhase(nextPhase);
@@ -535,6 +532,31 @@ export function AdminEmailCenterPage() {
     setRecipientFilters({});
   }
 
+  function applyActiveStudentsByCollege(collegeName = recipientFilters.collegeName ?? '') {
+    setSendMode('all_active_students');
+    setSelectedCohorts([]);
+    setGoogleGroupEmail('');
+    setRecipientFilters((current) => ({
+      ...current,
+      collegeName: collegeName || undefined
+    }));
+    setMessage({
+      tone: 'success',
+      text: collegeName ? `Quick filter applied: active students from ${collegeName}.` : 'Quick filter applied: active students by college.'
+    });
+  }
+
+  function handleCollegeRecipientFilter(collegeName: string) {
+    updateRecipientFilter('collegeName', collegeName);
+    if (collegeName && sendMode === 'cohort_students' && selectedCohorts.length === 0) {
+      setSendMode('all_active_students');
+      setMessage({
+        tone: 'success',
+        text: `Switched to All active LMS students for ${collegeName}.`
+      });
+    }
+  }
+
   function useTemplate(template: AdminEmailTemplate) {
     setActiveTab('compose');
     setPhase(template.phase);
@@ -578,6 +600,17 @@ export function AdminEmailCenterPage() {
     };
   }
 
+  function validateRecipientSelection() {
+    if (sendMode === 'cohort_students' && selectedCohorts.length === 0) {
+      if (recipientFilters.collegeName) {
+        applyActiveStudentsByCollege(recipientFilters.collegeName);
+        return 'College filters now target All active LMS students. Click Preview again to calculate the exact count.';
+      }
+      return 'Select at least one cohort, or use the Active students by college quick filter.';
+    }
+    return null;
+  }
+
   async function handleSendTestEmail() {
     setMessage(null);
     const email = testEmail.trim();
@@ -602,6 +635,12 @@ export function AdminEmailCenterPage() {
 
   async function handlePreview() {
     setMessage(null);
+    const validationMessage = validateRecipientSelection();
+    if (validationMessage) {
+      setResolvedSummary(null);
+      setMessage({ tone: 'error', text: validationMessage });
+      return;
+    }
     try {
       const result = await resolveRecipients.mutateAsync(emailPayload(false));
       setResolvedSummary(result);
@@ -614,6 +653,12 @@ export function AdminEmailCenterPage() {
 
   async function openSendConfirmation() {
     setMessage(null);
+    const validationMessage = validateRecipientSelection();
+    if (validationMessage) {
+      setResolvedSummary(null);
+      setMessage({ tone: 'error', text: validationMessage });
+      return;
+    }
     try {
       const result = await resolveRecipients.mutateAsync(emailPayload(false));
       setResolvedSummary(result);
@@ -737,13 +782,13 @@ export function AdminEmailCenterPage() {
       />
 
       {message ? (
-        <div className={`admin-email-toast admin-email-toast--${message.tone}`} role="status" aria-live="polite">
-          {message.tone === 'success' ? <CheckCircle size={20} /> : <AlertTriangle size={20} />}
-          <span>{message.text}</span>
-          <button aria-label="Dismiss message" onClick={() => setMessage(null)} type="button">
-            <X size={16} />
-          </button>
-        </div>
+        <PortalToast
+          icon={message.tone === 'success' ? <CheckCircle size={20} /> : <AlertTriangle size={20} />}
+          message={message.text}
+          onDismiss={() => setMessage(null)}
+          title={message.tone === 'success' ? 'Action complete' : 'Action failed'}
+          tone={message.tone}
+        />
       ) : null}
 
       <div className="admin-email-tabs" role="tablist" aria-label="Email centre sections">
@@ -827,6 +872,26 @@ export function AdminEmailCenterPage() {
               </select>
             </label>
 
+            <section className="admin-email-quick-segment admin-email-wide" aria-label="Email center quick segment">
+              <div>
+                <span className="eyebrow">Quick filter</span>
+                <h3>Active students by college</h3>
+                <p>Select a college, then preview to calculate the exact active student count before sending.</p>
+              </div>
+              <label>
+                <span>College</span>
+                <select value={recipientFilters.collegeName ?? ''} onChange={(event) => applyActiveStudentsByCollege(event.target.value)}>
+                  <option value="">Choose college</option>
+                  {collegeOptions.map((college) => (
+                    <option key={college} value={college}>{college}</option>
+                  ))}
+                </select>
+              </label>
+              <button className="segmented-button segmented-button--gold" onClick={() => applyActiveStudentsByCollege()} type="button">
+                Apply
+              </button>
+            </section>
+
             {sendMode === 'direct' ? (
               <label className="admin-email-wide">
                 <span>Student Emails *</span>
@@ -904,7 +969,7 @@ export function AdminEmailCenterPage() {
                   </label>
                   <label>
                     <span>College</span>
-                    <select value={recipientFilters.collegeName ?? ''} onChange={(event) => updateRecipientFilter('collegeName', event.target.value)}>
+                    <select value={recipientFilters.collegeName ?? ''} onChange={(event) => handleCollegeRecipientFilter(event.target.value)}>
                       <option value="">All colleges</option>
                       {collegeOptions.map((college) => (
                         <option key={college} value={college}>{college}</option>

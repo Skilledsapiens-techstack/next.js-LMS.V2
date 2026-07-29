@@ -17,6 +17,8 @@ export type StudentAnnouncement = {
   priority: StudentAnnouncementPriority;
   programKeys: string[];
   startDate?: string;
+  sourceType?: string;
+  systemGenerated?: boolean;
   title: string;
   type?: string;
   updatedAt?: string;

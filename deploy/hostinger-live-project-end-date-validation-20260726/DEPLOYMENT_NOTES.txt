@@ -1,0 +1,17 @@
+Hostinger Deployment Package
+Package: hostinger-live-project-end-date-validation-20260726
+Prepared: 26 Jul 2026
+
+Upload instructions:
+1. Upload the contents of this folder to Hostinger public_html.
+2. Keep .htaccess at the public_html root so direct portal routes work.
+3. Do not upload this zip file inside public_html after extraction.
+
+Included changes:
+- Admin Live Project Certificate issue popup keeps End date pre-filled and editable.
+- Future End date is highlighted in red with an admin error message.
+- Issue Certificate is blocked until the End date is today or earlier.
+- Backend live project issuance also rejects future End date values.
+
+Supabase status:
+- No new Supabase migration is required for this package.
