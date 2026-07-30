@@ -447,7 +447,8 @@ async function generateOne(supabase: ReturnType<typeof createClient>, certificat
     throw new Error('A fresh certificate PDF was already generated in the last 24 hours. Please try again later or contact your program coordinator.');
   }
 
-  if (options.force && minutesAgo(certificate.pdf_generated_at) < REGENERATION_COOLDOWN_MINUTES) {
+  const fallbackPdfNeedsRepair = /Google Slides fallback used/i.test(text(certificate.generation_error));
+  if (options.force && minutesAgo(certificate.pdf_generated_at) < REGENERATION_COOLDOWN_MINUTES && !fallbackPdfNeedsRepair) {
     if (currentPath && currentExpiry.getTime() > Date.now()) {
       const { data: signed, error: signedError } = await supabase.storage.from(TEMP_BUCKET).createSignedUrl(currentPath, 60 * 60 * 24);
       if (signedError) throw signedError;
@@ -479,6 +480,10 @@ async function generateOne(supabase: ReturnType<typeof createClient>, certificat
     pdfBytes = slidesPdf.pdfBytes;
     templateUrl = slidesPdf.templateUrl;
   } else {
+    if (templateType === 'leadership_program') {
+      throw new Error(`Leadership certificates must be generated from the Google Slides template. ${slidesError || 'Google Slides certificate generator is not configured.'}`);
+    }
+
     const { data: template, error: templateError } = await supabase
       .from('certificate_templates')
       .select('*')

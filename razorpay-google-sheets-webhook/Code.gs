@@ -20,6 +20,7 @@ const IMPORT_HEADERS = [
   'you_are_from',
   'project_start_date',
   'duration',
+  'liveProjectRoles',
   'onboardingMailStatus',
   'active',
 ];
@@ -110,6 +111,7 @@ function onOpen() {
     .addItem('Setup / Repair Workbook', 'setupWorkbook')
     .addItem('Check Column Configuration', 'checkColumnConfiguration')
     .addItem('Restore Columns', 'restoreColumns')
+    .addItem('Repair Missing Duration Rows', 'repairMissingDurationLiveProjectRows')
     .addItem('Compare Leadership vs Sheet13', 'compareLeadershipWithSheet13')
     .addSeparator()
     .addItem('Show Webhook URL', 'showWebhookUrl')
@@ -208,6 +210,7 @@ function buildLeadershipSheet13Report_(ss) {
     'you_are_from',
     'project_start_date',
     'duration',
+    'liveProjectRoles',
     'onboardingMailStatus',
     'active',
   ];
@@ -331,7 +334,43 @@ function showWebhookUrl() {
   SpreadsheetApp.getUi().alert('Razorpay Webhook URL', message, SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
-function doGet() {
+function doGet(e) {
+  if (e && e.parameter && e.parameter.action === 'repairMissingDurationRows') {
+    verifyRequestToken_(e);
+    return json_(repairMissingDurationLiveProjectRows());
+  }
+  if (e && e.parameter && e.parameter.action === 'auditMissingDurationRows') {
+    verifyRequestToken_(e);
+    return json_(auditMissingDurationErrorRows_());
+  }
+  if (e && e.parameter && e.parameter.action === 'listSheets') {
+    verifyRequestToken_(e);
+    return json_({
+      sheets: getSpreadsheet_().getSheets().map(sheet => ({
+        name: sheet.getName(),
+        rows: sheet.getLastRow(),
+        columns: sheet.getLastColumn(),
+        hidden: sheet.isSheetHidden(),
+      })),
+    });
+  }
+  if (e && e.parameter && e.parameter.action === 'auditDurationRepairStatus') {
+    verifyRequestToken_(e);
+    return json_(auditDurationRepairStatus_());
+  }
+  if (e && e.parameter && e.parameter.action === 'auditAllErrorRowsAgainstImportTabs') {
+    verifyRequestToken_(e);
+    return json_(auditAllErrorRowsAgainstImportTabs_());
+  }
+  if (e && e.parameter && e.parameter.action === 'auditFirstYearLiveProjectsInLeadership') {
+    verifyRequestToken_(e);
+    return json_(auditFirstYearLiveProjectsInLeadership_());
+  }
+  if (e && e.parameter && e.parameter.action === 'restoreMissingDurationErrorLogs') {
+    verifyRequestToken_(e);
+    return json_(restoreMissingDurationErrorLogs_());
+  }
+
   return json_({
     ok: true,
     service: 'Razorpay Paid Students - LMS Import',
@@ -475,6 +514,9 @@ function buildImportRow_(extracted, route) {
     : extracted.programStartDate;
 
   const duration = route.sourceForm === 'live_projects' ? extracted.duration : '';
+  const liveProjectRoles = route.sourceForm === 'live_projects'
+    ? mapLiveProjectRoles_(extracted)
+    : '';
 
   return {
     studentId: '',
@@ -490,6 +532,7 @@ function buildImportRow_(extracted, route) {
     you_are_from: extracted.yearFrom || '',
     project_start_date: projectStartDate || '',
     duration: duration || '',
+    liveProjectRoles: liveProjectRoles,
     onboardingMailStatus: 'pending',
     active: 'true',
   };
@@ -512,15 +555,576 @@ function mapLiveProjectPrograms_(extracted) {
   return uniqueNonEmpty_(selectedRoles.map(role => LIVE_PROJECT_ROLE_MAP[role] || '')).join('|');
 }
 
+function mapLiveProjectRoles_(extracted) {
+  return uniqueNonEmpty_([
+    extracted.firstLiveProjectRole,
+    extracted.secondLiveProjectRole,
+    extracted.thirdLiveProjectRole,
+  ]).join('|');
+}
+
 function validateImportRow_(row, route) {
   const errors = [];
   ['fullName', 'email', 'phone', 'collegeName', 'programNames'].forEach(key => {
     if (!row[key]) errors.push(`Missing ${key}`);
   });
-  if (route.sourceForm === 'live_projects' && !row.duration) {
-    errors.push('Missing duration for Live Projects');
-  }
   return errors;
+}
+
+function repairMissingDurationLiveProjectRows() {
+  const ss = getSpreadsheet_();
+  const rawSheet = ss.getSheetByName(SHEET_NAMES.raw);
+  if (!rawSheet || rawSheet.getLastRow() < 2) {
+    showAlertIfAvailable_('Repair Missing Duration Rows', 'No raw payment rows found.');
+    return { moved: 0, skipped: 0, failed: 0, errorsRemoved: 0 };
+  }
+
+  const values = rawSheet.getDataRange().getValues();
+  const headerIndex = buildHeaderIndex_(values[0]);
+  const statusIndex = headerIndex[normalizeHeader_('processing_status')];
+  const noteIndex = headerIndex[normalizeHeader_('processing_note')];
+  if (statusIndex === undefined || noteIndex === undefined) {
+    throw new Error('Raw Razorpay Payments is missing processing_status or processing_note.');
+  }
+
+  let moved = 0;
+  let skipped = 0;
+  let failed = 0;
+  const existingImportKeys = buildImportRowKeySet_(SHEET_NAMES.liveProjects);
+  const importRowsToAppend = [];
+
+  values.slice(1).forEach((row, rowOffset) => {
+    const rowNumber = rowOffset + 2;
+    const status = String(row[statusIndex] || '').trim();
+    const note = String(row[noteIndex] || '').trim();
+    if (status !== 'needs_review' || note !== 'Missing duration for Live Projects') return;
+
+    try {
+      const extracted = rawRowToExtracted_(row, headerIndex);
+      extracted.duration = '';
+      const route = determineRoute_(extracted);
+      if (!route || route.sourceForm !== 'live_projects') {
+        skipped += 1;
+        return;
+      }
+
+      const importRow = buildImportRow_(extracted, route);
+      importRow.duration = '';
+      const validation = validateImportRow_(importRow, route);
+      if (validation.length) {
+        failed += 1;
+        rawSheet.getRange(rowNumber, noteIndex + 1).setValue(validation.join('; '));
+        return;
+      }
+
+      const importKey = makeImportRowKey_(importRow);
+      if (existingImportKeys[importKey]) {
+        skipped += 1;
+        rawSheet.getRange(rowNumber, statusIndex + 1).setValue('processed');
+        rawSheet.getRange(rowNumber, noteIndex + 1).setValue(`Already present in ${route.destinationSheet}; duration left blank`);
+        return;
+      }
+
+      importRowsToAppend.push(IMPORT_HEADERS.map(header => importRow[header] || ''));
+      existingImportKeys[importKey] = true;
+      rawSheet.getRange(rowNumber, statusIndex + 1).setValue('processed');
+      rawSheet.getRange(rowNumber, noteIndex + 1).setValue(`Moved to ${route.destinationSheet}; duration left blank`);
+      moved += 1;
+    } catch (err) {
+      failed += 1;
+      rawSheet.getRange(rowNumber, noteIndex + 1).setValue(err && err.message ? err.message : String(err));
+    }
+  });
+
+  if (importRowsToAppend.length) {
+    appendImportRows_(SHEET_NAMES.liveProjects, importRowsToAppend);
+  }
+
+  const message = `Moved: ${moved}\nSkipped: ${skipped}\nFailed: ${failed}\nError rows deleted: 0`;
+  showAlertIfAvailable_('Repair Missing Duration Rows', message);
+  return {
+    moved: moved,
+    skipped: skipped,
+    failed: failed,
+    errorsRemoved: 0,
+    errorsKept: 0,
+  };
+}
+
+function rawRowToExtracted_(row, headerIndex) {
+  const value = header => {
+    const index = headerIndex[normalizeHeader_(header)];
+    return index === undefined ? '' : row[index];
+  };
+
+  return {
+    receivedAt: value('received_at'),
+    paymentPageId: value('payment_page_id'),
+    paymentPageTitle: value('payment_page_title'),
+    paymentDate: value('payment_date'),
+    orderId: value('order_id'),
+    itemName: value('item_name'),
+    itemAmount: value('item_amount'),
+    itemQuantity: value('item_quantity'),
+    itemPaymentAmount: value('item_payment_amount'),
+    totalPaymentAmount: value('total_payment_amount'),
+    currency: value('currency'),
+    paymentStatus: value('payment_status'),
+    paymentId: value('payment_id'),
+    firstProgramRole: value('select_your_first_program_role'),
+    secondProgramRole: value('select_your_second_program_role'),
+    thirdProgramRole: value('select_your_third_program_role'),
+    firstLiveProjectRole: value('select_your_first_live_project_role'),
+    secondLiveProjectRole: value('select_your_second_live_project_role'),
+    thirdLiveProjectRole: value('select_your_3rd_live_project_role'),
+    fullName: value('full_name'),
+    officialEmail: value('official_email'),
+    phoneNumber: value('phone_number'),
+    college: value('your_college'),
+    yearFrom: value('you_are_from'),
+    programStartDate: value('select_your_program_start_date'),
+    projectStartDate: value('select_your_project_start_date'),
+    duration: value('select_tentative_duration_of_your_project'),
+    personalMentor: value('personalmentor'),
+    rawPayloadJson: value('raw_payload_json'),
+  };
+}
+
+function importRowAlreadyExists_(sheetName, rowObj) {
+  const sheet = getSpreadsheet_().getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() < 2) return false;
+
+  const data = readSheetObjects_(sheet);
+  const keys = ['email', 'phone', 'programNames', 'project_start_date', 'liveProjectRoles'];
+  return data.rows.some(row => {
+    return keys.every(key => {
+      const left = normalizeComparableValue_(row.values[key], key);
+      const right = normalizeComparableValue_(rowObj[key], key);
+      return left === right;
+    });
+  });
+}
+
+function buildImportRowKeySet_(sheetName) {
+  const sheet = getSpreadsheet_().getSheetByName(sheetName);
+  if (!sheet || sheet.getLastRow() < 2) return {};
+
+  const data = readSheetObjects_(sheet);
+  return data.rows.reduce((acc, row) => {
+    const key = makeImportRowKey_(row.values);
+    if (key) acc[key] = true;
+    return acc;
+  }, {});
+}
+
+function makeImportRowKey_(rowObj) {
+  return [
+    normalizeComparableValue_(rowObj.email, 'email'),
+    normalizeComparableValue_(rowObj.phone, 'phone'),
+    normalizeComparableValue_(rowObj.programNames, 'programNames'),
+    normalizeComparableValue_(rowObj.project_start_date, 'project_start_date'),
+    normalizeComparableValue_(rowObj.liveProjectRoles, 'liveProjectRoles'),
+  ].join('||');
+}
+
+function removeMissingDurationErrorRows_(ss) {
+  const sheet = ss.getSheetByName(SHEET_NAMES.errors);
+  if (!sheet || sheet.getLastRow() < 2) return { removed: 0, kept: 0 };
+
+  const values = sheet.getDataRange().getValues();
+  const headerIndex = buildHeaderIndex_(values[0]);
+  const errorMessageIndex = headerIndex[normalizeHeader_('error_message')];
+  if (errorMessageIndex === undefined) return { removed: 0, kept: 0 };
+
+  const leadershipKeys = buildStudentLookupSet_(ss.getSheetByName(SHEET_NAMES.leadership));
+  const liveProjectKeys = buildStudentLookupSet_(ss.getSheetByName(SHEET_NAMES.liveProjects));
+  let removed = 0;
+  let kept = 0;
+
+  for (let rowNumber = values.length; rowNumber >= 2; rowNumber -= 1) {
+    const row = values[rowNumber - 1];
+    if (String(row[errorMessageIndex] || '').trim() === 'Missing duration for Live Projects') {
+      const rowValues = errorRowToValues_(row, headerIndex);
+      const identity = buildStudentIdentity_(rowValues);
+      const isCaptured = identity.keys.some(key => leadershipKeys[key] || liveProjectKeys[key]);
+      if (isCaptured) {
+        sheet.deleteRow(rowNumber);
+        removed += 1;
+      } else {
+        kept += 1;
+      }
+    }
+  }
+  return { removed: removed, kept: kept };
+}
+
+function errorRowToValues_(row, headerIndex) {
+  const value = header => {
+    const index = headerIndex[normalizeHeader_(header)];
+    return index === undefined ? '' : row[index];
+  };
+  return {
+    fullName: value('full_name'),
+    email: value('official_email'),
+    phone: value('phone_number'),
+    payment_id: value('payment_id'),
+  };
+}
+
+function auditMissingDurationErrorRows_() {
+  const ss = getSpreadsheet_();
+  const sourceSheets = [SHEET_NAMES.errors]
+    .concat(ss.getSheets()
+      .map(sheet => sheet.getName())
+      .filter(name => name.indexOf(`Backup - ${SHEET_NAMES.errors}`) === 0))
+    .filter((name, index, list) => list.indexOf(name) === index);
+
+  const leadershipKeys = buildStudentLookupSet_(ss.getSheetByName(SHEET_NAMES.leadership));
+  const liveProjectKeys = buildStudentLookupSet_(ss.getSheetByName(SHEET_NAMES.liveProjects));
+  const auditedByKey = {};
+  const missingSamples = [];
+  const presentSamples = [];
+
+  sourceSheets.forEach(sheetName => {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet || sheet.getLastRow() < 2) return;
+
+    const data = readSheetObjects_(sheet);
+    data.rows.forEach(row => {
+      const message = String(row.values.error_message || '').trim();
+      if (message !== 'Missing duration for Live Projects') return;
+
+      const identity = buildStudentIdentity_(row.values);
+      const auditKey = [
+        normalizeComparableValue_(row.values.payment_id, 'payment_id'),
+        identity.primary,
+        sheetName,
+      ].join('||');
+      if (auditedByKey[auditKey]) return;
+      auditedByKey[auditKey] = true;
+
+      const inLeadership = identity.keys.some(key => leadershipKeys[key]);
+      const inLiveProjects = identity.keys.some(key => liveProjectKeys[key]);
+      const sample = {
+        sourceSheet: sheetName,
+        rowNumber: row.rowNumber,
+        fullName: String(row.values.fullName || ''),
+        email: String(row.values.email || ''),
+        phone: String(row.values.phone || ''),
+        paymentId: String(row.values.payment_id || ''),
+        foundIn: inLeadership
+          ? SHEET_NAMES.leadership
+          : inLiveProjects
+            ? SHEET_NAMES.liveProjects
+            : '',
+      };
+
+      if (inLeadership || inLiveProjects) {
+        if (presentSamples.length < 25) presentSamples.push(sample);
+      } else if (missingSamples.length < 50) {
+        missingSamples.push(sample);
+      }
+    });
+  });
+
+  const total = Object.keys(auditedByKey).length;
+  const missing = missingSamples.length;
+  const present = total - missing;
+
+  return {
+    auditedSourceSheets: sourceSheets,
+    totalMissingDurationErrorRowsAudited: total,
+    alreadyCapturedInImportReadyTabs: present,
+    notFoundInImportReadyTabs: missing,
+    presentSamples: presentSamples,
+    missingSamples: missingSamples,
+  };
+}
+
+function buildStudentLookupSet_(sheet) {
+  if (!sheet || sheet.getLastRow() < 2) return {};
+  const data = readSheetObjects_(sheet);
+  return data.rows.reduce((acc, row) => {
+    buildStudentIdentity_(row.values).keys.forEach(key => {
+      acc[key] = true;
+    });
+    return acc;
+  }, {});
+}
+
+function buildStudentIdentity_(values) {
+  const email = normalizeEmail_(values.email || values.official_email);
+  const phone = normalizeComparablePhone_(values.phone || values.phone_number);
+  const fullName = normalizeComparableValue_(values.fullName || values.full_name, 'fullName');
+  const keys = [];
+  if (email) keys.push(`email:${email}`);
+  if (phone) keys.push(`phone:${phone}`);
+  if (fullName && phone) keys.push(`namephone:${fullName}|${phone}`);
+  if (fullName && email) keys.push(`nameemail:${fullName}|${email}`);
+  return {
+    primary: email || phone || fullName,
+    keys: keys,
+  };
+}
+
+function auditDurationRepairStatus_() {
+  const ss = getSpreadsheet_();
+  const rawSheet = ss.getSheetByName(SHEET_NAMES.raw);
+  if (!rawSheet || rawSheet.getLastRow() < 2) {
+    return { rawRows: 0, movedToLiveProjects: 0, alreadyPresent: 0, stillMissingDurationNeedsReview: 0 };
+  }
+
+  const values = rawSheet.getDataRange().getValues();
+  const headerIndex = buildHeaderIndex_(values[0]);
+  const statusIndex = headerIndex[normalizeHeader_('processing_status')];
+  const noteIndex = headerIndex[normalizeHeader_('processing_note')];
+  const rows = values.slice(1);
+  const samples = [];
+  let movedToLiveProjects = 0;
+  let alreadyPresent = 0;
+  let stillMissingDurationNeedsReview = 0;
+
+  rows.forEach((row, rowOffset) => {
+    const status = statusIndex === undefined ? '' : String(row[statusIndex] || '').trim();
+    const note = noteIndex === undefined ? '' : String(row[noteIndex] || '').trim();
+    if (note === `Moved to ${SHEET_NAMES.liveProjects}; duration left blank`) {
+      movedToLiveProjects += 1;
+      if (samples.length < 20) samples.push(rawRepairSample_(row, headerIndex, rowOffset + 2, 'moved'));
+    }
+    if (note === `Already present in ${SHEET_NAMES.liveProjects}; duration left blank`) {
+      alreadyPresent += 1;
+      if (samples.length < 20) samples.push(rawRepairSample_(row, headerIndex, rowOffset + 2, 'already_present'));
+    }
+    if (status === 'needs_review' && note === 'Missing duration for Live Projects') {
+      stillMissingDurationNeedsReview += 1;
+    }
+  });
+
+  return {
+    rawRows: rows.length,
+    liveProjectsImportReadyRows: Math.max(0, (ss.getSheetByName(SHEET_NAMES.liveProjects) || { getLastRow: () => 1 }).getLastRow() - 1),
+    leadershipImportReadyRows: Math.max(0, (ss.getSheetByName(SHEET_NAMES.leadership) || { getLastRow: () => 1 }).getLastRow() - 1),
+    movedToLiveProjects: movedToLiveProjects,
+    alreadyPresentInLiveProjects: alreadyPresent,
+    stillMissingDurationNeedsReview: stillMissingDurationNeedsReview,
+    samples: samples,
+  };
+}
+
+function auditAllErrorRowsAgainstImportTabs_() {
+  const ss = getSpreadsheet_();
+  const errorsSheet = ss.getSheetByName(SHEET_NAMES.errors);
+  if (!errorsSheet || errorsSheet.getLastRow() < 2) {
+    return {
+      errorRowsChecked: 0,
+      foundInLeadershipImportReady: 0,
+      foundInLiveProjectsImportReady: 0,
+      foundInBothImportReadyTabs: 0,
+      foundInEitherImportReadyTab: 0,
+      notFoundInEitherImportReadyTab: 0,
+    };
+  }
+
+  const leadershipKeys = buildStudentLookupSet_(ss.getSheetByName(SHEET_NAMES.leadership));
+  const liveProjectKeys = buildStudentLookupSet_(ss.getSheetByName(SHEET_NAMES.liveProjects));
+  const data = readSheetObjects_(errorsSheet);
+
+  let foundInLeadership = 0;
+  let foundInLiveProjects = 0;
+  let foundInBoth = 0;
+  let foundInEither = 0;
+  let notFound = 0;
+  const notFoundSamples = [];
+
+  data.rows.forEach(row => {
+    const identity = buildStudentIdentity_(row.values);
+    const inLeadership = identity.keys.some(key => leadershipKeys[key]);
+    const inLiveProjects = identity.keys.some(key => liveProjectKeys[key]);
+
+    if (inLeadership) foundInLeadership += 1;
+    if (inLiveProjects) foundInLiveProjects += 1;
+    if (inLeadership && inLiveProjects) foundInBoth += 1;
+    if (inLeadership || inLiveProjects) {
+      foundInEither += 1;
+    } else {
+      notFound += 1;
+      if (notFoundSamples.length < 25) {
+        notFoundSamples.push({
+          rowNumber: row.rowNumber,
+          fullName: String(row.values.fullName || ''),
+          email: String(row.values.email || ''),
+          phone: String(row.values.phone || ''),
+          paymentId: String(row.values.payment_id || ''),
+          errorMessage: String(row.values.error_message || ''),
+        });
+      }
+    }
+  });
+
+  return {
+    errorRowsChecked: data.rows.length,
+    foundInLeadershipImportReady: foundInLeadership,
+    foundInLiveProjectsImportReady: foundInLiveProjects,
+    foundInBothImportReadyTabs: foundInBoth,
+    foundInEitherImportReadyTab: foundInEither,
+    notFoundInEitherImportReadyTab: notFound,
+    notFoundSamples: notFoundSamples,
+  };
+}
+
+function auditFirstYearLiveProjectsInLeadership_() {
+  const ss = getSpreadsheet_();
+  const liveSheet = ss.getSheetByName(SHEET_NAMES.liveProjects);
+  const leadershipKeys = buildStudentLookupSet_(ss.getSheetByName(SHEET_NAMES.leadership));
+
+  if (!liveSheet || liveSheet.getLastRow() < 2) {
+    return {
+      firstYearLiveProjectRowsChecked: 0,
+      foundInLeadershipImportReady: 0,
+      notFoundInLeadershipImportReady: 0,
+      notFoundSamples: [],
+    };
+  }
+
+  const data = readSheetObjects_(liveSheet);
+  let checked = 0;
+  let found = 0;
+  let notFound = 0;
+  const foundSamples = [];
+  const notFoundSamples = [];
+
+  data.rows.forEach(row => {
+    if (!isFirstYearValue_(row.values.you_are_from)) return;
+    checked += 1;
+
+    const identity = buildStudentIdentity_(row.values);
+    const exists = identity.keys.some(key => leadershipKeys[key]);
+    const sample = {
+      rowNumber: row.rowNumber,
+      fullName: String(row.values.fullName || ''),
+      email: String(row.values.email || ''),
+      phone: String(row.values.phone || ''),
+      programNames: String(row.values.programNames || ''),
+      liveProjectRoles: String(row.values.liveProjectRoles || ''),
+    };
+
+    if (exists) {
+      found += 1;
+      if (foundSamples.length < 20) foundSamples.push(sample);
+    } else {
+      notFound += 1;
+      if (notFoundSamples.length < 50) notFoundSamples.push(sample);
+    }
+  });
+
+  return {
+    firstYearLiveProjectRowsChecked: checked,
+    foundInLeadershipImportReady: found,
+    notFoundInLeadershipImportReady: notFound,
+    foundSamples: foundSamples,
+    notFoundSamples: notFoundSamples,
+  };
+}
+
+function isFirstYearValue_(value) {
+  const text = String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return text === '1st year' || text === 'first year' || text === '1 year' || text === '1st';
+}
+
+function rawRepairSample_(row, headerIndex, rowNumber, status) {
+  const value = header => {
+    const index = headerIndex[normalizeHeader_(header)];
+    return index === undefined ? '' : row[index];
+  };
+  return {
+    status: status,
+    rowNumber: rowNumber,
+    fullName: String(value('full_name') || ''),
+    email: String(value('official_email') || ''),
+    phone: String(value('phone_number') || ''),
+    paymentId: String(value('payment_id') || ''),
+  };
+}
+
+function restoreMissingDurationErrorLogs_() {
+  const ss = getSpreadsheet_();
+  const rawSheet = ss.getSheetByName(SHEET_NAMES.raw);
+  if (!rawSheet || rawSheet.getLastRow() < 2) {
+    return { restored: 0, skippedExisting: 0, rawRowsChecked: 0 };
+  }
+
+  const rawValues = rawSheet.getDataRange().getValues();
+  const rawHeaderIndex = buildHeaderIndex_(rawValues[0]);
+  const noteIndex = rawHeaderIndex[normalizeHeader_('processing_note')];
+  if (noteIndex === undefined) {
+    throw new Error('Raw Razorpay Payments is missing processing_note.');
+  }
+
+  const existingErrorKeys = buildErrorLogKeySet_();
+  const rowsToRestore = [];
+  let skippedExisting = 0;
+
+  rawValues.slice(1).forEach(row => {
+    const note = String(row[noteIndex] || '').trim();
+    const wasMissingDurationRepair = note === `Moved to ${SHEET_NAMES.liveProjects}; duration left blank`
+      || note === `Already present in ${SHEET_NAMES.liveProjects}; duration left blank`;
+    if (!wasMissingDurationRepair) return;
+
+    const extracted = rawRowToExtracted_(row, rawHeaderIndex);
+    const key = makeErrorLogKey_(extracted.paymentId, 'VALIDATION_ERROR', 'Missing duration for Live Projects');
+    if (existingErrorKeys[key]) {
+      skippedExisting += 1;
+      return;
+    }
+
+    rowsToRestore.push([
+      extracted.receivedAt || formatDate_(new Date()),
+      extracted.paymentId || '',
+      extracted.orderId || '',
+      extracted.paymentPageTitle || '',
+      extracted.fullName || '',
+      extracted.officialEmail || '',
+      extracted.phoneNumber || '',
+      'VALIDATION_ERROR',
+      'Missing duration for Live Projects',
+      extracted.rawPayloadJson || '',
+      'open',
+      'Restored after accidental cleanup',
+    ]);
+    existingErrorKeys[key] = true;
+  });
+
+  if (rowsToRestore.length) {
+    const sheet = getOrCreateSheet_(ss, SHEET_NAMES.errors);
+    ensureHeaders_(sheet, ERROR_HEADERS);
+    sheet.getRange(sheet.getLastRow() + 1, 1, rowsToRestore.length, ERROR_HEADERS.length).setValues(rowsToRestore);
+  }
+
+  return {
+    restored: rowsToRestore.length,
+    skippedExisting: skippedExisting,
+    rawRowsChecked: Math.max(0, rawValues.length - 1),
+  };
+}
+
+function buildErrorLogKeySet_() {
+  const sheet = getSpreadsheet_().getSheetByName(SHEET_NAMES.errors);
+  if (!sheet || sheet.getLastRow() < 2) return {};
+
+  const data = readSheetObjects_(sheet);
+  return data.rows.reduce((acc, row) => {
+    const key = makeErrorLogKey_(row.values.payment_id, row.values.error_type, row.values.error_message);
+    if (key) acc[key] = true;
+    return acc;
+  }, {});
+}
+
+function makeErrorLogKey_(paymentId, errorType, errorMessage) {
+  return [
+    String(paymentId || '').trim(),
+    String(errorType || '').trim(),
+    String(errorMessage || '').trim(),
+  ].join('||');
 }
 
 function appendRaw_(extracted, status, note) {
@@ -565,6 +1169,13 @@ function appendImportRow_(sheetName, rowObj) {
   appendByHeaders_(sheetName, IMPORT_HEADERS, IMPORT_HEADERS.map(header => rowObj[header] || ''));
 }
 
+function appendImportRows_(sheetName, rows) {
+  if (!rows.length) return;
+  const sheet = getOrCreateSheet_(getSpreadsheet_(), sheetName);
+  ensureHeaders_(sheet, IMPORT_HEADERS);
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, IMPORT_HEADERS.length).setValues(rows);
+}
+
 function appendError_(extracted, type, message) {
   const row = [
     extracted.receivedAt || formatDate_(new Date()),
@@ -587,6 +1198,14 @@ function appendByHeaders_(sheetName, headers, row) {
   const sheet = getOrCreateSheet_(getSpreadsheet_(), sheetName);
   ensureHeaders_(sheet, headers);
   sheet.appendRow(row);
+}
+
+function showAlertIfAvailable_(title, message) {
+  try {
+    SpreadsheetApp.getUi().alert(title, message, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (err) {
+    Logger.log(`${title}: ${message}`);
+  }
 }
 
 function paymentAlreadySeen_(paymentId) {
@@ -708,6 +1327,21 @@ function restoreSheetColumns_(ss, sheetName, expectedHeaders) {
 
   const restoredRows = dataRows.map(row => {
     return expectedHeaders.map(header => {
+      if (header === 'liveProjectRoles') {
+        const directIndex = headerIndex[normalizeHeader_('liveProjectRoles')];
+        if (directIndex !== undefined) return row[directIndex];
+
+        const shiftedIndex = headerIndex[normalizeHeader_('onboardingMailStatus')];
+        const shiftedValue = shiftedIndex !== undefined ? row[shiftedIndex] : '';
+        if (looksLikeRoleList_(shiftedValue)) return shiftedValue;
+      }
+
+      if (header === 'onboardingMailStatus') {
+        const index = headerIndex[normalizeHeader_('onboardingMailStatus')];
+        const value = index !== undefined ? row[index] : '';
+        if (looksLikeRoleList_(value)) return rowHasValue_(row) ? 'pending' : '';
+      }
+
       const candidates = [header].concat(HEADER_ALIASES[header] || []);
       for (let i = 0; i < candidates.length; i += 1) {
         const index = headerIndex[normalizeHeader_(candidates[i])];
@@ -733,6 +1367,14 @@ function restoreSheetColumns_(ss, sheetName, expectedHeaders) {
   };
 }
 
+function looksLikeRoleList_(value) {
+  const text = String(value || '').trim();
+  if (!text) return false;
+  const normalized = text.toLowerCase();
+  if (['pending', 'sent', 'done', 'true', 'false', 'active', 'inactive', 'yes', 'no'].indexOf(normalized) !== -1) return false;
+  return /leadership|consultant|manager|analyst|marketing|finance|research|product|brand|strategy|business|hr|portfolio|equity|venture|capital|\|/.test(normalized);
+}
+
 function createSheetBackup_(ss, sheet) {
   const timestamp = Utilities.formatDate(new Date(), 'Asia/Kolkata', 'yyyyMMdd-HHmmss');
   const baseName = `Backup - ${sheet.getName()}`.slice(0, 82);
@@ -753,6 +1395,14 @@ function normalizeHeader_(header) {
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '');
+}
+
+function buildHeaderIndex_(headers) {
+  return headers.reduce((acc, header, index) => {
+    const normalized = normalizeHeader_(header);
+    if (normalized && acc[normalized] === undefined) acc[normalized] = index;
+    return acc;
+  }, {});
 }
 
 function rowHasValue_(row) {
@@ -913,9 +1563,17 @@ function canonicalHeaderName_(header) {
     programstartdate: 'project_start_date',
     startdate: 'project_start_date',
     duration: 'duration',
+    liveprojectroles: 'liveProjectRoles',
+    liveprojectrole: 'liveProjectRoles',
     onboardingmailstatus: 'onboardingMailStatus',
     onboardingstatus: 'onboardingMailStatus',
     active: 'active',
+    paymentid: 'payment_id',
+    payment_id: 'payment_id',
+    errortype: 'error_type',
+    error_type: 'error_type',
+    errormessage: 'error_message',
+    error_message: 'error_message',
   };
   return aliases[normalized] || '';
 }
@@ -930,7 +1588,7 @@ function normalizeComparableValue_(value, field) {
   if (field === 'email' || field === 'altEmail') return normalizeEmail_(text);
   if (field === 'phone') return normalizeComparablePhone_(text);
   if (field === 'active' || field === 'personalmentor') return normalizeBooleanLike_(text);
-  if (field === 'programNames' || field === 'cohortNames' || field === 'waGroup') {
+  if (field === 'programNames' || field === 'cohortNames' || field === 'waGroup' || field === 'liveProjectRoles') {
     return text.split(/[|,]/).map(part => part.trim()).filter(Boolean).sort().join('|').toLowerCase();
   }
 
@@ -960,6 +1618,7 @@ const HEADER_ALIASES = {
   phone: ['phone_number', 'contact', 'customer_contact'],
   collegeName: ['your_college', 'college_name', 'college'],
   programNames: ['programName', 'program_name', 'role', 'roles'],
+  liveProjectRoles: ['live_project_roles', 'liveProjectRole', 'live_project_role', 'project_role', 'projectRole', 'role', 'roles'],
   personalmentor: ['personal_mentor', 'personalMentor'],
   project_start_date: ['select_your_project_start_date', 'select_your_program_start_date', 'start_date'],
   duration: ['select_tentative_duration_of_your_project'],

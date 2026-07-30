@@ -79,6 +79,31 @@ export type AdminCertificateRequest = {
   updatedAt?: string;
 };
 
+export type AdminCertificateReviewItemStatus = 'pending' | 'resolved' | 'dismissed';
+
+export type AdminCertificateReviewItem = {
+  certificateType: AdminCertificateType;
+  cohortName?: string;
+  createdAt?: string;
+  expectedAction?: string;
+  id: string;
+  liveProjectRoleIds?: string[];
+  metadata?: Record<string, unknown>;
+  programKey?: string;
+  programName?: string;
+  reason: string;
+  reasonCode: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+  resolutionNote?: string;
+  reviewKey: string;
+  reviewStatus: AdminCertificateReviewItemStatus;
+  studentEmail?: string;
+  studentId?: string;
+  studentName?: string;
+  updatedAt?: string;
+};
+
 export type IssueLiveProjectCertificateInput = {
   durationWeeks?: number;
   endDate: string;
@@ -117,7 +142,7 @@ export type IssueLeadershipCertificatesInput = {
 
 export type IssueLeadershipCertificatesResult = {
   certificates: AdminCertificate[];
-  skipped: Array<{ certificateId?: string; reason: string; studentId?: string }>;
+  skipped: Array<{ certificateId?: string; reason: string; studentId?: string; studentName?: string }>;
   message: string;
 };
 
@@ -179,6 +204,16 @@ export type AdminCertificateRequestsQuery = {
   search?: string;
 };
 
+export type AdminCertificateReviewItemsQuery = {
+  certificateType?: AdminCertificateType | 'all';
+  enabled?: boolean;
+  limit?: number;
+  page?: number;
+  programKey?: string;
+  search?: string;
+  status?: AdminCertificateReviewItemStatus | 'all';
+};
+
 export function useAdminCertificates(query: AdminCertificatesQuery) {
   const { accessToken } = useAuth();
   const certificateType = query.certificateType ?? 'all';
@@ -235,6 +270,51 @@ export function useAdminCertificateRequests(query: AdminCertificateRequestsQuery
   });
 }
 
+export function useAdminCertificateReviewItems(query: AdminCertificateReviewItemsQuery) {
+  const { accessToken } = useAuth();
+  const certificateType = query.certificateType ?? 'all';
+  const limit = query.limit ?? 25;
+  const page = query.page ?? 1;
+  const programKey = query.programKey?.trim();
+  const search = query.search?.trim();
+  const status = query.status ?? 'pending';
+
+  return useQuery({
+    enabled: Boolean(accessToken) && (query.enabled ?? true),
+    queryFn: () =>
+      apiGet<PaginatedResponse<AdminCertificateReviewItem>>('/admins/certificate-review-items', {
+        accessToken: accessToken ?? undefined,
+        query: {
+          certificateType,
+          limit,
+          page,
+          programKey,
+          search,
+          sort: 'newest',
+          status
+        }
+      }),
+    queryKey: ['admin-certificate-review-items', accessToken, certificateType, page, limit, programKey, search, status],
+    staleTime: 30_000
+  });
+}
+
+export function useResolveAdminCertificateReviewItem() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ reviewItemId, resolutionNote }: { reviewItemId: string; resolutionNote?: string }) =>
+      apiPatch<AdminCertificateReviewItem, { resolutionNote?: string }>(`/admins/certificate-review-items/${reviewItemId}/resolve`, {
+        accessToken: accessToken ?? undefined,
+        body: { resolutionNote }
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-certificate-review-items'] });
+    }
+  });
+}
+
 export function useIssueLiveProjectCertificate() {
   const { accessToken } = useAuth();
   const queryClient = useQueryClient();
@@ -282,9 +362,10 @@ export function useIssueLeadershipCertificates() {
       apiPost<IssueLeadershipCertificatesResult, IssueLeadershipCertificatesInput>('/admins/certificates/leadership', {
         accessToken: accessToken ?? undefined,
         body
-      }),
+    }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-certificates'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-certificate-review-items'] });
       queryClient.invalidateQueries({ queryKey: ['student-certificates'] });
     }
   });
