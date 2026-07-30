@@ -67,6 +67,7 @@ const ADMIN_READ_PERMISSIONS_BY_PATH: Record<string, AdminPermission> = {
   '/admins/career-readiness-content': 'admin.resources.view',
   '/admins/certificate-program-settings': 'admin.certificates.view',
   '/admins/certificate-requests': 'admin.certificates.view',
+  '/admins/certificate-review-items': 'admin.certificates.view',
   '/admins/certificates': 'admin.certificates.view',
   '/admins/cohorts': 'admin.cohorts.view',
   '/admins/dashboard': 'admin.dashboard.view',
@@ -306,7 +307,7 @@ const CAREER_READINESS_CONTENT_WRITE_COLUMNS = new Set([
   'updated_by'
 ]);
 
-const LEADERSHIP_PROGRAM_KEYS = new Set(['mclp', 'smlp', 'hrlp', 'flp_er', 'flp_qf', 'pmlp']);
+const LEADERSHIP_PROGRAM_KEYS = new Set(['mclp', 'smlp', 'hrlp', 'flp_er', 'flp_pevc', 'flp_qf', 'pmlp']);
 
 const PROJECT_ROLE_WRITE_COLUMNS = new Set([
   'program_key',
@@ -453,6 +454,12 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
     searchColumns: ['program_key', 'status']
   },
   '/admins/certificate-requests': { table: 'certificate_requests', searchColumns: ['student_email', 'student_name', 'program_name'] },
+  '/admins/certificate-review-items': {
+    table: 'certificate_review_items',
+    filterColumns: { certificateType: 'certificate_type', programKey: 'program_key', status: 'review_status' },
+    searchColumns: ['student_email', 'student_name', 'program_name', 'cohort_name', 'reason'],
+    sortColumns: { newest: { column: 'updated_at', ascending: false } }
+  },
   '/admins/certificates': {
     table: 'certificates',
     filterColumns: { certificateType: 'certificate_type', generationStatus: 'generation_status', programKey: 'program_key', status: 'status' },
@@ -857,6 +864,9 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
   const certificateRevoke = cleanPath.match(/^\/admins\/certificates\/([^/]+)\/revoke$/);
   if (certificateRevoke) return revokeCertificate(context, decodeURIComponent(certificateRevoke[1]), options.body) as Promise<TResponse>;
 
+  const certificateReviewResolve = cleanPath.match(/^\/admins\/certificate-review-items\/([^/]+)\/resolve$/);
+  if (certificateReviewResolve) return resolveCertificateReviewItem(context, decodeURIComponent(certificateReviewResolve[1]), options.body) as Promise<TResponse>;
+
   const cohortStatus = cleanPath.match(/^\/admins\/cohorts\/([^/]+)\/status$/);
   if (cohortStatus) return updateById(context, 'cohorts', cohortStatus[1], options.body, 'status_changed') as Promise<TResponse>;
 
@@ -1198,7 +1208,7 @@ function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'pos
   if (path === '/admins/announcements' || path.match(/^\/admins\/announcements\/[^/]+/)) return 'admin.announcements.manage';
   if (path === '/admins/email-templates' || path.match(/^\/admins\/email-templates\/[^/]+/)) return 'admin.email.manage';
   if (path === '/admins/feature-controls' || path.match(/^\/admins\/feature-controls\/[^/]+/)) return 'admin.feature_control.manage';
-  if (path === '/admins/certificate-program-settings' || path === '/admins/certificates/leadership' || path === '/admins/certificates/live-project' || path === '/admins/certificates/manual') return 'admin.certificates.issue';
+  if (path === '/admins/certificate-program-settings' || path === '/admins/certificate-review-items' || path.match(/^\/admins\/certificate-review-items\/[^/]+/) || path === '/admins/certificates/leadership' || path === '/admins/certificates/live-project' || path === '/admins/certificates/manual') return 'admin.certificates.issue';
   if (path.match(/^\/admins\/certificates\/[^/]+\/revoke$/)) return 'admin.certificates.issue';
   if (path === '/admins/support-categories' || path === '/admins/support-faqs' || path === '/admins/support-settings/student-contact') return 'admin.support.manage';
   if (path.match(/^\/admins\/support-(categories|faqs)\/[^/]+/)) return 'admin.support.manage';
@@ -1736,6 +1746,100 @@ function roleMatchesCohortProgram(role: { id: string; name: string; programKey: 
   const normalizedProgramKey = normalizeProgramMatchKey(programKey);
   if (!normalizedProgramKey) return false;
   return inferredProgramKeysForRole(role).has(normalizedProgramKey);
+}
+
+function certificateProgramNameForLeadershipRole(role: { id: string; name: string; programKey: string }) {
+  const text = `${role.id} ${role.name} ${role.programKey}`.toLowerCase();
+  if (/digital[_\s-]*marketing/.test(text)) return 'Digital Marketing Specialist Leadership Program';
+  if (/product[_\s-]*marketing/.test(text)) return 'Product Marketing Leadership Program';
+  if (/market[_\s-]*research/.test(text)) return 'Market Research & Analytics Leadership Program';
+  if (/sales[_\s-]*marketing/.test(text)) return 'Sales & Marketing Leadership Program';
+  if (/growth[_\s-]*strategy/.test(text)) return 'Growth & Strategy Leadership Program';
+  if (/business[_\s-]*(analyst|analysis)/.test(text)) return 'Business Analyst Leadership Program';
+  if (/product.*brand|brand.*product/.test(text)) return 'Product & Brand Manager Leadership Program';
+  if (/associate[_\s-]*product|product[_\s-]*manager/.test(text)) return 'Product Management Leadership Program';
+  if (/equity[_\s-]*research|financial[_\s-]*model(l)?ing/.test(text)) return 'Equity Research Leadership Program';
+  if (/private[_\s-]*equity|venture[_\s-]*capital|pevc|pvec/.test(text)) return 'Private Equity & Venture Capital Leadership Program';
+  if (/portfolio|quantitative|quant|qf/.test(text)) return 'Quantitative Finance Leadership Program';
+  if (/\bhr\b|human[_\s-]*resources/.test(text)) return 'HR Leadership Program';
+  return role.name ? `${role.name} Leadership Program` : '';
+}
+
+function leadershipCertificateDuplicateKey(studentEmail: unknown, programKey: unknown, projectRole: unknown, programName: unknown) {
+  return [
+    normalizeEmail(studentEmail),
+    normalizeProgramMatchKey(String(programKey ?? '')),
+    slugifyKey(String(projectRole ?? '')),
+    slugifyKey(String(programName ?? ''))
+  ].join('|');
+}
+
+function leadershipCertificateReviewKey(studentId: unknown, studentEmail: unknown, programKey: unknown, cohortName: unknown, reasonCode: string) {
+  const studentPart = String(studentId ?? '').trim() || normalizeEmail(studentEmail);
+  return ['leadership', studentPart, normalizeProgramMatchKey(String(programKey ?? '')), slugifyKey(String(cohortName ?? '')), reasonCode].join('|');
+}
+
+async function upsertLeadershipCertificateReviewItem(
+  context: Awaited<ReturnType<typeof createContext>>,
+  input: {
+    cohortName: string;
+    liveProjectRoleIds: string[];
+    programKey: string;
+    programName: string;
+    reason: string;
+    reasonCode: string;
+    studentEmail: string;
+    studentId: string;
+    studentName: string;
+  }
+) {
+  const reviewKey = leadershipCertificateReviewKey(input.studentId, input.studentEmail, input.programKey, input.cohortName, input.reasonCode);
+  const now = new Date().toISOString();
+  const row = {
+    certificate_type: 'leadership',
+    cohort_name: input.cohortName,
+    expected_action: 'Update the student live project leadership role mapping, then re-run leadership certificate issuance.',
+    live_project_role_ids: input.liveProjectRoleIds,
+    metadata: {
+      source: 'leadership_certificate_issuance',
+      suggestedAction: 'Add a role that maps to the selected cohort/program.'
+    },
+    program_key: input.programKey,
+    program_name: input.programName,
+    reason: input.reason,
+    reason_code: input.reasonCode,
+    review_key: reviewKey,
+    review_status: 'pending',
+    resolved_at: null,
+    resolved_by: null,
+    resolution_note: null,
+    student_email: input.studentEmail,
+    student_id: input.studentId || null,
+    student_name: input.studentName,
+    updated_at: now
+  };
+
+  const { error } = await context.supabase
+    .from('certificate_review_items')
+    .upsert(row, { onConflict: 'review_key' });
+  if (error) throw new ApiClientError(`Certificate review item could not be saved: ${error.message}`, 503);
+}
+
+async function resolveLeadershipCertificateReviewItems(context: Awaited<ReturnType<typeof createContext>>, reviewKeys: string[], note: string) {
+  const keys = uniqueStrings(reviewKeys);
+  if (keys.length === 0) return;
+  const { error } = await context.supabase
+    .from('certificate_review_items')
+    .update({
+      resolution_note: note,
+      resolved_at: new Date().toISOString(),
+      resolved_by: context.email,
+      review_status: 'resolved',
+      updated_at: new Date().toISOString()
+    })
+    .in('review_key', keys)
+    .eq('review_status', 'pending');
+  if (error) throw new ApiClientError(`Certificate review items could not be resolved: ${error.message}`, 503);
 }
 
 async function getStudentProjectToolkit(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
@@ -4078,13 +4182,37 @@ async function saveCertificateProgramSetting(context: Awaited<ReturnType<typeof 
   return camelize(enrichRow(data));
 }
 
+async function resolveCertificateReviewItem(context: Awaited<ReturnType<typeof createContext>>, reviewItemId: string, body: unknown) {
+  const admin = await getAdminProfile(context);
+  const adminEmail = isRecord(admin) ? String(admin.email ?? context.email) : context.email;
+  const payload = isRecord(body) ? snakify(body) as Record<string, unknown> : {};
+  const resolutionNote = String(payload.resolution_note ?? payload.note ?? 'Resolved by admin.').trim() || 'Resolved by admin.';
+
+  const { data, error } = await context.supabase
+    .from('certificate_review_items')
+    .update({
+      resolution_note: resolutionNote,
+      resolved_at: new Date().toISOString(),
+      resolved_by: adminEmail,
+      review_status: 'resolved',
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', reviewItemId)
+    .select('*')
+    .single();
+
+  if (error) throw mutationError(error, 'certificate_review_items');
+  await writeAuditLog(context, 'certificate_review_items', 'resolved', data, { resolution_note: resolutionNote });
+  return camelize(enrichRow(data));
+}
+
 async function issueLeadershipCertificates(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
   const admin = await getAdminProfile(context);
   const adminEmail = isRecord(admin) ? String(admin.email ?? context.email) : context.email;
   const payload = snakifyMutationBody(body);
   const studentIds = asStringArray(payload.student_ids);
   const programKey = String(payload.program_key ?? '').trim();
-  const programName = String(payload.program_name ?? programKey).trim();
+  const selectedProgramName = String(payload.program_name ?? programKey).trim();
   const cohortName = String(payload.cohort_name ?? '').trim();
   const issueDate = String(payload.issue_date ?? todayIsoDate()).slice(0, 10);
   const modulesCovered = asStringArray(payload.modules_covered);
@@ -4099,7 +4227,7 @@ async function issueLeadershipCertificates(context: Awaited<ReturnType<typeof cr
 
   const { data: students, error: studentsError } = await context.supabase
     .from('students')
-    .select('id,email,full_name,student_id')
+    .select('id,email,full_name,student_id,live_project_role_ids')
     .in('id', studentIds)
     .eq('active', true)
     .limit(300);
@@ -4110,9 +4238,26 @@ async function issueLeadershipCertificates(context: Awaited<ReturnType<typeof cr
 
   const studentEmails = studentRows.map((student) => String(student.email ?? '').trim()).filter(Boolean);
   const studentEmailSet = new Set(studentEmails.map(normalizeEmail));
+  const roleIds = uniqueStrings(studentRows.flatMap((student) => asStringArray(student.live_project_role_ids)));
+  const { data: roleRows, error: roleError } = roleIds.length
+    ? await context.supabase.from('role_master').select('role_id,role_name,program_key').in('role_id', roleIds).limit(1000)
+    : { data: [], error: null };
+
+  if (roleError) throw new ApiClientError(roleError.message, 503);
+
+  const roleById = new Map(
+    (roleRows ?? []).map((role) => [
+      String(role.role_id ?? '').trim(),
+      {
+        id: String(role.role_id ?? '').trim(),
+        name: String(role.role_name ?? role.role_id ?? '').trim(),
+        programKey: String(role.program_key ?? '').trim().toLowerCase()
+      }
+    ])
+  );
   const { data: existingCertificates, error: existingError } = await context.supabase
     .from('certificates')
-    .select('id,certificate_id,student_email')
+    .select('id,certificate_id,student_email,program_key,program_name,project_role,role_name')
     .eq('certificate_type', 'leadership')
     .eq('program_key', programKey)
     .neq('status', 'revoked')
@@ -4120,65 +4265,117 @@ async function issueLeadershipCertificates(context: Awaited<ReturnType<typeof cr
 
   if (existingError) throw new ApiClientError(existingError.message, 503);
 
-  const existingByEmail = new Map(
-    (existingCertificates ?? [])
-      .filter((certificate) => studentEmailSet.has(normalizeEmail(certificate.student_email)))
-      .map((certificate) => [normalizeEmail(certificate.student_email), certificate])
-  );
+  const existingByRole = new Map<string, Record<string, unknown>>();
+  (existingCertificates ?? [])
+    .filter((certificate) => studentEmailSet.has(normalizeEmail(certificate.student_email)))
+    .forEach((certificate) => {
+      const projectRole = String(certificate.project_role ?? certificate.role_name ?? '').trim();
+      const certificateProgramName = String(certificate.program_name ?? '').trim();
+      existingByRole.set(leadershipCertificateDuplicateKey(certificate.student_email, certificate.program_key, projectRole, certificateProgramName), certificate);
+    });
   const now = new Date();
   const rows = [];
-  const skipped: Array<{ reason: string; studentId?: string; certificateId?: string }> = [];
+  const skipped: Array<{ reason: string; studentId?: string; studentName?: string; certificateId?: string }> = [];
+  const reviewItemWrites: Array<Promise<void>> = [];
+  const reviewKeysToResolve: string[] = [];
 
   for (const student of studentRows) {
     const studentEmail = String(student.email ?? '').trim();
+    const studentId = String(student.id ?? '');
+    const studentName = String(student.full_name ?? studentEmail);
+    const studentRoleIds = uniqueStrings(asStringArray(student.live_project_role_ids));
     if (!studentEmail) {
-      skipped.push({ reason: 'Student email is missing.', studentId: String(student.id ?? '') });
+      skipped.push({ reason: 'Student email is missing.', studentId, studentName });
       continue;
     }
-    const existingCertificate = existingByEmail.get(normalizeEmail(studentEmail));
-    if (existingCertificate) {
+    const selectedRoles = studentRoleIds
+      .map((roleId) => roleById.get(roleId) ?? { id: roleId, name: roleId, programKey: '' })
+      .filter((role) => role.name);
+    const matchingRoles = uniqueBy(
+      selectedRoles.filter((role) => roleMatchesCohortProgram(role, programKey)),
+      (role) => role.id || role.name
+    );
+
+    if (matchingRoles.length === 0) {
       skipped.push({
-        certificateId: String(existingCertificate.certificate_id ?? ''),
-        reason: 'Leadership certificate already exists for this student and program.',
-        studentId: String(student.id ?? '')
+        reason: 'Needs review: no live project leadership role is mapped to this cohort/program.',
+        studentId,
+        studentName
       });
+      reviewItemWrites.push(
+        upsertLeadershipCertificateReviewItem(context, {
+          cohortName,
+          liveProjectRoleIds: studentRoleIds,
+          programKey,
+          programName: selectedProgramName || programKey,
+          reason: 'No live project leadership role is mapped to this selected cohort/program.',
+          reasonCode: 'missing_matching_live_project_role',
+          studentEmail,
+          studentId,
+          studentName
+        })
+      );
       continue;
     }
 
-    const certificateId = `SS-LP-${programKey.toUpperCase().replace(/[^A-Z0-9]+/g, '-')}-${now.getFullYear()}-${randomHex(8).toUpperCase()}`;
-    const verificationToken = randomHex(24);
-    const verificationUrl = certificateVerificationUrl(certificateId);
-    rows.push({
-      certificate_id: certificateId,
-      certificate_payload: {
-        cohortName,
-        issueDate,
-        modulesCovered,
-        programKey,
-        programName
-      },
-      certificate_type: 'leadership',
-      cohort_name: cohortName,
-      email_requested: sendEmail,
-      generation_status: 'pending',
-      issue_date: issueDate,
-      issued_by: adminEmail,
-      modules_covered: modulesCovered,
-      program_key: programKey,
-      program_name: programName || programKey,
-      status: 'issued',
-      student_email: studentEmail,
-      student_id: student.id,
-      student_name: String(student.full_name ?? studentEmail),
-      verification_token: verificationToken,
-      verification_url: verificationUrl
-    });
+    reviewKeysToResolve.push(leadershipCertificateReviewKey(studentId, studentEmail, programKey, cohortName, 'missing_matching_live_project_role'));
+
+    for (const role of matchingRoles) {
+      const projectRole = role.name;
+      const certificateProgramName = certificateProgramNameForLeadershipRole(role) || selectedProgramName || programKey;
+      const existingCertificate = existingByRole.get(leadershipCertificateDuplicateKey(studentEmail, programKey, projectRole, certificateProgramName));
+      if (existingCertificate) {
+        skipped.push({
+          certificateId: String(existingCertificate.certificate_id ?? ''),
+          reason: `Leadership certificate already exists for ${projectRole}.`,
+          studentId,
+          studentName
+        });
+        continue;
+      }
+
+      const certificateId = `SS-LP-${programKey.toUpperCase().replace(/[^A-Z0-9]+/g, '-')}-${now.getFullYear()}-${randomHex(8).toUpperCase()}`;
+      const verificationToken = randomHex(24);
+      const verificationUrl = certificateVerificationUrl(certificateId);
+      rows.push({
+        certificate_id: certificateId,
+        certificate_payload: {
+          certificateProgramName,
+          cohortName,
+          issueDate,
+          learningTrackName: selectedProgramName || programKey,
+          modulesCovered,
+          programKey,
+          projectRole
+        },
+        certificate_type: 'leadership',
+        cohort_name: cohortName,
+        email_requested: sendEmail,
+        generation_status: 'pending',
+        issue_date: issueDate,
+        issued_by: adminEmail,
+        modules_covered: modulesCovered,
+        program_key: programKey,
+        program_name: certificateProgramName,
+        project_role: projectRole,
+        role_name: projectRole,
+        status: 'issued',
+        student_email: studentEmail,
+        student_id: student.id,
+        student_name: studentName,
+        verification_token: verificationToken,
+        verification_url: verificationUrl
+      });
+    }
   }
+
+  await Promise.all(reviewItemWrites);
+  await resolveLeadershipCertificateReviewItems(context, reviewKeysToResolve, 'Matching live project leadership role was found during certificate issuance.');
 
   if (rows.length === 0) {
     return {
       certificates: [],
-      message: `No new certificates issued. ${skipped.length} selected student${skipped.length === 1 ? '' : 's'} skipped because a certificate already exists or student data is incomplete.`,
+      message: `No new certificates issued. ${skipped.length} item${skipped.length === 1 ? '' : 's'} skipped because a role certificate already exists or needs review.`,
       skipped
     };
   }
@@ -4202,7 +4399,7 @@ async function issueLeadershipCertificates(context: Awaited<ReturnType<typeof cr
         sourceId: String(certificate.id ?? certificate.certificate_id),
         sourceType: 'certificate',
         studentEmails: [String(certificate.student_email ?? '')],
-        summary: `${String(certificate.program_name ?? (programName || programKey))} certificate is now available.`,
+        summary: `${String(certificate.program_name ?? (selectedProgramName || programKey))} certificate is now available.`,
         title: 'Certificate issued'
       })
     )
@@ -4212,7 +4409,7 @@ async function issueLeadershipCertificates(context: Awaited<ReturnType<typeof cr
 
   return {
     certificates: (data ?? []).map(enrichRow).map(camelize),
-    message: `${rows.length} leadership certificate${rows.length === 1 ? '' : 's'} issued.${skipped.length ? ` ${skipped.length} skipped because a certificate already exists or student data is incomplete.` : ''}${generationMessage ? ` ${generationMessage}` : ''}`,
+    message: `${rows.length} leadership certificate${rows.length === 1 ? '' : 's'} issued.${skipped.length ? ` ${skipped.length} skipped because a role certificate already exists or needs review.` : ''}${generationMessage ? ` ${generationMessage}` : ''}`,
     skipped
   };
 }
@@ -5863,6 +6060,12 @@ async function resolveProgramNamesByKey(context: Awaited<ReturnType<typeof creat
   return nameByKey;
 }
 
+function normalizeOnboardingMailStatus(value: unknown) {
+  if (typeof value !== 'string') return value;
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'skip' ? 'skipped' : normalized;
+}
+
 function normalizeStudentWriteBody(payload: Record<string, unknown>) {
   const cohortIds = asStringArray(payload.cohort_ids);
   const cohortNames = asStringArray(payload.cohort_names);
@@ -5878,7 +6081,7 @@ function normalizeStudentWriteBody(payload: Record<string, unknown>) {
     email: payload.email ? normalizeEmail(payload.email) : payload.email,
     alt_email: payload.alt_email ? normalizeEmail(payload.alt_email) : payload.alt_email,
     live_project_role_ids: liveProjectRoleIds,
-    onboarding_mail_status: typeof payload.onboarding_mail_status === 'string' ? payload.onboarding_mail_status.toLowerCase() : payload.onboarding_mail_status,
+    onboarding_mail_status: normalizeOnboardingMailStatus(payload.onboarding_mail_status),
     personalmentor: payload.personalmentor ?? payload.personal_mentor,
     program_name: programNames.join(', ') || programKeys.join(', ') || payload.program_name,
     project_start_date: payload.project_start_date ?? payload.onboarding_date,
@@ -6576,6 +6779,17 @@ function validateStudentWriteBody(payload: Record<string, unknown>, inserting: b
   }
   if (liveProjectRoleIds !== undefined && !Array.isArray(liveProjectRoleIds)) {
     throw new ApiClientError('Student live project roles must be a list.', 400);
+  }
+  const requiresLiveProjectRole =
+    inserting ||
+    typeof payload.full_name === 'string' ||
+    typeof payload.email === 'string' ||
+    payload.cohort_name !== undefined ||
+    payload.program_name !== undefined ||
+    payload.track_role_ids !== undefined ||
+    payload.live_project_role_ids !== undefined;
+  if (requiresLiveProjectRole && (!Array.isArray(liveProjectRoleIds) || liveProjectRoleIds.length === 0)) {
+    throw new ApiClientError('Live project role is required.', 400);
   }
 }
 

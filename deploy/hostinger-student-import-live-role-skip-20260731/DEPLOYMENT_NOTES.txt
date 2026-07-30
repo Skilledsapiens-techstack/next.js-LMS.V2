@@ -1,0 +1,15 @@
+Hostinger Deployment Package
+Package: hostinger-student-import-live-role-skip-20260731
+Built: 31 Jul 2026
+
+Included changes:
+- Student import now treats onboardingMailStatus = skip as skipped.
+- Rows marked skipped or dry-run do not send onboarding email during import.
+- Live Project Role is required during student onboarding/import.
+
+Upload instructions:
+1. Upload/extract the contents of this folder into Hostinger public_html.
+2. index.html, .htaccess, favicon files, and assets/ should be directly inside public_html.
+
+Database / Supabase:
+- No new Supabase migration is required for this package.

@@ -287,7 +287,7 @@ export function LoginPage() {
                     />
                   </div>
 
-                  <FieldLabel htmlFor="email-code" label="One-time email code" help="Use the code from your latest password email. Request a fresh email if the code is old." />
+                  <FieldLabel htmlFor="email-code" label="Enter Email OTP" help="Use the code from your latest password email. Request a fresh email if the code is old." />
                   <div className="auth-input-shell">
                     <KeyRound size={17} />
                     <input
@@ -345,7 +345,7 @@ export function LoginPage() {
                   </button>
 
                   <button className="auth-create-action auth-create-action--compact" type="button" disabled={!isConfigured || requestStatus === 'sending'} onClick={() => void handlePasswordEmail(urlIntent)}>
-                    {requestStatus === 'sending' ? 'Sending fresh password email' : 'Send fresh password email'}
+                    {requestStatus === 'sending' ? 'Sending fresh password email' : 'OTP Expired? Send Again'}
                   </button>
                 </form>
               ) : null}

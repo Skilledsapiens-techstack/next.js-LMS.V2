@@ -255,7 +255,12 @@ function splitImportList(value: string) {
 
 function normalizeImportStatus(value: string): AdminStudentWritePayload['onboardingMailStatus'] {
   const normalized = value.trim().toLowerCase();
+  if (normalized === 'skip') return 'skipped';
   return ['pending', 'sent', 'failed', 'skipped', 'dry-run'].includes(normalized) ? (normalized as AdminStudentWritePayload['onboardingMailStatus']) : 'pending';
+}
+
+function shouldSendOnboardingMailForStatus(status: AdminStudentWritePayload['onboardingMailStatus'] | undefined) {
+  return status !== 'skipped' && status !== 'dry-run';
 }
 
 function normalizeOptionValue<TValue extends string>(value: string, options: readonly TValue[]) {
@@ -324,6 +329,7 @@ function validateImportPayload(
   if (missingPrograms.length > 0) errors.push(`Unknown programs: ${missingPrograms.join(', ')}`);
   const missingRoles = (payload.liveProjectRoleIds ?? []).filter((roleId) => !roleByIdOrName.has(roleId.toLowerCase()));
   if (missingRoles.length > 0) errors.push(`Unknown live project roles: ${missingRoles.join(', ')}`);
+  if ((payload.liveProjectRoleIds ?? []).length === 0) errors.push('Live project role missing');
   return errors;
 }
 
@@ -913,6 +919,10 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
       setError('Alternative email is invalid.');
       return;
     }
+    if (form.liveProjectRoleIds.length === 0) {
+      setError('Live project role is required.');
+      return;
+    }
 
     const selectedProgramRecords = programOptions.filter((program) => form.programNames.includes(program.name));
     const payload: AdminStudentWritePayload = {
@@ -933,7 +943,7 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
       phone: form.phone.trim() || undefined,
       programKeys: selectedProgramRecords.map((program) => program.programKey),
       programNames: form.programNames,
-      sendOnboardingMail: form.sendOnboardingMail,
+      sendOnboardingMail: form.sendOnboardingMail && shouldSendOnboardingMailForStatus(form.onboardingMailStatus),
       sendInvite: form.sendInvite,
       slot: derivedSlot || form.slot.trim() || undefined,
       studentId: form.studentId.trim() || undefined,
@@ -1042,7 +1052,7 @@ function EnrollStudentModal({ cohortOptions, collegeOptions, mode, onClose, onSu
             </label>
 
             <div className="enroll-multi-field enroll-student-form__wide">
-              <span>Live Project Role (optional)</span>
+              <span>Live Project Role *</span>
               <StudentImportMultiSelect
                 label="live project roles"
                 metaLabel="Role ID"
@@ -1720,7 +1730,7 @@ function ImportPreviewModal({
                           />
                         </label>
                         <label className="student-import-editor-picker">
-                          <span>Live Project Role</span>
+                          <span>Live Project Role *</span>
                           <StudentImportMultiSelect
                             label="live project roles"
                             metaLabel="Role ID"
@@ -2262,7 +2272,7 @@ export function AdminStudentsPage() {
         existingStudent,
         payload,
         rowNumber: index + rowNumberOffset,
-        sendOnboardingMail: true,
+        sendOnboardingMail: shouldSendOnboardingMailForStatus(payload.onboardingMailStatus),
         sendPortalInvite: !existingStudent
       };
     });
@@ -2316,7 +2326,7 @@ export function AdminStudentsPage() {
         ...row.payload,
         assignmentMode,
         sendInvite: row.sendPortalInvite && !row.existingStudent,
-        sendOnboardingMail: row.sendOnboardingMail
+        sendOnboardingMail: row.sendOnboardingMail && shouldSendOnboardingMailForStatus(row.payload.onboardingMailStatus)
       }));
     if (payload.length === 0) {
       setActionMessage('Student import skipped: preview has no valid rows.');

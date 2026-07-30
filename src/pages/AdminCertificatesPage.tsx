@@ -1,4 +1,4 @@
-import { ExternalLink, FileCheck2, Search, ShieldCheck, UserPlus } from 'lucide-react';
+import { AlertCircle, ExternalLink, FileCheck2, Search, ShieldCheck, UserPlus } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
@@ -12,6 +12,7 @@ import {
   AdminCertificateGenerationStatus,
   AdminCertificateRequest,
   AdminCertificateRequestAdminStatus,
+  AdminCertificateReviewItem,
   AdminCertificateStatus,
   AdminCertificateType,
   AdminCertificateProgramSetting,
@@ -19,6 +20,7 @@ import {
   IssueLiveProjectCertificateInput,
   IssueManualCertificateInput,
   useAdminCertificateRequests,
+  useAdminCertificateReviewItems,
   useAdminCertificates,
   useAdminCertificateProgramSettings,
   useGenerateAdminCertificatePdf,
@@ -26,6 +28,7 @@ import {
   useIssueLiveProjectCertificate,
   useIssueManualCertificate,
   useRejectLiveProjectCertificateRequest,
+  useResolveAdminCertificateReviewItem,
   useRevokeAdminCertificate,
   useSaveCertificateProgramSetting
 } from '../features/admin/useAdminCertificates';
@@ -93,6 +96,77 @@ function normalizeKey(value: string | undefined) {
 
 function normalizeEmailValue(value: string | undefined) {
   return (value ?? '').trim().toLowerCase();
+}
+
+function normalizeProgramMatchKey(value: string | undefined) {
+  const key = normalizeKey(value);
+  return key === 'flp_pvec' ? 'flp_pevc' : key;
+}
+
+function inferredProgramKeysForProjectRole(role: Pick<AdminProjectRole, 'name' | 'programKey' | 'roleId'>) {
+  const text = `${role.roleId ?? ''} ${role.name ?? ''} ${role.programKey ?? ''}`.toLowerCase();
+  const keys = new Set<string>();
+  const programKey = normalizeProgramMatchKey(role.programKey);
+  if (programKey) keys.add(programKey);
+  if (/private[_\s-]*equity|venture[_\s-]*capital|pevc|pvec/.test(text)) keys.add('flp_pevc');
+  if (/equity[_\s-]*research|financial[_\s-]*model(l)?ing/.test(text)) keys.add('flp_er');
+  if (/portfolio|quantitative|quant|qf/.test(text)) keys.add('flp_qf');
+  if (/growth[_\s-]*strategy|business[_\s-]*(analyst|analysis)|consulting|management/.test(text)) keys.add('mclp');
+  if (/digital[_\s-]*marketing|sales[_\s-]*marketing|market[_\s-]*research|product[_\s-]*marketing/.test(text)) keys.add('smlp');
+  if (/product(?![_\s-]*marketing)|brand/.test(text)) keys.add('pmlp');
+  if (/\bhr\b|human[_\s-]*resources/.test(text)) keys.add('hrlp');
+  return keys;
+}
+
+function projectRoleMatchesProgram(role: Pick<AdminProjectRole, 'name' | 'programKey' | 'roleId'>, programKey: string) {
+  return inferredProgramKeysForProjectRole(role).has(normalizeProgramMatchKey(programKey));
+}
+
+function certificateProgramNameForProjectRole(role: Pick<AdminProjectRole, 'name' | 'programKey' | 'roleId'>) {
+  const text = `${role.roleId ?? ''} ${role.name ?? ''} ${role.programKey ?? ''}`.toLowerCase();
+  if (/digital[_\s-]*marketing/.test(text)) return 'Digital Marketing Specialist Leadership Program';
+  if (/product[_\s-]*marketing/.test(text)) return 'Product Marketing Leadership Program';
+  if (/market[_\s-]*research/.test(text)) return 'Market Research & Analytics Leadership Program';
+  if (/sales[_\s-]*marketing/.test(text)) return 'Sales & Marketing Leadership Program';
+  if (/growth[_\s-]*strategy/.test(text)) return 'Growth & Strategy Leadership Program';
+  if (/business[_\s-]*(analyst|analysis)/.test(text)) return 'Business Analyst Leadership Program';
+  if (/product.*brand|brand.*product/.test(text)) return 'Product & Brand Manager Leadership Program';
+  if (/associate[_\s-]*product|product[_\s-]*manager/.test(text)) return 'Product Management Leadership Program';
+  if (/equity[_\s-]*research|financial[_\s-]*model(l)?ing/.test(text)) return 'Equity Research Leadership Program';
+  if (/private[_\s-]*equity|venture[_\s-]*capital|pevc|pvec/.test(text)) return 'Private Equity & Venture Capital Leadership Program';
+  if (/portfolio|quantitative|quant|qf/.test(text)) return 'Quantitative Finance Leadership Program';
+  if (/\bhr\b|human[_\s-]*resources/.test(text)) return 'HR Leadership Program';
+  return role.name ? `${role.name} Leadership Program` : '';
+}
+
+function slugKey(value: string | undefined) {
+  return (value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+function leadershipDuplicateKey(studentEmail: string | undefined, programKey: string | undefined, projectRole: string | undefined, programName: string | undefined) {
+  return [normalizeEmailValue(studentEmail), normalizeProgramMatchKey(programKey), slugKey(projectRole), slugKey(programName)].join('|');
+}
+
+function shouldForceCertificatePdf(certificate: AdminCertificate) {
+  return certificate.generationStatus !== 'ready' || /Google Slides fallback used/i.test(certificate.generationError ?? '');
+}
+
+function shortLeadershipCertificateLabel(certificate: AdminCertificate | undefined) {
+  const source = (certificate?.projectRole || certificate?.programName || certificate?.programKey || '').trim();
+  const normalized = source.toLowerCase();
+  if (!source) return 'Issued';
+  if (/digital[_\s-]*marketing/.test(normalized)) return 'Digital Marketing';
+  if (/product[_\s-]*marketing/.test(normalized)) return 'Product Marketing';
+  if (/market[_\s-]*research/.test(normalized)) return 'Market Research';
+  if (/sales[_\s-]*marketing|marketing/.test(normalized)) return 'Marketing';
+  if (/growth[_\s-]*strategy/.test(normalized)) return 'Growth & Strategy';
+  if (/business[_\s-]*(analyst|analysis)/.test(normalized)) return 'Business Analyst';
+  if (/consulting|mclp|management/.test(normalized)) return 'Consulting';
+  if (/private[_\s-]*equity|venture[_\s-]*capital|pevc|pvec/.test(normalized)) return 'Private Equity & VC';
+  if (/equity[_\s-]*research|financial[_\s-]*model(l)?ing/.test(normalized)) return 'Equity Research';
+  if (/portfolio|quantitative|quant|qf/.test(normalized)) return 'Quant Finance';
+  if (/\bhr\b|human[_\s-]*resources/.test(normalized)) return 'HR';
+  return source.replace(/\s+Leadership\s+Program$/i, '').replace(/\s+Program$/i, '');
 }
 
 function parseCertificateStatus(value: string | null): AdminCertificateStatus | 'all' {
@@ -554,6 +628,76 @@ function RequestQueue({
   );
 }
 
+function LeadershipCertificateReviewList({
+  isError,
+  isLoading,
+  items,
+  onResolve,
+  resolvingId,
+  total
+}: {
+  isError?: boolean;
+  isLoading: boolean;
+  items: AdminCertificateReviewItem[];
+  onResolve: (item: AdminCertificateReviewItem) => void;
+  resolvingId?: string;
+  total: number;
+}) {
+  return (
+    <section className="certificate-section">
+      <header className="certificate-section__header">
+        <div>
+          <span className="certificate-section-eyebrow">Needs Review</span>
+          <h2>Leadership Certificate Review</h2>
+          <p className="certificate-section__subtle-copy">Students skipped during leadership certificate issuance because their live project role mapping needs attention.</p>
+        </div>
+        <StatusBadge tone={total > 0 ? 'warning' : 'safe'}>{`${total} pending`}</StatusBadge>
+      </header>
+      <div className="certificate-section__body">
+        {isLoading ? <p className="certificate-muted">Loading leadership certificate review items.</p> : null}
+        {isError ? (
+          <div className="certificate-empty-inline certificate-empty-inline--warning">
+            <AlertCircle size={20} />
+            <div>
+              <strong>Review list could not be loaded</strong>
+              <span>The certificate workspace is still available. Refresh after the review table or permissions are available.</span>
+            </div>
+          </div>
+        ) : null}
+        {!isLoading && !isError && items.length === 0 ? (
+          <div className="certificate-empty-inline">
+            <ShieldCheck size={20} />
+            <div>
+              <strong>No leadership certificate items need review</strong>
+              <span>Skipped role-mapping cases will appear here automatically.</span>
+            </div>
+          </div>
+        ) : null}
+        {items.length > 0 ? (
+          <div className="certificate-request-list">
+            {items.map((item) => (
+              <article className="certificate-request-card" key={item.id}>
+                <div>
+                  <h3>{item.studentName || item.studentEmail || 'Student needs review'}</h3>
+                  <p>
+                    {item.studentEmail || 'No email'} · {item.programName || item.programKey || 'No program'} · {item.cohortName || 'No cohort'}
+                  </p>
+                </div>
+                <div className="certificate-request-card__actions">
+                  <StatusBadge tone="warning">{formatOption(item.reviewStatus)}</StatusBadge>
+                  <button className="segmented-button" disabled={resolvingId === item.id} onClick={() => onResolve(item)} type="button">
+                    {resolvingId === item.id ? 'Resolving...' : 'Mark Resolved'}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 function RejectCertificateRequestModal({
   error,
   isRejecting,
@@ -987,9 +1131,18 @@ export function AdminCertificatesPage() {
     page: 1,
     search: requestSearch || undefined
   });
+  const leadershipReviewItemsQuery = useAdminCertificateReviewItems({
+    certificateType: 'leadership',
+    enabled: canIssueCertificates && activeTab === 'leadership',
+    limit: 25,
+    page: 1,
+    programKey: selectedProgramKey || undefined,
+    status: 'pending'
+  });
   const certificateSettingsQuery = useAdminCertificateProgramSettings();
   const issueCertificateMutation = useIssueLiveProjectCertificate();
   const rejectCertificateRequestMutation = useRejectLiveProjectCertificateRequest();
+  const resolveCertificateReviewItemMutation = useResolveAdminCertificateReviewItem();
   const issueLeadershipMutation = useIssueLeadershipCertificates();
   const issueManualMutation = useIssueManualCertificate();
   const generateCertificatePdfMutation = useGenerateAdminCertificatePdf();
@@ -1001,7 +1154,7 @@ export function AdminCertificatesPage() {
     status: 'active'
   });
   const projectRolesQuery = useAdminProjectRoles({
-    enabled: canIssueCertificates && (activeTab === 'live-projects' || (activeTab === 'manual' && manualCertificateType === 'live_project') || Boolean(selectedRequest)),
+    enabled: canIssueCertificates && (activeTab === 'leadership' || activeTab === 'live-projects' || (activeTab === 'manual' && manualCertificateType === 'live_project') || Boolean(selectedRequest)),
     limit: 500,
     page: 1,
     status: 'all'
@@ -1057,27 +1210,76 @@ export function AdminCertificatesPage() {
   const settingsByProgramKey = useMemo(() => new Map(certificateSettings.map((setting) => [setting.programKey, setting])), [certificateSettings]);
   const filteredCohorts = useMemo(() => allCohorts.filter((cohort) => isCohortForProgram(cohort, selectedProgram)).sort((a, b) => a.name.localeCompare(b.name)), [allCohorts, selectedProgram]);
   const eligibleStudents = studentsQuery.data?.items ?? [];
-  const alreadyIssuedLeadershipByEmail = useMemo(() => {
+  const issuedLeadershipCertificates = useMemo(() => {
     const certificates = issuedLeadershipCertificatesQuery.data?.items ?? [];
-    return new Map(
-      certificates
-        .filter((certificate) => certificate.certificateType === 'leadership' && certificate.programKey === selectedProgramKey && certificate.status !== 'revoked')
-        .map((certificate) => [normalizeEmailValue(certificate.studentEmail), certificate])
-    );
+    return certificates.filter((certificate) => certificate.certificateType === 'leadership' && certificate.programKey === selectedProgramKey && certificate.status !== 'revoked');
   }, [issuedLeadershipCertificatesQuery.data?.items, selectedProgramKey]);
+  const roleByRoleId = useMemo(() => {
+    const map = new Map<string, AdminProjectRole>();
+    projectRoles.forEach((role) => {
+      if (role.roleId) map.set(role.roleId, role);
+      map.set(role.id, role);
+    });
+    return map;
+  }, [projectRoles]);
+  const leadershipEligibilityByStudentId = useMemo(() => {
+    const issuedKeys = new Set(
+      issuedLeadershipCertificates.map((certificate) =>
+        leadershipDuplicateKey(certificate.studentEmail, certificate.programKey, certificate.projectRole, certificate.programName)
+      )
+    );
+    return new Map(
+      eligibleStudents.map((student) => {
+        const matchingRoles = (student.liveProjectRoleIds ?? [])
+          .map((roleId) => roleByRoleId.get(roleId) ?? { id: roleId, name: roleId, programKey: '', roleId, status: 'active' as const })
+          .filter((role) => role.name && projectRoleMatchesProgram(role, selectedProgramKey));
+        const unissuedRoles = matchingRoles.filter((role) => {
+          const certificateProgramName = certificateProgramNameForProjectRole(role) || selectedProgram?.name || selectedProgramKey;
+          return !issuedKeys.has(leadershipDuplicateKey(student.email, selectedProgramKey, role.name, certificateProgramName));
+        });
+        return [
+          student.id,
+          {
+            existingCertificate: issuedLeadershipCertificates.find((certificate) => normalizeEmailValue(certificate.studentEmail) === normalizeEmailValue(student.email)),
+            hasIssuedCertificate: matchingRoles.length > 0 && unissuedRoles.length < matchingRoles.length,
+            hasUnissuedRole: unissuedRoles.length > 0,
+            unissuedCount: unissuedRoles.length
+          }
+        ];
+      })
+    );
+  }, [eligibleStudents, issuedLeadershipCertificates, roleByRoleId, selectedProgram?.name, selectedProgramKey]);
   const filteredEligibleStudents = useMemo(() => {
     const term = studentPickerSearch.trim().toLowerCase();
     if (!term) return eligibleStudents;
     return eligibleStudents.filter((student) => `${student.fullName} ${student.email} ${student.studentId ?? ''}`.toLowerCase().includes(term));
   }, [eligibleStudents, studentPickerSearch]);
   const selectableFilteredEligibleStudents = useMemo(
-    () => filteredEligibleStudents.filter((student) => !alreadyIssuedLeadershipByEmail.has(normalizeEmailValue(student.email))),
-    [alreadyIssuedLeadershipByEmail, filteredEligibleStudents]
+    () => filteredEligibleStudents.filter((student) => leadershipEligibilityByStudentId.get(student.id)?.hasUnissuedRole),
+    [filteredEligibleStudents, leadershipEligibilityByStudentId]
   );
   const alreadyIssuedVisibleCount = filteredEligibleStudents.length - selectableFilteredEligibleStudents.length;
   const allFilteredStudentsSelected = selectableFilteredEligibleStudents.length > 0 && selectableFilteredEligibleStudents.every((student) => selectedStudentIds.has(student.id));
   const selectedStudentCountExceedsBatchLimit = selectedStudentIds.size > leadershipCertificateBatchLimit;
   const manualStudentOptions = manualStudentsQuery.data?.items ?? [];
+
+  useEffect(() => {
+    if (selectedStudentIds.size === 0) return;
+    const issuedStudentIds = new Set(
+      eligibleStudents
+        .filter((student) => !leadershipEligibilityByStudentId.get(student.id)?.hasUnissuedRole)
+        .map((student) => student.id)
+    );
+    if (issuedStudentIds.size === 0) return;
+    setSelectedStudentIds((current) => {
+      const next = new Set(current);
+      let changed = false;
+      issuedStudentIds.forEach((studentId) => {
+        if (next.delete(studentId)) changed = true;
+      });
+      return changed ? next : current;
+    });
+  }, [eligibleStudents, leadershipEligibilityByStudentId, selectedStudentIds.size]);
   const certificates = certificatesQuery.data;
   const totalPages = certificates?.totalPages ?? 1;
   const visibleCertificateTabs = useMemo(() => (canIssueCertificates ? certificateTabs : certificateTabs.filter((tab) => tab.id === 'issued')), [canIssueCertificates]);
@@ -1085,23 +1287,6 @@ export function AdminCertificatesPage() {
   useEffect(() => {
     if (!canIssueCertificates && activeTab !== 'issued') setActiveTab('issued');
   }, [activeTab, canIssueCertificates]);
-
-  useEffect(() => {
-    if (alreadyIssuedLeadershipByEmail.size === 0 || selectedStudentIds.size === 0) return;
-    const studentsById = new Map(eligibleStudents.map((student) => [student.id, student]));
-    setSelectedStudentIds((current) => {
-      let changed = false;
-      const next = new Set(current);
-      for (const studentId of current) {
-        const student = studentsById.get(studentId);
-        if (student && alreadyIssuedLeadershipByEmail.has(normalizeEmailValue(student.email))) {
-          next.delete(studentId);
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }, [alreadyIssuedLeadershipByEmail, eligibleStudents, selectedStudentIds.size]);
 
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1176,8 +1361,7 @@ export function AdminCertificatesPage() {
   }
 
   function toggleStudent(studentId: string) {
-    const student = eligibleStudents.find((item) => item.id === studentId);
-    if (student && alreadyIssuedLeadershipByEmail.has(normalizeEmailValue(student.email))) return;
+    if (!leadershipEligibilityByStudentId.get(studentId)?.hasUnissuedRole) return;
     setSelectedStudentIds((current) => {
       const next = new Set(current);
       if (next.has(studentId)) {
@@ -1219,8 +1403,20 @@ export function AdminCertificatesPage() {
       studentIds: [...selectedStudentIds]
     };
     const result = await issueLeadershipMutation.mutateAsync(body);
-    setCertificateMessage(result.message);
+    const skippedPreview = result.skipped
+      .slice(0, 5)
+      .map((item) => `${item.studentName ?? item.studentId ?? 'Student'}: ${item.reason}`)
+      .join(' | ');
+    setCertificateMessage(`${result.message}${skippedPreview ? ` Review: ${skippedPreview}${result.skipped.length > 5 ? ` | +${result.skipped.length - 5} more` : ''}` : ''}`);
     setSelectedStudentIds(new Set());
+  }
+
+  async function handleResolveLeadershipReviewItem(item: AdminCertificateReviewItem) {
+    const result = await resolveCertificateReviewItemMutation.mutateAsync({
+      resolutionNote: 'Reviewed and resolved from leadership certificate queue.',
+      reviewItemId: item.id
+    });
+    setCertificateMessage(`Review item resolved for ${result.studentName ?? result.studentEmail ?? 'student'}.`);
   }
 
   async function handleIssueManualCertificate(event: FormEvent<HTMLFormElement>) {
@@ -1289,7 +1485,7 @@ export function AdminCertificatesPage() {
   async function handleGenerateCertificatePdf(certificate: AdminCertificate) {
     const result = await generateCertificatePdfMutation.mutateAsync({
       certificateId: certificate.id,
-      force: certificate.generationStatus !== 'ready'
+      force: shouldForceCertificatePdf(certificate)
     });
     const firstResult = result.results[0];
     if (firstResult?.status === 'failed') {
@@ -1305,7 +1501,7 @@ export function AdminCertificatesPage() {
   async function handleEmailCertificatePdf(certificate: AdminCertificate) {
     const result = await generateCertificatePdfMutation.mutateAsync({
       certificateId: certificate.id,
-      force: certificate.generationStatus !== 'ready',
+      force: shouldForceCertificatePdf(certificate),
       sendEmail: true
     });
     const firstResult = result.results[0];
@@ -1452,18 +1648,21 @@ export function AdminCertificatesPage() {
                 {eligibleStudents.length > 0 ? (
                   <div className="eligible-student-list">
                     {filteredEligibleStudents.map((student) => {
-                      const existingCertificate = alreadyIssuedLeadershipByEmail.get(normalizeEmailValue(student.email));
-                      const alreadyIssued = Boolean(existingCertificate);
+                      const eligibility = leadershipEligibilityByStudentId.get(student.id);
+                      const existingCertificate = eligibility?.existingCertificate;
+                      const alreadyIssued = Boolean(eligibility?.hasIssuedCertificate);
+                      const canIssue = Boolean(eligibility?.hasUnissuedRole);
                       return (
-                        <label className={`eligible-student-item${alreadyIssued ? ' eligible-student-item--disabled' : ''}`} key={student.id}>
-                          <input checked={selectedStudentIds.has(student.id)} disabled={alreadyIssued} onChange={() => toggleStudent(student.id)} type="checkbox" />
+                        <label className={!canIssue ? 'eligible-student-item eligible-student-item--disabled' : 'eligible-student-item'} key={student.id}>
+                          <input checked={canIssue && selectedStudentIds.has(student.id)} disabled={!canIssue} onChange={() => toggleStudent(student.id)} type="checkbox" />
                           <span>
                             <strong>{student.fullName}</strong>
                             <small>{student.email}</small>
                           </span>
                           {alreadyIssued ? (
                             <em className="eligible-student-item__status">
-                              Already issued{existingCertificate?.certificateId ? ` · ${existingCertificate.certificateId}` : ''}
+                              Issued: {shortLeadershipCertificateLabel(existingCertificate)}
+                              {canIssue && eligibility?.unissuedCount ? ` · ${eligibility.unissuedCount} new role${eligibility.unissuedCount === 1 ? '' : 's'} can issue` : ''}
                             </em>
                           ) : null}
                         </label>
@@ -1485,6 +1684,15 @@ export function AdminCertificatesPage() {
               </button>
             </div>
           </form>
+
+          <LeadershipCertificateReviewList
+            isError={leadershipReviewItemsQuery.isError}
+            isLoading={leadershipReviewItemsQuery.isLoading}
+            items={leadershipReviewItemsQuery.data?.items ?? []}
+            onResolve={handleResolveLeadershipReviewItem}
+            resolvingId={resolveCertificateReviewItemMutation.isPending ? resolveCertificateReviewItemMutation.variables?.reviewItemId : undefined}
+            total={leadershipReviewItemsQuery.data?.total ?? 0}
+          />
 
           <form className="certificate-section" onSubmit={handleSaveProgramModules}>
             <header className="certificate-section__header">

@@ -505,7 +505,6 @@ export function StudentDashboardPage() {
     ...pickArray(dashboardQuery.data?.dashboard, ['cohorts', 'studentCohorts']).map((cohort) => textValue(cohort, ['name', 'cohort_name', 'cohortName'])),
     profile?.cohortName
   ]);
-  const trainingProgramNames = uniqueNames(String(profile?.programName ?? '').split(','));
   const scheduleItems = upcomingScheduleItems.slice(0, 3);
   const recordingItems = recordingItemsAll.slice(0, 3);
   const resourceItems = resourceItemsAll.slice(0, 3);
