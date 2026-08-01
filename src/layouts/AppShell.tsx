@@ -37,7 +37,7 @@ const studentSections: NavSection[] = [
 const adminSections: NavSection[] = [
   { title: 'Main', moduleIds: ['dashboard', 'recording-candidates', 'workshops', 'resources', 'career-readiness'] },
   { title: 'Administration', moduleIds: ['students', 'cohorts', 'programs', 'projects', 'project-submissions', 'certificates', 'enrollments', 'admin-users', 'feature-control'] },
-  { title: 'Community', moduleIds: ['community'] },
+  { title: 'Community', moduleIds: ['community', 'whatsapp-groups'] },
   { title: 'Help', moduleIds: ['announcements', 'support', 'email-center', 'observability'] },
   { title: 'Payments', moduleIds: ['payment-orders', 'paid-access'] }
 ];

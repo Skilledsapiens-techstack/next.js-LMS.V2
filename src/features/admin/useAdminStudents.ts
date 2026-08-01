@@ -124,10 +124,16 @@ export type AdminStudentsBulkPayload = {
   assignmentMode?: 'add' | 'replace';
   cohortIds?: string[];
   cohortNames?: string[];
+  collegeName?: string | null;
+  educationYear?: string | null;
+  liveProjectDuration?: string | null;
+  onboardingDate?: string | null;
+  personalMentor?: string | null;
   programKeys?: string[];
   programNames?: string[];
   resendInvite?: boolean;
   studentIds: string[];
+  waGroup?: string | null;
 };
 
 export type AdminStudentsBulkResult = {

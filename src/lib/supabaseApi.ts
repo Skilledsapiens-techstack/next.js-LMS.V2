@@ -98,6 +98,10 @@ const ADMIN_READ_PERMISSIONS_BY_PATH: Record<string, AdminPermission> = {
   '/admins/support-faqs': 'admin.support.view',
   '/admins/support-settings': 'admin.support.view',
   '/admins/support-tickets': 'admin.support.view',
+  '/admins/whatsapp-categories': 'admin.community.view',
+  '/admins/whatsapp-groups': 'admin.community.view',
+  '/admins/whatsapp-logs': 'admin.community.view',
+  '/admins/whatsapp-templates': 'admin.community.view',
   '/admins/workshops': 'admin.meetings.view'
 };
 
@@ -307,6 +311,52 @@ const CAREER_READINESS_CONTENT_WRITE_COLUMNS = new Set([
   'updated_by'
 ]);
 
+const WHATSAPP_GROUP_WRITE_COLUMNS = new Set([
+  'cohort_name',
+  'created_by',
+  'direct_chat_link',
+  'group_name',
+  'invite_link',
+  'notes',
+  'program_name',
+  'status',
+  'updated_by'
+]);
+
+const WHATSAPP_CATEGORY_WRITE_COLUMNS = new Set([
+  'created_by',
+  'name',
+  'sort_order',
+  'status',
+  'updated_by'
+]);
+
+const WHATSAPP_TEMPLATE_WRITE_COLUMNS = new Set([
+  'category_id',
+  'created_by',
+  'message_body',
+  'notes',
+  'status',
+  'title',
+  'updated_by'
+]);
+
+const WHATSAPP_LOG_WRITE_COLUMNS = new Set([
+  'category_id',
+  'cohort_name',
+  'group_id',
+  'group_name',
+  'message_body',
+  'message_title',
+  'metadata',
+  'notes',
+  'program_name',
+  'sent_at',
+  'sent_by',
+  'status',
+  'template_id'
+]);
+
 const LEADERSHIP_PROGRAM_KEYS = new Set(['mclp', 'smlp', 'hrlp', 'flp_er', 'flp_pevc', 'flp_qf', 'pmlp']);
 
 const PROJECT_ROLE_WRITE_COLUMNS = new Set([
@@ -505,6 +555,30 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
     searchColumns: ['module_id', 'student_label', 'student_path'],
     sortColumns: { order: { column: 'sort_order', ascending: true } }
   },
+  '/admins/whatsapp-categories': {
+    table: 'whatsapp_message_categories',
+    filterColumns: { status: 'status' },
+    searchColumns: ['name'],
+    sortColumns: { order: { column: 'sort_order', ascending: true }, updated: { column: 'updated_at', ascending: false } }
+  },
+  '/admins/whatsapp-groups': {
+    table: 'whatsapp_groups',
+    filterColumns: { cohortName: 'cohort_name', status: 'status' },
+    searchColumns: ['group_name', 'cohort_name', 'program_name', 'notes'],
+    sortColumns: { cohort: { column: 'cohort_name', ascending: true }, group: { column: 'group_name', ascending: true }, updated: { column: 'updated_at', ascending: false } }
+  },
+  '/admins/whatsapp-logs': {
+    table: 'whatsapp_message_logs',
+    filterColumns: { categoryId: 'category_id', groupId: 'group_id', status: 'status' },
+    searchColumns: ['group_name', 'cohort_name', 'program_name', 'message_title', 'message_body', 'sent_by'],
+    sortColumns: { newest: { column: 'sent_at', ascending: false } }
+  },
+  '/admins/whatsapp-templates': {
+    table: 'whatsapp_message_templates',
+    filterColumns: { categoryId: 'category_id', status: 'status' },
+    searchColumns: ['title', 'message_body', 'notes'],
+    sortColumns: { title: { column: 'title', ascending: true }, updated: { column: 'updated_at', ascending: false } }
+  },
   '/admins/paid-access': { table: 'paid_access', searchColumns: ['student_email', 'item_id', 'item_type'] },
   '/admins/payment-orders': { table: 'payment_orders', searchColumns: ['student_email', 'item_id', 'item_type', 'razorpay_order_id'] },
   '/admins/programs': { table: 'programs', filterColumns: { domain: 'domain_label' }, searchColumns: ['program_key', 'name', 'short_name', 'domain_label'] },
@@ -663,6 +737,30 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     normalizeBody: normalizeEmailTemplateWriteBody,
     table: 'email_templates',
     validateBody: validateEmailTemplateWriteBody
+  },
+  whatsapp_groups: {
+    columns: WHATSAPP_GROUP_WRITE_COLUMNS,
+    normalizeBody: normalizeWhatsAppGroupWriteBody,
+    table: 'whatsapp_groups',
+    validateBody: validateWhatsAppGroupWriteBody
+  },
+  whatsapp_message_categories: {
+    columns: WHATSAPP_CATEGORY_WRITE_COLUMNS,
+    normalizeBody: normalizeWhatsAppCategoryWriteBody,
+    table: 'whatsapp_message_categories',
+    validateBody: validateWhatsAppCategoryWriteBody
+  },
+  whatsapp_message_logs: {
+    columns: WHATSAPP_LOG_WRITE_COLUMNS,
+    normalizeBody: normalizeWhatsAppLogWriteBody,
+    table: 'whatsapp_message_logs',
+    validateBody: validateWhatsAppLogWriteBody
+  },
+  whatsapp_message_templates: {
+    columns: WHATSAPP_TEMPLATE_WRITE_COLUMNS,
+    normalizeBody: normalizeWhatsAppTemplateWriteBody,
+    table: 'whatsapp_message_templates',
+    validateBody: validateWhatsAppTemplateWriteBody
   }
 };
 
@@ -960,6 +1058,18 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
     return updateById(context, 'email_templates', templateId, { status: 'inactive' }, 'archived') as Promise<TResponse>;
   }
 
+  const whatsAppGroup = cleanPath.match(/^\/admins\/whatsapp-groups\/([^/]+)$/);
+  if (whatsAppGroup) return updateById(context, 'whatsapp_groups', decodeURIComponent(whatsAppGroup[1]), { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email }, 'updated') as Promise<TResponse>;
+
+  const whatsAppCategory = cleanPath.match(/^\/admins\/whatsapp-categories\/([^/]+)$/);
+  if (whatsAppCategory) return updateById(context, 'whatsapp_message_categories', decodeURIComponent(whatsAppCategory[1]), { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email }, 'updated') as Promise<TResponse>;
+
+  const whatsAppTemplate = cleanPath.match(/^\/admins\/whatsapp-templates\/([^/]+)$/);
+  if (whatsAppTemplate) return updateById(context, 'whatsapp_message_templates', decodeURIComponent(whatsAppTemplate[1]), { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email }, 'updated') as Promise<TResponse>;
+
+  const whatsAppLog = cleanPath.match(/^\/admins\/whatsapp-logs\/([^/]+)$/);
+  if (whatsAppLog) return updateById(context, 'whatsapp_message_logs', decodeURIComponent(whatsAppLog[1]), options.body, 'updated') as Promise<TResponse>;
+
   const emailTemplateUpdate = cleanPath.match(/^\/admins\/email-templates\/([^/]+)$/);
   if (emailTemplateUpdate) {
     return updateById(context, 'email_templates', decodeURIComponent(emailTemplateUpdate[1]), options.body, 'updated') as Promise<TResponse>;
@@ -1083,6 +1193,10 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
     ) as Promise<TResponse>;
   }
   if (cleanPath === '/admins/email-templates') return insertRow(context, 'email_templates', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/whatsapp-groups') return insertRow(context, 'whatsapp_groups', { ...(isRecord(options.body) ? options.body : {}), createdBy: context.email, updatedBy: context.email }, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/whatsapp-categories') return insertRow(context, 'whatsapp_message_categories', { ...(isRecord(options.body) ? options.body : {}), createdBy: context.email, updatedBy: context.email }, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/whatsapp-templates') return insertRow(context, 'whatsapp_message_templates', { ...(isRecord(options.body) ? options.body : {}), createdBy: context.email, updatedBy: context.email }, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/whatsapp-logs') return insertRow(context, 'whatsapp_message_logs', { ...(isRecord(options.body) ? options.body : {}), sentBy: context.email }, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/programs') return insertRow(context, 'programs', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/project-roles') return insertRow(context, 'role_master', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/project-toolkit') return insertRow(context, 'project_toolkit_items', options.body, 'created') as Promise<TResponse>;
@@ -1090,6 +1204,7 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/projects') return insertRow(context, 'projects', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/certificate-program-settings') return saveCertificateProgramSetting(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/certificates/leadership') return issueLeadershipCertificates(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/admins/certificates/live-project/bulk') return bulkIssueLiveProjectCertificates(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/certificates/live-project') return issueLiveProjectCertificate(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/certificates/manual') return issueManualCertificate(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/students/me/presence') return updateStudentPresence(context) as Promise<TResponse>;
@@ -1207,8 +1322,12 @@ function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'pos
   if (path === '/admins/resources' || path.match(/^\/admins\/resources\/[^/]+/)) return 'admin.resources.manage';
   if (path === '/admins/announcements' || path.match(/^\/admins\/announcements\/[^/]+/)) return 'admin.announcements.manage';
   if (path === '/admins/email-templates' || path.match(/^\/admins\/email-templates\/[^/]+/)) return 'admin.email.manage';
+  if (path === '/admins/whatsapp-groups' || path.match(/^\/admins\/whatsapp-groups\/[^/]+/)) return 'admin.community.manage';
+  if (path === '/admins/whatsapp-categories' || path.match(/^\/admins\/whatsapp-categories\/[^/]+/)) return 'admin.community.manage';
+  if (path === '/admins/whatsapp-templates' || path.match(/^\/admins\/whatsapp-templates\/[^/]+/)) return 'admin.community.manage';
+  if (path === '/admins/whatsapp-logs' || path.match(/^\/admins\/whatsapp-logs\/[^/]+/)) return 'admin.community.manage';
   if (path === '/admins/feature-controls' || path.match(/^\/admins\/feature-controls\/[^/]+/)) return 'admin.feature_control.manage';
-  if (path === '/admins/certificate-program-settings' || path === '/admins/certificate-review-items' || path.match(/^\/admins\/certificate-review-items\/[^/]+/) || path === '/admins/certificates/leadership' || path === '/admins/certificates/live-project' || path === '/admins/certificates/manual') return 'admin.certificates.issue';
+  if (path === '/admins/certificate-program-settings' || path === '/admins/certificate-review-items' || path.match(/^\/admins\/certificate-review-items\/[^/]+/) || path === '/admins/certificates/leadership' || path === '/admins/certificates/live-project' || path === '/admins/certificates/live-project/bulk' || path === '/admins/certificates/manual') return 'admin.certificates.issue';
   if (path.match(/^\/admins\/certificates\/[^/]+\/revoke$/)) return 'admin.certificates.issue';
   if (path === '/admins/support-categories' || path === '/admins/support-faqs' || path === '/admins/support-settings/student-contact') return 'admin.support.manage';
   if (path.match(/^\/admins\/support-(categories|faqs)\/[^/]+/)) return 'admin.support.manage';
@@ -2561,7 +2680,17 @@ function compareStudentRecordingsWithSequence(left: unknown, right: unknown) {
 function findRecordingSequenceRule(recording: Record<string, unknown>, rules: Record<string, unknown>[], programKeys = recordingProgramKeys(recording)) {
   if (programKeys.length === 0) return undefined;
   const programKeySet = new Set(programKeys);
-  return rules.find((rule) => programKeySet.has(String(rule.programKey ?? '').trim().toLowerCase()) && recordingMatchesSequenceRule(recording, rule));
+  return rules
+    .filter((rule) => programKeySet.has(String(rule.programKey ?? '').trim().toLowerCase()))
+    .map((rule) => ({ rule, score: recordingSequenceRuleMatchScore(recording, rule) }))
+    .filter((match) => match.score > 0)
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      const leftSequence = Number(left.rule.sequenceNumber ?? left.rule.sequence_number);
+      const rightSequence = Number(right.rule.sequenceNumber ?? right.rule.sequence_number);
+      if (Number.isFinite(leftSequence) && Number.isFinite(rightSequence) && leftSequence !== rightSequence) return leftSequence - rightSequence;
+      return String(left.rule.title ?? '').localeCompare(String(right.rule.title ?? ''));
+    })[0]?.rule;
 }
 
 function buildRecordingCohortProgramMap(cohorts: unknown[]) {
@@ -2610,18 +2739,36 @@ function studentRecordingHasAudienceScope(recording: unknown) {
   return Boolean(recordingProgramKey(recording)) || recordingCohortNames(recording).length > 0;
 }
 
-function recordingMatchesSequenceRule(recording: Record<string, unknown>, rule: Record<string, unknown>) {
+function recordingSequenceRuleMatchScore(recording: Record<string, unknown>, rule: Record<string, unknown>) {
   const recordingTitle = normalizeRecordingSequenceText(String(recording.title ?? ''));
-  if (!recordingTitle) return false;
-  const candidates = uniqueStrings([String(rule.title ?? ''), ...asStringArray(rule.matchAliases ?? rule.match_aliases)])
+  if (!recordingTitle) return 0;
+
+  const ruleTitle = normalizeRecordingSequenceText(String(rule.title ?? ''));
+  const aliases = uniqueStrings(asStringArray(rule.matchAliases ?? rule.match_aliases))
     .map(normalizeRecordingSequenceText)
     .filter(Boolean);
-  return candidates.some(
-    (candidate) =>
-      candidate === recordingTitle ||
-      (candidate.length >= 8 && recordingTitle.includes(candidate)) ||
-      (recordingTitle.length >= 8 && candidate.includes(recordingTitle))
-  );
+
+  if (ruleTitle && ruleTitle === recordingTitle) return 100;
+  if (aliases.some((alias) => alias === recordingTitle)) return 95;
+
+  if (ruleTitle && isStrongRecordingSequencePartialMatch(recordingTitle, ruleTitle)) return 80;
+  if (aliases.some((alias) => isStrongRecordingSequencePartialMatch(recordingTitle, alias))) return 70;
+
+  return 0;
+}
+
+function isStrongRecordingSequencePartialMatch(recordingTitle: string, candidate: string) {
+  if (!recordingTitle || !candidate) return false;
+  const shorter = recordingTitle.length <= candidate.length ? recordingTitle : candidate;
+  const longer = recordingTitle.length > candidate.length ? recordingTitle : candidate;
+  if (shorter.length < 16 || !longer.includes(shorter)) return false;
+
+  const candidateWords = new Set(candidate.split(' ').filter((word) => word.length >= 4));
+  const recordingWords = new Set(recordingTitle.split(' ').filter((word) => word.length >= 4));
+  if (candidateWords.size === 0 || recordingWords.size === 0) return false;
+
+  const overlap = Array.from(candidateWords).filter((word) => recordingWords.has(word)).length;
+  return overlap >= Math.min(3, candidateWords.size);
 }
 
 function normalizeRecordingSequenceText(value: string) {
@@ -4132,6 +4279,7 @@ async function getLiveProjectCertificateRequests(context: Awaited<ReturnType<typ
         moderator_status: 'approved',
         program_key: programKey || undefined,
         program_name: programNameByKey.get(programKey.toLowerCase()) ?? (programKey || undefined),
+        live_project_total_days: submission.live_project_total_days ?? undefined,
         project_end_date: submission.project_end_date ?? undefined,
         project_id: String(submission.project_id ?? ''),
         project_role: String(submission.role_name ?? submission.project_role ?? ''),
@@ -4542,6 +4690,65 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
   };
 }
 
+async function bulkIssueLiveProjectCertificates(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  const payload = snakifyMutationBody(body);
+  const requestIds = uniqueStrings(asStringArray(payload.request_ids));
+  const endDate = String(payload.end_date ?? '').slice(0, 10);
+  const issueDate = String(payload.issue_date ?? todayIsoDate()).slice(0, 10);
+  const sendEmail = payload.send_email !== false;
+
+  if (requestIds.length === 0) throw new ApiClientError('Select at least one live project certificate request.', 400);
+  if (requestIds.length > 100) throw new ApiClientError('Bulk live project certificate issue is limited to 100 requests at a time.', 400);
+  if (!isIsoDate(endDate)) throw new ApiClientError('Bulk end date is required before issuing live project certificates.', 400);
+  if (!isIsoDate(issueDate)) throw new ApiClientError('Issue date is required before issuing live project certificates.', 400);
+  if (dateInputTime(endDate) > dateInputTime(todayLocalDate())) throw new ApiClientError('End date is a future date, please edit it before issuing certificates.', 400);
+
+  const certificates: Array<Record<string, unknown>> = [];
+  const failed: Array<{ error: string; requestId: string }> = [];
+
+  for (const requestId of requestIds) {
+    try {
+      const { data: submission, error: submissionError } = await context.supabase
+        .from('project_submission_requests')
+        .select('id,request_id,request_number,project_start_date,role_name')
+        .or(`id.eq.${requestId},request_id.eq.${requestId},request_number.eq.${requestId}`)
+        .eq('status', 'approved')
+        .limit(1)
+        .maybeSingle();
+
+      if (submissionError) throw new ApiClientError(submissionError.message, 503);
+      if (!submission) throw new ApiClientError('Approved project submission was not found.', 404);
+
+      const startDate = String(submission.project_start_date ?? '').slice(0, 10);
+      if (!isIsoDate(startDate)) throw new ApiClientError('Project start date is missing for this request.', 400);
+      if (dateInputTime(endDate) < dateInputTime(startDate)) throw new ApiClientError('End date cannot be before the project start date.', 400);
+      const totalDays = Math.floor((dateInputTime(endDate) - dateInputTime(startDate)) / 86_400_000) + 1;
+      if (totalDays > 30) throw new ApiClientError('Maximum allowed live project duration is 30 days.', 400);
+
+      const result = await issueLiveProjectCertificate(context, {
+        endDate,
+        issueDate,
+        projectRole: String(submission.role_name ?? '').trim(),
+        requestId,
+        sendEmail,
+        startDate
+      });
+      certificates.push(result.certificate as unknown as Record<string, unknown>);
+    } catch (issueError) {
+      failed.push({
+        error: issueError instanceof Error ? issueError.message : 'Certificate issue failed.',
+        requestId
+      });
+    }
+  }
+
+  return {
+    certificates,
+    failed,
+    message: `${certificates.length} live project certificate${certificates.length === 1 ? '' : 's'} issued.${failed.length ? ` ${failed.length} failed.` : ''}`
+  };
+}
+
 async function issueManualCertificate(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
   const admin = await getAdminProfile(context);
   const adminEmail = isRecord(admin) ? String(admin.email ?? context.email) : context.email;
@@ -4754,6 +4961,11 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
   const remarks = typeof payload.remarks === 'string' ? payload.remarks.trim() : '';
   const studentFeedback = typeof payload.student_feedback === 'string' ? payload.student_feedback.trim() : '';
   const requestedProjectEndDate = String(payload.project_end_date ?? '').slice(0, 10);
+  const linkedinProfileId = typeof payload.linkedin_profile_id === 'string' ? payload.linkedin_profile_id.trim() : '';
+  const collegeClubMember = typeof payload.college_club_member === 'boolean' ? payload.college_club_member : null;
+  const collegeClubName = typeof payload.college_club_name === 'string' ? payload.college_club_name.trim() : '';
+  const collegeClubOther = typeof payload.college_club_other === 'string' ? payload.college_club_other.trim() : '';
+  const wantsSkilledSapiensCollaboration = typeof payload.wants_skilled_sapiens_collaboration === 'boolean' ? payload.wants_skilled_sapiens_collaboration : null;
   const declarationConfirmations = asStringArray(payload.declaration_confirmations).map((item) => item.trim()).filter(Boolean);
   const declarationAccepted = payload.declaration_accepted === true;
   const durationConfirmed = payload.duration_confirmed === true;
@@ -4765,6 +4977,12 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
   if (!declarationAccepted) throw new ApiClientError('Confirm the project declaration before submitting.', 400);
   if (declarationConfirmations.length < 6) throw new ApiClientError('Confirm all project submission declarations before submitting.', 400);
   if (!durationConfirmed) throw new ApiClientError('Confirm that you understand your live project duration before submitting.', 400);
+  if (collegeClubMember === null) throw new ApiClientError('Select whether you are a member of any club or committee in your college.', 400);
+  if (collegeClubMember && !collegeClubName) throw new ApiClientError('Select your club or committee name.', 400);
+  if (collegeClubMember && collegeClubName === 'Other' && !collegeClubOther) throw new ApiClientError('Enter your club or committee name.', 400);
+  if (collegeClubMember && wantsSkilledSapiensCollaboration === null) {
+    throw new ApiClientError('Select whether you want to collaborate with Skilled Sapiens for events or club support.', 400);
+  }
 
   const [profile, dashboard, projectBundle] = await Promise.all([
     getStudentProfile(context),
@@ -4791,8 +5009,9 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
   if (dateInputTime(requestedProjectEndDate) > dateInputTime(todayLocalDate())) {
     throw new ApiClientError("Future end dates are not allowed. Please select today's date or an earlier date within your allowed project duration.", 400);
   }
-  if (dateInputTime(requestedProjectEndDate) > dateInputTime(addMonths(projectStartDate, 1))) {
-    throw new ApiClientError('Live project duration can be a maximum of 1 month. Please select an end date within 1 month of your onboarding date.', 400);
+  const liveProjectTotalDays = Math.floor((dateInputTime(requestedProjectEndDate) - dateInputTime(projectStartDate)) / 86_400_000) + 1;
+  if (liveProjectTotalDays > 30) {
+    throw new ApiClientError('Maximum allowed live project duration is 30 days. Please select an end date within 30 days of your project start date.', 400);
   }
 
   const projectExternalId = String(project.projectId ?? project.project_id ?? project.id);
@@ -4847,10 +5066,15 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
     cohort_key: cohortKey,
     cohort_name: cohortName,
     is_late: isLate,
+    college_club_member: collegeClubMember,
+    college_club_name: collegeClubMember ? collegeClubName : null,
+    college_club_other: collegeClubMember && collegeClubName === 'Other' ? collegeClubOther : null,
     program_key: cohortProgramKey,
     project_id: projectExternalId,
     project_end_date: requestedProjectEndDate,
     project_start_date: projectStartDate,
+    live_project_total_days: liveProjectTotalDays,
+    linkedin_profile_id: linkedinProfileId || null,
     project_title: String(project.title ?? projectExternalId),
     remarks: remarks || null,
     request_id: requestId,
@@ -4863,8 +5087,10 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
     student_id: studentId,
     student_name: studentName,
     declaration_confirmations: declarationConfirmations,
+    duration_confirmation_accepted: durationConfirmed,
     submission_link: submissionLink,
-    submitted_at: now.toISOString()
+    submitted_at: now.toISOString(),
+    wants_skilled_sapiens_collaboration: collegeClubMember ? wantsSkilledSapiensCollaboration : null
   };
 
   const { data, error } = await context.supabase.from('project_submission_requests').insert(row).select('*').single();
@@ -5082,6 +5308,7 @@ async function bulkUpdateStudents(context: Awaited<ReturnType<typeof createConte
   const addProgramNames = asStringArray(body.programNames);
   const assignmentMode = body.assignmentMode === 'replace' ? 'replace' : 'add';
   const resendInvite = body.resendInvite === true;
+  const profileUpdatePayload = buildBulkStudentProfileUpdatePayload(body);
   const result = { failed: 0, rows: [] as Array<{ email?: string; error?: string; status: 'success' | 'failed'; studentId: string }>, updated: 0 };
 
   const { data: students, error } = await context.supabase.from('students').select('*').in('id', studentIds).limit(500);
@@ -5103,6 +5330,14 @@ async function bulkUpdateStudents(context: Awaited<ReturnType<typeof createConte
         if (updateError) throw updateError;
         currentStudent = data;
         await writeAuditLog(context, 'students', 'status_changed', data, { active });
+      }
+
+      if (Object.keys(profileUpdatePayload).length > 0) {
+        const updatePayload = { ...profileUpdatePayload, updated_at: new Date().toISOString() };
+        const { data, error: updateError } = await context.supabase.from('students').update(updatePayload).eq('id', studentId).select('*').single();
+        if (updateError) throw updateError;
+        currentStudent = data;
+        await writeAuditLog(context, 'students', 'bulk_profile_updated', data, updatePayload);
       }
 
       if (addCohortNames.length > 0 || addCohortIds.length > 0 || addProgramKeys.length > 0 || addProgramNames.length > 0) {
@@ -5135,6 +5370,52 @@ async function bulkUpdateStudents(context: Awaited<ReturnType<typeof createConte
   }
 
   return result;
+}
+
+function buildBulkStudentProfileUpdatePayload(body: Record<string, unknown>) {
+  const payload: Record<string, unknown> = {};
+
+  if (Object.prototype.hasOwnProperty.call(body, 'collegeName')) {
+    payload.college_name = normalizeNullableText(body.collegeName);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'educationYear')) {
+    const value = normalizeNullableText(body.educationYear);
+    if (value && !['1st Year', '2nd Year', '3rd Year', '4th Year', 'Graduate', 'Working Professional'].includes(value)) {
+      throw new ApiClientError('Education Year is invalid.', 400);
+    }
+    payload.you_are_from = value;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'personalMentor')) {
+    const value = normalizeNullableText(body.personalMentor);
+    if (value && !['Yes', 'No'].includes(value)) {
+      throw new ApiClientError('Opted for Personal Mentor must be Yes or No.', 400);
+    }
+    payload.personalmentor = value;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'liveProjectDuration')) {
+    const value = normalizeNullableText(body.liveProjectDuration);
+    if (value && !['2 weeks', '4 weeks', '6 weeks', '8 weeks'].includes(value)) {
+      throw new ApiClientError('Live Project Duration is invalid.', 400);
+    }
+    payload.duration = value;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'onboardingDate')) {
+    const value = normalizeNullableText(body.onboardingDate);
+    if (value && Number.isNaN(new Date(`${value}T00:00:00`).getTime())) {
+      throw new ApiClientError('Onboarding Date is invalid.', 400);
+    }
+    payload.project_start_date = value;
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'waGroup')) {
+    payload.wa_group_name = normalizeNullableText(body.waGroup);
+  }
+
+  return payload;
+}
+
+function normalizeNullableText(value: unknown) {
+  const text = String(value ?? '').trim();
+  return text || null;
 }
 
 async function resendStudentInvites(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
@@ -6427,6 +6708,61 @@ function normalizeEmailTemplateWriteBody(payload: Record<string, unknown>) {
   };
 }
 
+function normalizeWhatsAppGroupWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  return {
+    ...payload,
+    cohort_name: has('cohort_name') ? String(payload.cohort_name ?? '').trim() || null : payload.cohort_name,
+    direct_chat_link: has('direct_chat_link') ? String(payload.direct_chat_link ?? '').trim() || null : payload.direct_chat_link,
+    group_name: has('group_name') ? String(payload.group_name ?? '').trim() : payload.group_name,
+    invite_link: has('invite_link') ? String(payload.invite_link ?? '').trim() || null : payload.invite_link,
+    notes: has('notes') ? String(payload.notes ?? '').trim() || null : payload.notes,
+    program_name: has('program_name') ? String(payload.program_name ?? '').trim() || null : payload.program_name,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status
+  };
+}
+
+function normalizeWhatsAppCategoryWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  return {
+    ...payload,
+    name: has('name') ? String(payload.name ?? '').trim() : payload.name,
+    sort_order: has('sort_order') && payload.sort_order !== '' ? Number(payload.sort_order) : payload.sort_order,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status
+  };
+}
+
+function normalizeWhatsAppTemplateWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  return {
+    ...payload,
+    category_id: has('category_id') ? String(payload.category_id ?? '').trim() || null : payload.category_id,
+    message_body: has('message_body') ? String(payload.message_body ?? '').trim() : payload.message_body,
+    notes: has('notes') ? String(payload.notes ?? '').trim() || null : payload.notes,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    title: has('title') ? String(payload.title ?? '').trim() : payload.title
+  };
+}
+
+function normalizeWhatsAppLogWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  return {
+    ...payload,
+    category_id: has('category_id') ? String(payload.category_id ?? '').trim() || null : payload.category_id,
+    cohort_name: has('cohort_name') ? String(payload.cohort_name ?? '').trim() || null : payload.cohort_name,
+    group_id: has('group_id') ? String(payload.group_id ?? '').trim() || null : payload.group_id,
+    group_name: has('group_name') ? String(payload.group_name ?? '').trim() : payload.group_name,
+    message_body: has('message_body') ? String(payload.message_body ?? '').trim() : payload.message_body,
+    message_title: has('message_title') ? String(payload.message_title ?? '').trim() : payload.message_title,
+    metadata: isRecord(payload.metadata) ? payload.metadata : {},
+    notes: has('notes') ? String(payload.notes ?? '').trim() || null : payload.notes,
+    program_name: has('program_name') ? String(payload.program_name ?? '').trim() || null : payload.program_name,
+    sent_at: has('sent_at') && payload.sent_at ? new Date(String(payload.sent_at)).toISOString() : payload.sent_at,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    template_id: has('template_id') ? String(payload.template_id ?? '').trim() || null : payload.template_id
+  };
+}
+
 function validateCohortWriteBody(payload: Record<string, unknown>, inserting: boolean) {
   const name = typeof payload.name === 'string' ? payload.name.trim() : '';
   const status = typeof payload.status === 'string' ? payload.status : undefined;
@@ -6681,6 +7017,64 @@ function validateEmailTemplateWriteBody(payload: Record<string, unknown>, insert
   if (sortOrder !== undefined && !Number.isFinite(Number(sortOrder))) throw new ApiClientError('Template sort order is invalid.', 400);
 }
 
+function validateWhatsAppStatus(value: string | undefined, label: string) {
+  if (value && !['active', 'inactive'].includes(value)) throw new ApiClientError(`${label} status is invalid.`, 400);
+}
+
+function validateOptionalUrl(value: string, label: string) {
+  if (value && !isHttpUrl(value)) throw new ApiClientError(`${label} must start with http:// or https://.`, 400);
+}
+
+function validateWhatsAppGroupWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const groupName = typeof payload.group_name === 'string' ? payload.group_name.trim() : '';
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  const inviteLink = typeof payload.invite_link === 'string' ? payload.invite_link.trim() : '';
+  const directChatLink = typeof payload.direct_chat_link === 'string' ? payload.direct_chat_link.trim() : '';
+  if (inserting && !groupName) throw new ApiClientError('WhatsApp group name is required.', 400);
+  if ('group_name' in payload && !groupName) throw new ApiClientError('WhatsApp group name is required.', 400);
+  validateWhatsAppStatus(status, 'WhatsApp group');
+  validateOptionalUrl(inviteLink, 'WhatsApp invite link');
+  validateOptionalUrl(directChatLink, 'WhatsApp direct chat link');
+}
+
+function validateWhatsAppCategoryWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const name = typeof payload.name === 'string' ? payload.name.trim() : '';
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  const sortOrder = payload.sort_order;
+  if (inserting && !name) throw new ApiClientError('WhatsApp category name is required.', 400);
+  if ('name' in payload && !name) throw new ApiClientError('WhatsApp category name is required.', 400);
+  validateWhatsAppStatus(status, 'WhatsApp category');
+  if (sortOrder !== undefined && sortOrder !== null && sortOrder !== '' && (!Number.isInteger(Number(sortOrder)) || Number(sortOrder) < 0)) {
+    throw new ApiClientError('WhatsApp category order must be zero or a positive whole number.', 400);
+  }
+}
+
+function validateWhatsAppTemplateWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+  const body = typeof payload.message_body === 'string' ? payload.message_body.trim() : '';
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  if (inserting && !title) throw new ApiClientError('WhatsApp template title is required.', 400);
+  if (inserting && !body) throw new ApiClientError('WhatsApp template message is required.', 400);
+  if ('title' in payload && !title) throw new ApiClientError('WhatsApp template title is required.', 400);
+  if ('message_body' in payload && !body) throw new ApiClientError('WhatsApp template message is required.', 400);
+  if (title.length > 160) throw new ApiClientError('WhatsApp template title must be 160 characters or fewer.', 400);
+  if (body.length > 4000) throw new ApiClientError('WhatsApp template message must be 4000 characters or fewer.', 400);
+  validateWhatsAppStatus(status, 'WhatsApp template');
+}
+
+function validateWhatsAppLogWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const groupName = typeof payload.group_name === 'string' ? payload.group_name.trim() : '';
+  const title = typeof payload.message_title === 'string' ? payload.message_title.trim() : '';
+  const body = typeof payload.message_body === 'string' ? payload.message_body.trim() : '';
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  if (inserting && !groupName) throw new ApiClientError('WhatsApp log group name is required.', 400);
+  if (inserting && !title) throw new ApiClientError('WhatsApp log title is required.', 400);
+  if (inserting && !body) throw new ApiClientError('WhatsApp log message is required.', 400);
+  if (status && !['draft', 'sent', 'skipped'].includes(status)) throw new ApiClientError('WhatsApp log status is invalid.', 400);
+  if (title.length > 160) throw new ApiClientError('WhatsApp log title must be 160 characters or fewer.', 400);
+  if (body.length > 4000) throw new ApiClientError('WhatsApp log message must be 4000 characters or fewer.', 400);
+}
+
 function validateWorkshopWriteBody(payload: Record<string, unknown>, inserting: boolean) {
   const title = typeof payload.title === 'string' ? payload.title.trim() : '';
   const date = typeof payload.date === 'string' ? payload.date.trim() : '';
@@ -6814,7 +7208,11 @@ async function writeAuditLog(
     table !== 'feature_controls' &&
     table !== 'email_templates' &&
     table !== 'student_guidance_content' &&
-    table !== 'career_readiness_content'
+    table !== 'career_readiness_content' &&
+    table !== 'whatsapp_groups' &&
+    table !== 'whatsapp_message_categories' &&
+    table !== 'whatsapp_message_templates' &&
+    table !== 'whatsapp_message_logs'
   ) return;
   const entityType =
     table === 'cohorts'
@@ -6841,6 +7239,8 @@ async function writeAuditLog(
                           ? 'student_guidance_content'
                           : table === 'career_readiness_content'
                             ? 'career_readiness_content'
+                            : table.startsWith('whatsapp_')
+                              ? table
                             : 'student';
 
   const auditRow = {
@@ -6856,7 +7256,7 @@ async function writeAuditLog(
   const { error } = await context.supabase.from('audit_logs').insert(auditRow);
   if (error) {
     throw new ApiClientError(
-      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_toolkit_item' ? 'Project toolkit item' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : entityType === 'feature_control' ? 'Feature control' : entityType === 'email_template' ? 'Email template' : entityType === 'student_guidance_content' ? 'Student guidance content' : entityType === 'career_readiness_content' ? 'Career readiness content' : 'Student'} was saved, but audit logging failed: ${error.message}`,
+      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_toolkit_item' ? 'Project toolkit item' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : entityType === 'feature_control' ? 'Feature control' : entityType === 'email_template' ? 'Email template' : entityType === 'student_guidance_content' ? 'Student guidance content' : entityType === 'career_readiness_content' ? 'Career readiness content' : entityType.startsWith('whatsapp_') ? 'WhatsApp record' : 'Student'} was saved, but audit logging failed: ${error.message}`,
       503
     );
   }
@@ -6953,6 +7353,42 @@ function buildAuditDetails(table: string, row: Record<string, unknown>, payload:
     };
   }
 
+  if (table === 'whatsapp_groups') {
+    return {
+      ...base,
+      cohortName: row.cohort_name,
+      groupName: row.group_name,
+      status: row.status
+    };
+  }
+
+  if (table === 'whatsapp_message_categories') {
+    return {
+      ...base,
+      name: row.name,
+      status: row.status
+    };
+  }
+
+  if (table === 'whatsapp_message_templates') {
+    return {
+      ...base,
+      categoryId: row.category_id,
+      status: row.status,
+      title: row.title
+    };
+  }
+
+  if (table === 'whatsapp_message_logs') {
+    return {
+      ...base,
+      groupName: row.group_name,
+      messageTitle: row.message_title,
+      sentAt: row.sent_at,
+      status: row.status
+    };
+  }
+
   return {
     ...base,
     active: row.active,
@@ -6976,6 +7412,7 @@ function mutationError(error: { code?: string; message: string }, table: string)
     if (table === 'recording_sequence_rules') return new ApiClientError('This sequence number already exists for the selected program and section.', 409);
     if (table === 'project_submission_requests') return new ApiClientError('A project report attempt already exists for this cohort.', 409);
     if (table === 'certificates') return new ApiClientError('A certificate already exists for this student and program. Refresh the list and issue only eligible students.', 409);
+    if (table === 'whatsapp_message_categories') return new ApiClientError('A WhatsApp category with this name already exists.', 409);
     return new ApiClientError('A record with this unique value already exists.', 409);
   }
 
@@ -7058,12 +7495,6 @@ function isIsoDate(value: string) {
 function addDays(dateValue: string, days: number) {
   const date = new Date(`${dateValue}T00:00:00.000Z`);
   date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function addMonths(dateValue: string, months: number) {
-  const date = new Date(`${dateValue}T00:00:00.000Z`);
-  date.setUTCMonth(date.getUTCMonth() + months);
   return date.toISOString().slice(0, 10);
 }
 

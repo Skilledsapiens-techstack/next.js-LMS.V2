@@ -1,0 +1,16 @@
+Hostinger deployment package
+
+Package: hostinger-live-project-bulk-certificate-fix-20260731
+Build date: 2026-07-31
+
+Included fix:
+- Bulk Live Project certificate issuance no longer selects the missing project_submission_requests.project_role column.
+- Bulk issuance now reads role_name from approved project submission requests and passes that role into the existing certificate issue flow.
+
+Also includes current UI updates:
+- Cohort cards use live student, workshop, and resource counts.
+- Cohort workshop audit is grouped by sequence sections: induction, core modules, placement mentorship, and other workshops.
+
+Upload instructions:
+- Upload the contents of this folder to Hostinger public_html.
+- Keep the included .htaccess file at the public_html root.

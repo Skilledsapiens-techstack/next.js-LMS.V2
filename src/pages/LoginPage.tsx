@@ -17,6 +17,25 @@ function isProfileMismatch(error: unknown) {
   return error instanceof ApiClientError && (error.status === 403 || error.status === 404);
 }
 
+function isExpiredEmailOtpMessage(message: string) {
+  const normalized = message.toLowerCase();
+  return normalized.includes('token has expired') || normalized.includes('token is expired') || normalized.includes('expired or is invalid');
+}
+
+function passwordActionErrorCopy(message: string) {
+  if (isExpiredEmailOtpMessage(message)) {
+    return {
+      message: 'Please click "OTP Expired? Send Again" above, then use only the latest OTP from your email.',
+      title: 'Email OTP Expired'
+    };
+  }
+
+  return {
+    message,
+    title: 'Password request could not complete'
+  };
+}
+
 async function canAccessPortal(path: string, accessToken: string) {
   try {
     await apiGet(path, { accessToken });
@@ -85,6 +104,7 @@ export function LoginPage() {
   const shouldShowGuestLogin = portal === 'student' && (guestLoginControlQuery.isError || (!guestLoginControlQuery.isLoading && guestLoginControl?.status !== 'hide'));
   const isGuestLoginUpcoming = guestLoginControl?.status === 'upcoming';
   const shouldShowCreatePassword = portal === 'student' && (createPasswordControlQuery.isError || (!createPasswordControlQuery.isLoading && createPasswordControl?.status !== 'hide'));
+  const isEmailOtpExpired = passwordUpdateStatus === 'failed' && isExpiredEmailOtpMessage(errorMessage);
 
   const recoveryTitle = useMemo(() => (urlIntent === 'create' ? 'Create password' : 'Reset password'), [urlIntent]);
 
@@ -287,8 +307,8 @@ export function LoginPage() {
                     />
                   </div>
 
-                  <FieldLabel htmlFor="email-code" label="Enter Email OTP" help="Use the code from your latest password email. Request a fresh email if the code is old." />
-                  <div className="auth-input-shell">
+                  <FieldLabel error={isEmailOtpExpired} htmlFor="email-code" label="Enter Email OTP" help="Use the code from your latest password email. Request a fresh email if the code is old." />
+                  <div className={isEmailOtpExpired ? 'auth-input-shell auth-input-shell--error' : 'auth-input-shell'}>
                     <KeyRound size={17} />
                     <input
                       id="email-code"
@@ -432,12 +452,6 @@ export function LoginPage() {
                 </button>
               </div>
 
-              {shouldShowCreatePassword ? (
-                <button className="auth-create-action" type="button" disabled={!isConfigured || requestStatus === 'sending'} onClick={() => handlePasswordEmail('create')}>
-                  {requestStatus === 'sending' && requestIntent === 'create' ? 'Sending create link' : 'Create password'}
-                </button>
-              ) : null}
-
               {shouldShowGuestLogin ? (
                 isGuestLoginUpcoming ? (
                   <div className="auth-guest-link auth-guest-link--disabled" aria-disabled="true">
@@ -467,8 +481,8 @@ export function LoginPage() {
           ) : null}
 
           {status === 'failed' || requestStatus === 'failed' || passwordUpdateStatus === 'failed' ? (
-            <StateBlock title={status === 'failed' ? 'Sign-in could not complete' : 'Password request could not complete'} tone="warning">
-              {errorMessage}
+            <StateBlock title={status === 'failed' ? 'Sign-in could not complete' : passwordActionErrorCopy(errorMessage).title} tone="warning">
+              {status === 'failed' ? errorMessage : passwordActionErrorCopy(errorMessage).message}
             </StateBlock>
           ) : null}
 
@@ -495,9 +509,9 @@ function HelpTip({ text }: { text: string }) {
   );
 }
 
-function FieldLabel({ help, htmlFor, label }: { help: string; htmlFor: string; label: string }) {
+function FieldLabel({ error = false, help, htmlFor, label }: { error?: boolean; help: string; htmlFor: string; label: string }) {
   return (
-    <label className="auth-field-label" htmlFor={htmlFor}>
+    <label className={error ? 'auth-field-label auth-field-label--error' : 'auth-field-label'} htmlFor={htmlFor}>
       <span>{label}</span>
       <HelpTip text={help} />
     </label>

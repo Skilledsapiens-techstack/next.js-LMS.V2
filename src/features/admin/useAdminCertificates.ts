@@ -63,6 +63,7 @@ export type AdminCertificateRequest = {
   moderatorReviewedAt?: string;
   moderatorStatus: AdminCertificateReviewStatus;
   programKey?: string;
+  liveProjectTotalDays?: number;
   projectEndDate?: string;
   projectId: string;
   projectRole: string;
@@ -116,6 +117,19 @@ export type IssueLiveProjectCertificateInput = {
 
 export type IssueLiveProjectCertificateResult = {
   certificate: AdminCertificate;
+  message: string;
+};
+
+export type BulkIssueLiveProjectCertificatesInput = {
+  endDate: string;
+  issueDate: string;
+  requestIds: string[];
+  sendEmail: boolean;
+};
+
+export type BulkIssueLiveProjectCertificatesResult = {
+  certificates: AdminCertificate[];
+  failed: Array<{ error: string; requestId: string }>;
   message: string;
 };
 
@@ -322,6 +336,24 @@ export function useIssueLiveProjectCertificate() {
   return useMutation({
     mutationFn: (body: IssueLiveProjectCertificateInput) =>
       apiPost<IssueLiveProjectCertificateResult, IssueLiveProjectCertificateInput>('/admins/certificates/live-project', {
+        accessToken: accessToken ?? undefined,
+        body
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-certificates'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-certificate-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['student-certificates'] });
+    }
+  });
+}
+
+export function useBulkIssueLiveProjectCertificates() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: BulkIssueLiveProjectCertificatesInput) =>
+      apiPost<BulkIssueLiveProjectCertificatesResult, BulkIssueLiveProjectCertificatesInput>('/admins/certificates/live-project/bulk', {
         accessToken: accessToken ?? undefined,
         body
       }),

@@ -39,6 +39,7 @@ type RecordingEditForm = {
   cohortNames: string[];
   passcode: string;
   programKey: string;
+  programKeys: string[];
   title: string;
   workshopId: string;
   youtubeUrl: string;
@@ -116,7 +117,16 @@ function programLabelFor(programs: AdminProgram[], programKey: string | undefine
 }
 
 function cohortProgramMatches(cohort: AdminCohort, programKey: string) {
-  return cohort.programKey === programKey || cohort.domainKey === programKey;
+  const normalizedProgramKey = programKey.trim().toLowerCase();
+  return cohort.programKey?.trim().toLowerCase() === normalizedProgramKey || cohort.domainKey?.trim().toLowerCase() === normalizedProgramKey;
+}
+
+function normalizedProgramKey(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function uniqueRecordingStrings(values: unknown[]) {
+  return Array.from(new Set(values.map((value) => String(value ?? '').trim()).filter(Boolean)));
 }
 
 function sourceLabel(item: AdminWorkshop) {
@@ -534,11 +544,19 @@ export function AdminRecordingCandidatesPage() {
   }
 
   function buildRecordingEditForm(workshop: AdminWorkshop): RecordingEditForm {
+    const inferredProgramKeys = uniqueRecordingStrings([
+      workshop.programKey ?? '',
+      ...workshop.cohortNames.flatMap((cohortName) => {
+        const cohort = activeCohorts.find((item) => item.name === cohortName);
+        return [cohort?.programKey ?? '', cohort?.domainKey ?? ''];
+      })
+    ]).map(normalizedProgramKey).filter(Boolean);
     return {
       alternateUrl: workshop.zoomRecordingUrl ?? '',
       cohortNames: workshop.cohortNames,
       passcode: workshop.zoomRecordingPassword ?? '',
-      programKey: workshop.programKey ?? '',
+      programKey: inferredProgramKeys[0] ?? '',
+      programKeys: inferredProgramKeys,
       title: workshop.title,
       workshopId: workshop.id,
       youtubeUrl: workshop.youtubeVideoUrl ?? ''
@@ -700,6 +718,64 @@ export function AdminRecordingCandidatesPage() {
       else selected.add(cohortName);
       return { ...current, cohortNames: Array.from(selected) };
     });
+  }
+
+  function applyRecordingProgramKeys(programKeys: string[]) {
+    setRecordingEditForm((current) => {
+      if (!current) return current;
+      const selectedProgramKeys = uniqueRecordingStrings(programKeys.map(normalizedProgramKey));
+      const eligibleCohortNames = new Set(
+        activeCohorts
+          .filter((cohort) => selectedProgramKeys.some((programKey) => cohortProgramMatches(cohort, programKey)))
+          .map((cohort) => cohort.name)
+          .filter(Boolean)
+      );
+      return {
+        ...current,
+        cohortNames: current.cohortNames.filter((cohortName) => eligibleCohortNames.has(cohortName)),
+        programKey: selectedProgramKeys[0] ?? '',
+        programKeys: selectedProgramKeys
+      };
+    });
+  }
+
+  function toggleRecordingProgram(programKey: string) {
+    setRecordingEditForm((current) => {
+      if (!current) return current;
+      const normalizedKey = normalizedProgramKey(programKey);
+      const selected = new Set(current.programKeys.map(normalizedProgramKey));
+      if (selected.has(normalizedKey)) selected.delete(normalizedKey);
+      else selected.add(normalizedKey);
+      const selectedProgramKeys = Array.from(selected);
+      const eligibleCohortNames = new Set(
+        activeCohorts
+          .filter((cohort) => selectedProgramKeys.some((key) => cohortProgramMatches(cohort, key)))
+          .map((cohort) => cohort.name)
+          .filter(Boolean)
+      );
+      return {
+        ...current,
+        cohortNames: current.cohortNames.filter((cohortName) => eligibleCohortNames.has(cohortName)),
+        programKey: selectedProgramKeys[0] ?? '',
+        programKeys: selectedProgramKeys
+      };
+    });
+  }
+
+  function selectAllRecordingPrograms() {
+    applyRecordingProgramKeys(programKeys);
+  }
+
+  function clearRecordingPrograms() {
+    applyRecordingProgramKeys([]);
+  }
+
+  function selectAllEditCohorts(cohortNames: string[]) {
+    setRecordingEditForm((current) => (current ? { ...current, cohortNames: cohortNames } : current));
+  }
+
+  function clearEditCohorts() {
+    setRecordingEditForm((current) => (current ? { ...current, cohortNames: [] } : current));
   }
 
   function toggleSequenceProgram(programKey: string) {
@@ -1111,7 +1187,16 @@ export function AdminRecordingCandidatesPage() {
   function renderRecordingEditForm(workshop: AdminWorkshop, mode: 'draft' | 'published' = 'draft') {
     if (recordingEditForm?.workshopId !== workshop.id) return null;
     const isPublishedEdit = mode === 'published';
-    const cohortEditOptions = Array.from(new Set([...workshop.cohortNames, ...activeCohorts.map((cohort) => cohort.name)])).filter(Boolean).sort((left, right) => left.localeCompare(right));
+    const selectedProgramKeys = uniqueRecordingStrings(recordingEditForm.programKeys.map(normalizedProgramKey));
+    const eligibleCohortOptions = selectedProgramKeys.length > 0
+      ? activeCohorts
+          .filter((cohort) => selectedProgramKeys.some((programKey) => cohortProgramMatches(cohort, programKey)))
+          .map((cohort) => cohort.name)
+          .filter(Boolean)
+      : [];
+    const cohortEditOptions = Array.from(new Set([...recordingEditForm.cohortNames, ...eligibleCohortOptions]))
+      .filter((cohortName) => eligibleCohortOptions.includes(cohortName))
+      .sort((left, right) => left.localeCompare(right));
     const isBusy = isPublishedEdit ? editPublishedRecordingMutation.isPending : createManualCandidateMutation.isPending;
 
     return (
@@ -1126,17 +1211,39 @@ export function AdminRecordingCandidatesPage() {
                 placeholder="Recording title"
               />
             </label>
-            <label>
-              <span>Program</span>
-              <select value={recordingEditForm.programKey} onChange={(event) => setRecordingEditForm((current) => (current ? { ...current, programKey: event.target.value } : current))}>
-                <option value="">General / no program tag</option>
-                {programKeys.map((programKey) => (
-                  <option key={programKey} value={programKey}>
-                    {programLabelFor(programs, programKey)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <fieldset className="admin-recording-edit-form__programs">
+              <div className="admin-recording-edit-form__program-head">
+                <legend>Program</legend>
+                <div>
+                  <button disabled={isBusy || programKeys.length === 0} onClick={selectAllRecordingPrograms} type="button">
+                    Select all
+                  </button>
+                  <button disabled={isBusy || selectedProgramKeys.length === 0} onClick={clearRecordingPrograms} type="button">
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div className="admin-recording-edit-form__program-list">
+                {programKeys.length > 0 ? (
+                  programKeys.map((programKey) => {
+                    const normalizedKey = normalizedProgramKey(programKey);
+                    return (
+                      <label key={programKey}>
+                        <input checked={selectedProgramKeys.includes(normalizedKey)} disabled={isBusy} onChange={() => toggleRecordingProgram(programKey)} type="checkbox" />
+                        <strong>{programLabelFor(programs, programKey)}</strong>
+                      </label>
+                    );
+                  })
+                ) : (
+                  <p>No active programs available.</p>
+                )}
+              </div>
+              <small>
+                {selectedProgramKeys.length > 0
+                  ? `${selectedProgramKeys.length} program${selectedProgramKeys.length === 1 ? '' : 's'} selected.`
+                  : 'No program selected. Cohort tags will stay hidden.'}
+              </small>
+            </fieldset>
           </>
         ) : null}
         <label>
@@ -1166,7 +1273,15 @@ export function AdminRecordingCandidatesPage() {
         {isPublishedEdit ? (
           <fieldset className="admin-recording-edit-form__cohorts">
             <legend>Cohort tags</legend>
-            <div>
+            <div className="admin-recording-edit-form__cohort-controls">
+              <button disabled={isBusy || cohortEditOptions.length === 0} onClick={() => selectAllEditCohorts(cohortEditOptions)} type="button">
+                Select all
+              </button>
+              <button disabled={isBusy || recordingEditForm.cohortNames.length === 0} onClick={clearEditCohorts} type="button">
+                Clear
+              </button>
+            </div>
+            <div className="admin-recording-edit-form__cohort-list">
               {cohortEditOptions.length > 0 ? (
                 cohortEditOptions.map((cohortName) => (
                   <label key={cohortName}>
@@ -1175,7 +1290,7 @@ export function AdminRecordingCandidatesPage() {
                   </label>
                 ))
               ) : (
-                <p>No active cohorts available.</p>
+                <p>{selectedProgramKeys.length > 0 ? 'No eligible active cohorts found for the selected program.' : 'Select one or more programs to show eligible cohorts.'}</p>
               )}
             </div>
           </fieldset>

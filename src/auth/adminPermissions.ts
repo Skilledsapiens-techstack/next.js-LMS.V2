@@ -149,7 +149,8 @@ export const MODULE_VIEW_PERMISSIONS: Record<string, AdminPermission> = {
   resources: 'admin.resources.view',
   students: 'admin.students.view',
   support: 'admin.support.view',
-  workshops: 'admin.meetings.view'
+  workshops: 'admin.meetings.view',
+  'whatsapp-groups': 'admin.community.view'
 };
 
 export type AdminPermissionModule = {
@@ -237,6 +238,12 @@ export const ADMIN_PERMISSION_MODULES: AdminPermissionModule[] = [
     id: 'community',
     label: 'Community',
     permissions: ['admin.community.view', 'admin.community.manage']
+  },
+  {
+    description: 'WhatsApp group directory, message templates, and sent-message audit history.',
+    id: 'whatsapp-groups',
+    label: 'WhatsApp Groups',
+    permissions: ['admin.community.manage']
   },
   {
     description: 'Support tickets, replies, FAQs, categories, and settings.',

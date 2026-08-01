@@ -10,6 +10,8 @@ import {
   AdminCohort,
   AdminCohortImpact,
   AdminCohortStatus,
+  AdminCohortWorkshopAuditItem,
+  useAdminCohortCardMetrics,
   useAdminCohortImpact,
   useAdminCohorts,
   useCreateAdminCohort,
@@ -45,7 +47,7 @@ type PendingBulkStatusChange = {
   count: number;
   nextStatus: AdminCohortStatus;
 };
-type CohortPreviewTab = 'overview' | 'students' | 'studentView' | 'links' | 'selfPaced' | 'audit';
+type CohortPreviewTab = 'overview' | 'students' | 'workshops' | 'links' | 'selfPaced' | 'audit';
 
 const statusOptions: Array<AdminCohortStatus | 'all'> = ['all', 'upcoming', 'active', 'completed', 'inactive'];
 
@@ -143,7 +145,7 @@ function parseStatus(value: string | null): AdminCohortStatus | 'all' {
 }
 
 function parseSort(value: string | null): SortMode {
-  return sortOptions.some((option) => option.value === value) ? (value as SortMode) : 'name';
+  return sortOptions.some((option) => option.value === value) ? (value as SortMode) : 'start_oldest';
 }
 
 function formatDate(value: string | undefined) {
@@ -206,7 +208,7 @@ function buildPageLink(page: number, search: string, status: AdminCohortStatus |
   if (search) params.set('search', search);
   if (status !== 'all') params.set('status', status);
   if (program !== 'all') params.set('program', program);
-  if (sort !== 'name') params.set('sort', sort);
+  if (sort !== 'start_oldest') params.set('sort', sort);
   return `?${params.toString()}`;
 }
 
@@ -263,6 +265,44 @@ function itemTitle(item: unknown, fallback: string) {
 
 function formatAuditAction(value: string) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatSessionType(value: string | undefined) {
+  if (!value) return 'Workshop';
+  if (value === 'doubt_session') return 'Doubt session';
+  return formatAuditAction(value);
+}
+
+function formatWorkshopSchedule(item: AdminCohortWorkshopAuditItem) {
+  const date = formatDate(item.date);
+  if (date === '-') return 'Date not set';
+  return item.time ? `${date} · ${item.time}` : date;
+}
+
+function groupWorkshopAuditItems(items: AdminCohortWorkshopAuditItem[]) {
+  const groups = new Map<string, { items: AdminCohortWorkshopAuditItem[]; order: number; section: string }>();
+  items.forEach((item) => {
+    const section = item.section || 'Workshops';
+    const existing = groups.get(section);
+    groups.set(section, {
+      items: [...(existing?.items ?? []), item],
+      order: Math.min(existing?.order ?? Number.POSITIVE_INFINITY, item.sectionOrder),
+      section
+    });
+  });
+  return Array.from(groups.values()).sort((left, right) => left.order - right.order || left.section.localeCompare(right.section));
+}
+
+function cardStudentCount(cohort: AdminCohort, metrics?: { students: number }) {
+  return metrics?.students ?? cohort.studentCount;
+}
+
+function cardSessionCount(cohort: AdminCohort, metrics?: { workshops: number }) {
+  return (metrics?.workshops ?? 0) + countFilledRecords(cohort.selfPacedSessions, ['title', 'url']);
+}
+
+function cardResourceCount(cohort: AdminCohort, metrics?: { resources: number }) {
+  return (metrics?.resources ?? 0) + countFilledRecords(cohort.selfPacedResources, ['name', 'title', 'url']);
 }
 
 function studentCohortNames(student: AdminStudent) {
@@ -602,6 +642,7 @@ function CohortPreviewModal({
   const updateStudent = useUpdateAdminStudent();
   const assignedStudents = assignedStudentsQuery.data?.items ?? [];
   const searchableStudents = (searchStudentsQuery.data?.items ?? []).filter((student) => !studentCohortNames(student).includes(cohort.name));
+  const workshopSections = useMemo(() => groupWorkshopAuditItems(impact?.workshopItems ?? []), [impact?.workshopItems]);
   const isMembershipSaving = updateStudent.isPending;
 
   useEffect(() => {
@@ -693,7 +734,7 @@ function CohortPreviewModal({
             {[
               ['overview', 'Overview'],
               ['students', 'Students'],
-              ['studentView', 'Student View'],
+              ['workshops', 'Workshops'],
               ['links', 'Linked LMS Data'],
               ['selfPaced', 'Self-paced'],
               ['audit', 'Audit']
@@ -863,77 +904,50 @@ function CohortPreviewModal({
           </section>
           ) : null}
 
-          {activeTab === 'studentView' ? (
+          {activeTab === 'workshops' ? (
           <section className="cohort-preview-section">
-            <h3>Student-facing view</h3>
-            <div className="cohort-student-facing">
-              <div className="cohort-student-facing__hero">
-                <div>
-                  <span>Student portal card</span>
-                  <strong>{cohort.name}</strong>
-                  <p>
-                    {cohort.status === 'inactive'
-                      ? 'Inactive cohorts are hidden from normal student learning views.'
-                      : `${programLabel(cohort)} students see this cohort with the mapped sessions, recordings, resources, and projects available to their account.`}
-                  </p>
-                </div>
-                <StatusBadge tone={cohort.status === 'active' ? 'safe' : 'warning'}>{formatOption(cohort.status)}</StatusBadge>
+            <div className="cohort-membership-header">
+              <div>
+                <h3>Workshop audit</h3>
+                <p>Sequence-wise view of workshops attached to this cohort: induction, core modules, placement mentorship, and other workshops.</p>
               </div>
-              <div className="cohort-student-facing__grid">
-                <div>
-                  <span>Program</span>
-                  <strong>{programLabel(cohort)}</strong>
-                </div>
-                <div>
-                  <span>Learning mode</span>
-                  <strong>{cohort.selfPaced ? 'Self-paced' : 'Live cohort'}</strong>
-                </div>
-                <div>
-                  <span>Window</span>
-                  <strong>{formatWindow(cohort)}</strong>
-                </div>
-                <div>
-                  <span>Students</span>
-                  <strong>{cohort.studentCount}</strong>
-                </div>
-              </div>
-              <div className="cohort-student-facing__content">
-                <div>
-                  <strong>Self-paced sessions</strong>
-                  {cohort.selfPacedSessions.length ? (
-                    <ul>
-                      {cohort.selfPacedSessions.slice(0, 4).map((session, index) => (
-                        <li key={`${itemTitle(session, `Session ${index + 1}`)}-${index}`}>{itemTitle(session, `Session ${index + 1}`)}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p>No self-paced sessions attached.</p>
-                  )}
-                </div>
-                <div>
-                  <strong>Self-paced resources</strong>
-                  {cohort.selfPacedResources.length ? (
-                    <ul>
-                      {cohort.selfPacedResources.slice(0, 4).map((resource, index) => (
-                        <li key={`${itemTitle(resource, `Resource ${index + 1}`)}-${index}`}>{itemTitle(resource, `Resource ${index + 1}`)}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p>No self-paced resources attached.</p>
-                  )}
-                </div>
-              </div>
-              <div className="cohort-student-facing__links">
-                <div>
-                  <span>WhatsApp group</span>
-                  <strong>{cohort.waGroupName || 'Not configured'}</strong>
-                </div>
-                <div>
-                  <span>Google group</span>
-                  <strong>{cohort.googleGroup || 'Not configured'}</strong>
-                </div>
-              </div>
+              <span className="cohort-workshop-count">{isImpactLoading ? 'Loading...' : `${impact?.workshops ?? 0} workshops`}</span>
             </div>
+            {isImpactLoading ? <p className="cohort-preview-muted">Loading linked workshops...</p> : null}
+            {!isImpactLoading && workshopSections.length === 0 ? <p className="cohort-preview-muted">No workshops are currently attached to this cohort.</p> : null}
+            {!isImpactLoading && workshopSections.length ? (
+              <div className="cohort-workshop-audit">
+                {workshopSections.map((section) => (
+                  <section className="cohort-workshop-section" key={section.section}>
+                    <header>
+                      <strong>{section.section}</strong>
+                      <span>{section.items.length} added</span>
+                    </header>
+                    <div className="cohort-workshop-list">
+                      {section.items.map((item) => (
+                        <article className="cohort-workshop-item" key={item.id}>
+                          <div>
+                            <h4>{item.title}</h4>
+                            <p>
+                              {formatWorkshopSchedule(item)} · {formatSessionType(item.sessionType)}
+                            </p>
+                            <div className="cohort-workshop-meta">
+                              {item.sequenceNumber ? <span>Step {item.sequenceNumber}</span> : null}
+                              {item.workshopId ? <span>{item.workshopId}</span> : null}
+                              {item.programKey ? <span>{item.programKey}</span> : null}
+                              <span>{item.recordingUrl ? 'Recording added' : 'Recording missing'}</span>
+                            </div>
+                          </div>
+                          <StatusBadge tone={item.status === 'Completed' ? 'safe' : item.status === 'Cancelled' || item.status === 'Inactive' ? 'danger' : 'warning'}>
+                            {item.status ?? 'Draft'}
+                          </StatusBadge>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            ) : null}
           </section>
           ) : null}
 
@@ -1044,6 +1058,9 @@ export function AdminCohortsPage() {
   const data = cohortsQuery.data;
   const totalPages = data?.totalPages ?? 1;
   const visibleCohorts = data?.items ?? [];
+  const visibleCohortNames = useMemo(() => visibleCohorts.map((cohort) => cohort.name), [visibleCohorts]);
+  const cohortCardMetricsQuery = useAdminCohortCardMetrics(visibleCohortNames);
+  const cohortCardMetrics = cohortCardMetricsQuery.data ?? {};
   const selectedCohorts = useMemo(() => visibleCohorts.filter((cohort) => selectedCohortIds.has(cohort.id)), [selectedCohortIds, visibleCohorts]);
   const allVisibleSelected = visibleCohorts.length > 0 && visibleCohorts.every((cohort) => selectedCohortIds.has(cohort.id));
   const isBulkBusy = updateCohortStatus.isPending;
@@ -1234,7 +1251,7 @@ export function AdminCohortsPage() {
             </option>
           ))}
         </select>
-        <select aria-label="Sort cohorts" className="admin-student-select" value={sort} onChange={(event) => updateParams({ sort: event.target.value === 'name' ? undefined : event.target.value })}>
+        <select aria-label="Sort cohorts" className="admin-student-select" value={sort} onChange={(event) => updateParams({ sort: event.target.value === 'start_oldest' ? undefined : event.target.value })}>
           {sortOptions.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
@@ -1287,70 +1304,78 @@ export function AdminCohortsPage() {
 
       {visibleCohorts.length > 0 ? (
         <section className="cohort-card-grid" aria-label="Cohort records">
-          {visibleCohorts.map((cohort) => (
-            <article className="cohort-card" key={cohort.id}>
-              <label className="cohort-card__select">
-                <input checked={selectedCohortIds.has(cohort.id)} onChange={(event) => toggleCohortSelection(cohort.id, event.target.checked)} type="checkbox" />
-                <span>Select cohort</span>
-              </label>
-              <div className="cohort-card__top" />
-              <div className="cohort-card__head">
-                <div>
-                  <h2>{cohort.name}</h2>
-                  <p>{formatWindow(cohort)}</p>
+          {visibleCohorts.map((cohort) => {
+            const metrics = cohortCardMetrics[cohort.name];
+            const studentCount = cardStudentCount(cohort, metrics);
+            const sessionCount = cardSessionCount(cohort, metrics);
+            const resourceCount = cardResourceCount(cohort, metrics);
+            const isMetricsLoading = cohortCardMetricsQuery.isFetching && !metrics;
+
+            return (
+              <article className="cohort-card" key={cohort.id}>
+                <label className="cohort-card__select">
+                  <input checked={selectedCohortIds.has(cohort.id)} onChange={(event) => toggleCohortSelection(cohort.id, event.target.checked)} type="checkbox" />
+                  <span>Select cohort</span>
+                </label>
+                <div className="cohort-card__top" />
+                <div className="cohort-card__head">
+                  <div>
+                    <h2>{cohort.name}</h2>
+                    <p>{formatWindow(cohort)}</p>
+                  </div>
+                  <div className="cohort-card__badges">
+                    {cohort.selfPaced ? <StatusBadge>self-paced</StatusBadge> : null}
+                    <StatusBadge tone={cohort.status === 'active' ? 'safe' : 'warning'}>{formatOption(cohort.status)}</StatusBadge>
+                  </div>
                 </div>
-                <div className="cohort-card__badges">
-                  {cohort.selfPaced ? <StatusBadge>self-paced</StatusBadge> : null}
-                  <StatusBadge tone={cohort.status === 'active' ? 'safe' : 'warning'}>{formatOption(cohort.status)}</StatusBadge>
+                <div className="cohort-card__stats" aria-busy={isMetricsLoading}>
+                  <div>
+                    <strong>{isMetricsLoading ? '...' : studentCount}</strong>
+                    <span>Students</span>
+                  </div>
+                  <div>
+                    <strong>{cohort.programKey ? 1 : 0}</strong>
+                    <span>Programs</span>
+                  </div>
+                  <div>
+                    <strong>{isMetricsLoading ? '...' : sessionCount}</strong>
+                    <span>Sessions</span>
+                  </div>
                 </div>
-              </div>
-              <div className="cohort-card__stats">
-                <div>
-                  <strong>{cohort.studentCount}</strong>
-                  <span>Students</span>
+                <div className="cohort-card__meta">
+                  <StatusBadge tone="warning">{programLabel(cohort)}</StatusBadge>
+                  <span>
+                    <MonitorPlay size={14} />
+                    {isMetricsLoading ? 'Checking sessions' : `${sessionCount} sessions`}
+                  </span>
+                  <span>
+                    <FileText size={14} />
+                    {isMetricsLoading ? 'Checking resources' : `${resourceCount} resources`}
+                  </span>
                 </div>
-                <div>
-                  <strong>{cohort.programKey ? 1 : 0}</strong>
-                  <span>Programs</span>
+                <div className="cohort-card__actions">
+                  <button className="segmented-button" onClick={() => setEditingCohort(cohort)} type="button">
+                    Edit
+                  </button>
+                  <Link className="segmented-button" to={`/admin/students?cohortName=${encodeURIComponent(cohort.name)}`}>
+                    <Users size={14} />
+                    Students
+                  </Link>
+                  <button className="segmented-button" onClick={() => setPreviewCohort(cohort)} type="button">
+                    Details
+                  </button>
+                  <button
+                    className={cohort.status === 'inactive' ? 'segmented-button' : 'segmented-button segmented-button--danger'}
+                    disabled={updateCohortStatus.isPending}
+                    onClick={() => setPendingStatusChange({ cohort, nextStatus: cohort.status === 'inactive' ? 'active' : 'inactive' })}
+                    type="button"
+                  >
+                    {cohort.status === 'inactive' ? 'Reactivate' : 'Deactivate'}
+                  </button>
                 </div>
-                <div>
-                  <strong>{cohort.selfPacedSessions.length}</strong>
-                  <span>Sessions</span>
-                </div>
-              </div>
-              <div className="cohort-card__meta">
-                <StatusBadge tone="warning">{programLabel(cohort)}</StatusBadge>
-                <span>
-                  <MonitorPlay size={14} />
-                  {cohort.selfPacedSessions.length} sessions
-                </span>
-                <span>
-                  <FileText size={14} />
-                  {cohort.selfPacedResources.length} resources
-                </span>
-              </div>
-              <div className="cohort-card__actions">
-                <button className="segmented-button" onClick={() => setEditingCohort(cohort)} type="button">
-                  Edit
-                </button>
-                <Link className="segmented-button" to={`/admin/students?cohortName=${encodeURIComponent(cohort.name)}`}>
-                  <Users size={14} />
-                  Students
-                </Link>
-                <button className="segmented-button" onClick={() => setPreviewCohort(cohort)} type="button">
-                  Details
-                </button>
-                <button
-                  className={cohort.status === 'inactive' ? 'segmented-button' : 'segmented-button segmented-button--danger'}
-                  disabled={updateCohortStatus.isPending}
-                  onClick={() => setPendingStatusChange({ cohort, nextStatus: cohort.status === 'inactive' ? 'active' : 'inactive' })}
-                  type="button"
-                >
-                  {cohort.status === 'inactive' ? 'Reactivate' : 'Deactivate'}
-                </button>
-              </div>
-            </article>
-          ))}
+              </article>
+            );
+          })}
         </section>
       ) : (
         <EmptyState />

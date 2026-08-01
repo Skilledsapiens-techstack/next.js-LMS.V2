@@ -1,0 +1,12 @@
+Hostinger deployment package - 2026-07-31
+
+Upload the contents of this package to the Hostinger public_html folder.
+
+Included updates:
+- WhatsApp Groups admin module improvements
+- Live project certificate bulk issue flow
+- Student live project duration confirmation and extra submission fields
+- Latest LMS UI polish and routing build
+
+Database note:
+- Supabase migration 20260731073552_live_project_submission_duration_club_fields.sql has already been applied to the linked remote database.

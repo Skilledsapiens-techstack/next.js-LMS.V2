@@ -7,12 +7,18 @@ export type StudentProjectSubmissionStatus = 'submitted' | 'under_review' | 'app
 
 export type StudentProjectSubmission = {
   attemptNumber: number;
+  collegeClubMember?: boolean;
+  collegeClubName?: string;
+  collegeClubOther?: string;
   cohortKey?: string;
   cohortName?: string;
   declarationConfirmations?: string[];
+  durationConfirmationAccepted?: boolean;
   id: string;
   isRepeatSubmission: boolean;
   isLate?: boolean;
+  linkedinProfileId?: string;
+  liveProjectTotalDays?: number;
   programKey?: string;
   projectId?: string;
   projectTitle?: string;
@@ -26,19 +32,26 @@ export type StudentProjectSubmission = {
   studentFeedback?: string;
   submissionLink?: string;
   submittedAt?: string;
+  wantsSkilledSapiensCollaboration?: boolean;
 };
 
 export type StudentProjectSubmissionInput = {
   cohortId: string;
+  collegeClubMember?: boolean;
+  collegeClubName?: string;
+  collegeClubOther?: string;
   declarationAccepted: boolean;
   declarationConfirmations: string[];
   durationConfirmed: boolean;
+  linkedinProfileId?: string;
+  liveProjectTotalDays?: number;
   projectId: string;
   projectEndDate: string;
   projectStartDate?: string;
   remarks?: string;
   studentFeedback: string;
   submissionLink: string;
+  wantsSkilledSapiensCollaboration?: boolean;
 };
 
 export type StudentProjectSubmissionResult = {

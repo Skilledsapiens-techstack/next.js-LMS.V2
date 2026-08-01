@@ -44,6 +44,7 @@ const AdminFeatureControlPage = lazy(() => import('../pages/AdminFeatureControlP
 const AdminUsersPage = lazy(() => import('../pages/AdminUsersPage').then((module) => ({ default: module.AdminUsersPage })));
 const AdminEmailCenterPage = lazy(() => import('../pages/AdminEmailCenterPage').then((module) => ({ default: module.AdminEmailCenterPage })));
 const AdminObservabilityPage = lazy(() => import('../pages/AdminObservabilityPage').then((module) => ({ default: module.AdminObservabilityPage })));
+const AdminWhatsAppGroupsPage = lazy(() => import('../pages/AdminWhatsAppGroupsPage').then((module) => ({ default: module.AdminWhatsAppGroupsPage })));
 const LoginPage = lazy(() => import('../pages/LoginPage').then((module) => ({ default: module.LoginPage })));
 const GuestSignupPage = lazy(() => import('../pages/GuestSignupPage').then((module) => ({ default: module.GuestSignupPage })));
 const GuestAccessPage = lazy(() => import('../pages/GuestAccessPage').then((module) => ({ default: module.GuestAccessPage })));
@@ -622,6 +623,16 @@ export const router = createBrowserRouter([
               <PageLoader>
                 <AdminFeaturePage moduleId="email-center">
                   <AdminEmailCenterPage />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'whatsapp-groups',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="whatsapp-groups">
+                  <AdminWhatsAppGroupsPage />
                 </AdminFeaturePage>
               </PageLoader>
             )
