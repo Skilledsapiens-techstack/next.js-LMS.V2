@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, BookOpen, CalendarDays, ChevronDown, ExternalLink, FolderKanban, Layers3, Link as LinkIcon, Send, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BookOpen, CalendarDays, ChevronDown, ExternalLink, FolderKanban, Info, Layers3, Link as LinkIcon, Send, X } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { ProjectRichText, sanitizeProjectHtml } from '../components/ProjectRichText';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
@@ -26,7 +26,7 @@ const PROJECT_SUBMISSION_DECLARATIONS = [
   },
   {
     key: 'official_submission',
-    label: 'I understand that this report will be treated as my official project submission for the selected cohort.'
+    label: 'I understand that this report will be treated as my official project submission for the selected Live Project Role.'
   },
   {
     key: 'drive_access',
@@ -78,6 +78,19 @@ type CvPointsSection = {
 
 function countWords(value: string) {
   return value.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function isValidLinkedInProfileUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  try {
+    const url = new URL(trimmed);
+    const hostname = url.hostname.toLowerCase();
+    const isLinkedInHost = hostname === 'linkedin.com' || hostname.endsWith('.linkedin.com');
+    return (url.protocol === 'https:' || url.protocol === 'http:') && isLinkedInHost && /^\/(in|pub)\/[^/]+\/?$/i.test(url.pathname);
+  } catch {
+    return false;
+  }
 }
 
 function normalizeToolkitId(value: string | undefined) {
@@ -255,10 +268,13 @@ function projectProgramKeys(project: StudentProject) {
   return Array.from(new Set([...(project.programKeys ?? []), project.programKey].filter(Boolean).map((key) => String(key).toLowerCase())));
 }
 
-function projectProgramLabels(project: StudentProject, cohort?: StudentCohort) {
-  if (cohort?.programKey) return [cohort.programKey.toUpperCase()];
-  if (project.programName) return project.programName.split(',').map((item) => item.trim()).filter(Boolean);
-  return projectProgramKeys(project).map((key) => key.toUpperCase());
+function projectLiveProjectRoles(project: StudentProject, cohort?: StudentCohort) {
+  const roles = [
+    ...(project.liveProjectRoles ?? []),
+    ...(cohort?.liveProjectRoles ?? []),
+    projectRoleValue(project)
+  ];
+  return Array.from(new Set(roles.map((role) => role.trim()).filter(Boolean)));
 }
 
 function statusText(value: string) {
@@ -424,6 +440,7 @@ function ProjectSubmissionModal({
     projectEndDate: string;
     projectStartDate?: string;
     remarks?: string;
+    skilledSapiensSupportDetails?: string;
     studentFeedback: string;
     submissionLink: string;
     wantsSkilledSapiensCollaboration?: boolean;
@@ -440,10 +457,10 @@ function ProjectSubmissionModal({
   const [clubName, setClubName] = useState('');
   const [clubOther, setClubOther] = useState('');
   const [collaborationValue, setCollaborationValue] = useState('');
+  const [supportDetails, setSupportDetails] = useState('');
   const [checkedDeclarations, setCheckedDeclarations] = useState<string[]>([]);
   const [localError, setLocalError] = useState('');
   const selectedCohort = cohorts.find((cohort) => cohort.id === cohortId) ?? cohorts[0];
-  const programLabels = projectProgramLabels(project, selectedCohort);
   const projectStartDate = project.studentProjectStartDate?.slice(0, 10) ?? '';
   const maxProjectEndDate = addDaysInput(projectStartDate, MAX_LIVE_PROJECT_DAYS - 1);
   const todayEndDate = todayInputValue();
@@ -453,6 +470,7 @@ function ProjectSubmissionModal({
   const allDeclarationsChecked = checkedDeclarations.length === PROJECT_SUBMISSION_DECLARATIONS.length;
   const feedbackWordCount = countWords(studentFeedback);
   const feedbackWordsRemaining = Math.max(PROJECT_FEEDBACK_MIN_WORDS - feedbackWordCount, 0);
+  const liveProjectRoles = projectLiveProjectRoles(project, selectedCohort);
 
   useEffect(() => {
     setCohortId(cohorts[0]?.id ?? '');
@@ -516,9 +534,21 @@ function ProjectSubmissionModal({
       setLocalError('Select whether you want to collaborate with Skilled Sapiens for events or club support.');
       return;
     }
+    if (isClubMember && collaborationValue === 'yes' && !supportDetails.trim()) {
+      setLocalError('Tell us what support you need from Skilled Sapiens.');
+      return;
+    }
     const durationError = validateProjectDuration(projectEndDate);
     if (durationError) {
       setLocalError(durationError);
+      return;
+    }
+    if (!linkedinProfileId.trim()) {
+      setLocalError('Enter your LinkedIn profile link before submitting.');
+      return;
+    }
+    if (!isValidLinkedInProfileUrl(linkedinProfileId)) {
+      setLocalError('Enter a valid LinkedIn profile link, for example https://www.linkedin.com/in/your-profile.');
       return;
     }
     await onSubmit({
@@ -534,6 +564,7 @@ function ProjectSubmissionModal({
       projectEndDate,
       projectStartDate,
       remarks: undefined,
+      skilledSapiensSupportDetails: isClubMember && collaborationValue === 'yes' ? supportDetails.trim() : undefined,
       studentFeedback,
       submissionLink,
       wantsSkilledSapiensCollaboration: isClubMember ? collaborationValue === 'yes' : undefined
@@ -572,9 +603,9 @@ function ProjectSubmissionModal({
               <strong>{project.title}</strong>
             </div>
             <div>
-              <span>Tagged programs</span>
+              <span>Live Project Domain</span>
               <div className="chip-row">
-                {programLabels.length > 0 ? programLabels.map((program) => <StatusBadge key={program}>{program}</StatusBadge>) : <StatusBadge>Program mapped</StatusBadge>}
+                {liveProjectRoles.length > 0 ? liveProjectRoles.map((role) => <StatusBadge key={role}>{role}</StatusBadge>) : <StatusBadge>Role mapped</StatusBadge>}
               </div>
             </div>
           </div>
@@ -592,8 +623,8 @@ function ProjectSubmissionModal({
           </div>
 
           <label>
-            <span>Eligible cohort</span>
-            <select disabled={cohorts.length <= 1 || isSubmitting} value={cohortId} onChange={(event) => setCohortId(event.target.value)}>
+            <span>Eligible cohort *</span>
+            <select disabled={cohorts.length <= 1 || isSubmitting} required value={cohortId} onChange={(event) => setCohortId(event.target.value)}>
               {cohorts.map((cohort) => (
                 <option key={cohort.id} value={cohort.id}>
                   {cohort.name}{cohort.programKey ? ` · ${cohort.programKey.toUpperCase()}` : ''}
@@ -603,16 +634,18 @@ function ProjectSubmissionModal({
           </label>
 
           <label>
-            <span>Report link</span>
+            <span>Report link *</span>
             <input disabled={isSubmitting} onChange={(event) => setSubmissionLink(event.target.value)} placeholder="https://..." required type="url" value={submissionLink} />
           </label>
 
           <label>
-            <span>Your LinkedIn Profile ID</span>
+            <span>Your LinkedIn Profile ID *</span>
             <input
               disabled={isSubmitting}
               onChange={(event) => setLinkedinProfileId(event.target.value)}
-              placeholder="LinkedIn profile URL or ID"
+              placeholder="https://www.linkedin.com/in/your-profile"
+              required
+              type="url"
               value={linkedinProfileId}
             />
           </label>
@@ -661,7 +694,31 @@ function ProjectSubmissionModal({
               onChange={(event) => setDurationConfirmed(event.target.checked)}
               type="checkbox"
             />
-            <span>I understand that my live project duration will be recorded from the project start date to the project end date selected above.</span>
+            <span className="live-project-duration-confirmation-text">
+              I understand that my live project duration will be recorded from the project start date to the project end date selected above. *
+            </span>
+          </label>
+
+          <label>
+            <span>Share your detailed project feedbacks *</span>
+            <small id="project-feedback-help">
+              Write at least 80 words. How was your experience with Skilled Sapiens, what you personally learned, how you approached the work, etc.
+            </small>
+            <textarea
+              aria-describedby="project-feedback-help project-feedback-count"
+              disabled={isSubmitting}
+              onChange={(event) => setStudentFeedback(event.target.value)}
+              placeholder="What did you learn, what was this project about, and how was your experience?"
+              required
+              rows={5}
+              value={studentFeedback}
+            />
+            <small
+              className={`live-project-feedback-count${feedbackWordCount >= PROJECT_FEEDBACK_MIN_WORDS ? ' live-project-feedback-count--ready' : ''}`}
+              id="project-feedback-count"
+            >
+              {feedbackWordCount} / {PROJECT_FEEDBACK_MIN_WORDS} words
+            </small>
           </label>
 
           <div className="live-project-student-extra-grid">
@@ -676,6 +733,7 @@ function ProjectSubmissionModal({
                     setClubName('');
                     setClubOther('');
                     setCollaborationValue('');
+                    setSupportDetails('');
                   }
                 }}
                 required
@@ -705,53 +763,62 @@ function ProjectSubmissionModal({
                   </label>
                 ) : null}
                 <label>
-                  <span>Do you want to collaborate with Skilled Sapiens for events/support needed for your club? *</span>
-                  <select disabled={isSubmitting} onChange={(event) => setCollaborationValue(event.target.value)} required value={collaborationValue}>
+                  <span>Do you want to collaborate with Skilled Sapiens for events/Sponsorship/ any other support needed for your club? *</span>
+                  <select
+                    disabled={isSubmitting}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setCollaborationValue(nextValue);
+                      if (nextValue !== 'yes') setSupportDetails('');
+                    }}
+                    required
+                    value={collaborationValue}
+                  >
                     <option value="">Select</option>
                     <option value="yes">Yes</option>
                     <option value="no">No</option>
                   </select>
                 </label>
+                {collaborationValue === 'yes' ? (
+                  <label className="live-project-support-details">
+                    <span className="live-project-support-details__label">
+                      Tell us what support do you need? *
+                      <span className="live-project-info-tooltip" tabIndex={0}>
+                        <Info aria-hidden="true" size={15} />
+                        <span role="tooltip">
+                          Skilled Sapiens provides support to club/commitee for all type of events i.e Event Sponsorship, Knowledge Partnership, etc.
+                        </span>
+                      </span>
+                    </span>
+                    <textarea
+                      disabled={isSubmitting}
+                      onChange={(event) => setSupportDetails(event.target.value)}
+                      placeholder="Example: event sponsorship, knowledge partnership, speaker support, workshop collaboration..."
+                      required
+                      rows={3}
+                      value={supportDetails}
+                    />
+                  </label>
+                ) : null}
               </>
             ) : null}
           </div>
 
-          <label>
-            <span>Share your detailed project feedbacks *</span>
-            <small id="project-feedback-help">
-              Write at least 80 words. Include what the project was about, what you personally learned, how you approached the work, and one or two
-              practical insights or challenges.
-            </small>
-            <textarea
-              aria-describedby="project-feedback-help project-feedback-count"
-              disabled={isSubmitting}
-              onChange={(event) => setStudentFeedback(event.target.value)}
-              placeholder="What did you learn, what was this project about, and how was your experience?"
-              required
-              rows={5}
-              value={studentFeedback}
-            />
-            <small
-              className={`live-project-feedback-count${feedbackWordCount >= PROJECT_FEEDBACK_MIN_WORDS ? ' live-project-feedback-count--ready' : ''}`}
-              id="project-feedback-count"
-            >
-              {feedbackWordCount} / {PROJECT_FEEDBACK_MIN_WORDS} words
-            </small>
-          </label>
-
           <fieldset className="live-project-declaration-group">
             <legend>Submission declarations *</legend>
-            {PROJECT_SUBMISSION_DECLARATIONS.map((declaration) => (
-              <label className="live-project-declaration" key={declaration.key}>
-                <input
-                  checked={checkedDeclarations.includes(declaration.key)}
-                  disabled={isSubmitting}
-                  onChange={() => toggleDeclaration(declaration.key)}
-                  type="checkbox"
-                />
-                <span>{declaration.label}</span>
-              </label>
-            ))}
+            <div className="live-project-declaration-list">
+              {PROJECT_SUBMISSION_DECLARATIONS.map((declaration) => (
+                <label className="live-project-declaration" key={declaration.key}>
+                  <input
+                    checked={checkedDeclarations.includes(declaration.key)}
+                    disabled={isSubmitting}
+                    onChange={() => toggleDeclaration(declaration.key)}
+                    type="checkbox"
+                  />
+                  <span>{declaration.label}</span>
+                </label>
+              ))}
+            </div>
           </fieldset>
 
           {message ? <p className="live-project-form-message">{message}</p> : null}

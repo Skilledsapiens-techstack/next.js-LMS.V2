@@ -1,0 +1,26 @@
+Hostinger deployment package - LMS latest - 2026-08-02
+
+Build command:
+npm run build
+
+Package contents:
+- Production Vite build from dist/
+- .htaccess for SPA routing on Hostinger
+
+Included recent changes:
+- Persistent sidebar count badges for Upcoming Workshops, Doubt Sessions, Announcements, and My Certificates.
+- Support page email display cleanup.
+- Admin Audit & Health: Last 24 hours active student count.
+- Admin Audit & Health: scrollable Recent admin actions list.
+- Live project submission form/details updates and admin detailed response table updates from the latest change set.
+- Certificate email subject/body variable updates from the latest change set.
+
+Database notes:
+- 7-day observability log retention cron was pushed to Supabase.
+- Existing logs older than 7 days were cleaned once immediately.
+- Live project support details and certificate email template migrations were already pushed.
+
+Deployment:
+1. Upload hostinger-lms-latest-20260802.zip to Hostinger File Manager.
+2. Extract the zip contents directly inside the target public web root.
+3. Keep .htaccess in place so direct LMS routes continue to work.

@@ -52,6 +52,23 @@ function richPlainTextToHtml(value: string) {
     .join('\n');
 }
 
+function looksLikeHtml(value: unknown) {
+  return /<\/?[a-z][\s\S]*>/i.test(String(value || ''));
+}
+
+function sanitizeAdminHtml(value: unknown) {
+  return String(value || '')
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/\son\w+=(["']).*?\1/gi, '')
+    .replace(/\son\w+=\S+/gi, '')
+    .replace(/\s(href|src)=(["'])\s*javascript:[\s\S]*?\2/gi, ' $1="#"');
+}
+
+function templateBodyToHtml(value: string) {
+  if (looksLikeHtml(value)) return sanitizeAdminHtml(value);
+  return richPlainTextToHtml(value);
+}
+
 function labelCertificateDownloadLink(html: string, signedUrl: string) {
   const escapedUrl = escHtml(signedUrl);
   if (!escapedUrl) return html;
@@ -76,6 +93,12 @@ function htmlToPlainText(value: string) {
 
 function certificateTypeToTemplateType(value: unknown) {
   return text(value) === 'live_project' ? 'live_project' : 'leadership_program';
+}
+
+function certificateTypeLabel(value: unknown) {
+  return text(value) === 'live_project'
+    ? 'Live Project Completion Certificate'
+    : 'Leadership Training Completion Certificate';
 }
 
 function addHours(date: Date, hours: number) {
@@ -346,10 +369,17 @@ async function sendCertificateEmail(supabase: ReturnType<typeof createClient>, c
     verification_url: verificationUrl(certificate),
     program: text(certificate.program_name, text(certificate.program_key)),
     cohort: text(certificate.cohort_name, text(certificate.cohort_id)),
+    certificate_type_label: certificateTypeLabel(certificate.certificate_type),
+    live_project_role: text(certificate.project_role, text(certificate.role_name)),
+    project_role: text(certificate.project_role, text(certificate.role_name)),
     expiry: expiresAt || '24 hours',
     portal_url: 'https://dev.skilledsapiens.com/login'
   };
-  const subject = fillVars(text(template?.subject) || subjectFallback, vars);
+  const configuredSubject = text(template?.subject);
+  const subjectTemplate = !configuredSubject || configuredSubject === 'Your Skilled Sapiens certificate is ready'
+    ? '{{certificate_type_label}}'
+    : configuredSubject;
+  const subject = fillVars(subjectTemplate || subjectFallback, vars);
   const bodyFallback = `Hi {{student_name}},
 
 Your Skilled Sapiens certificate {{certificate_id}} is attached to this email.
@@ -360,7 +390,8 @@ Verify anytime: {{verification_url}}
 
 Regards,
 Skilled Sapiens Team`;
-  const html = labelCertificateDownloadLink(richPlainTextToHtml(fillVars(text(template?.body) || bodyFallback, vars)), signedUrl);
+  const renderedBody = fillVars(text(template?.body) || bodyFallback, vars);
+  const html = labelCertificateDownloadLink(templateBodyToHtml(renderedBody), signedUrl);
   const attachment = bytesToBase64(pdfBytes);
   const response = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',

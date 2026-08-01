@@ -1,0 +1,15 @@
+Hostinger deployment package
+
+Package: hostinger-project-submissions-reverted-20260801
+Build date: 2026-08-01
+
+Included changes:
+- Admin Project Submissions has been reverted to the previous card/list UI.
+- The experimental admin details table is not included.
+- Live project submission still requires all applicable fields.
+- LinkedIn profile is still mandatory and must be a valid LinkedIn profile URL.
+- Certificate email variable/subject and rich-text HTML fixes remain included.
+
+Upload instructions:
+- Upload the contents of this folder to Hostinger public_html.
+- Keep the included .htaccess file at the public_html root.

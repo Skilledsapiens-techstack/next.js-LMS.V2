@@ -8,6 +8,7 @@ export type ObservabilitySummary = {
   activeUsers: {
     studentsLastFiveMinutes: number;
     studentsLastHour: number;
+    studentsLastTwentyFourHours: number;
     studentsToday: number;
     totalLastHour: number;
   };

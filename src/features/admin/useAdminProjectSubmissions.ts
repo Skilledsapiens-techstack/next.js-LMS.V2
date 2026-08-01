@@ -10,25 +10,36 @@ export type AdminProjectSubmission = {
   attemptNumber: number;
   cohortKey?: string;
   cohortName?: string;
+  collegeClubMember?: boolean;
+  collegeClubName?: string;
+  collegeClubOther?: string;
+  collegeName?: string;
   duplicateGroupCount: number;
   duplicateGroupKey?: string;
   id: string;
   isRepeatSubmission: boolean;
+  linkedinProfileId?: string;
+  liveProjectTotalDays?: number;
   previousRequestIds: string[];
   previousRequestNumbers: string[];
   programKey?: string;
+  projectEndDate?: string;
   projectId?: string;
+  projectStartDate?: string;
   projectTitle?: string;
   remarks?: string;
   requestNumber?: string;
   roleId?: string;
   roleName?: string;
+  skilledSapiensSupportDetails?: string;
   status: AdminProjectSubmissionStatus;
   studentEmail: string;
+  studentFeedback?: string;
   studentId?: string;
   studentName?: string;
   submissionLink?: string;
   submittedAt?: string;
+  wantsSkilledSapiensCollaboration?: boolean;
 };
 
 export type AdminProjectSubmissionsQuery = {

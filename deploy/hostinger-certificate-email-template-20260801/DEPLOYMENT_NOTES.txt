@@ -1,0 +1,23 @@
+Hostinger deployment package
+
+Package: hostinger-certificate-email-template-20260801
+Build date: 2026-08-01
+
+Included frontend changes:
+- Email Center certificate templates show these additional variables:
+  - {{certificate_type_label}}
+  - {{project_role}}
+  - {{live_project_role}}
+- Email Center preview sample data includes certificate type and live project role values.
+
+Already applied Supabase changes:
+- certificate-issuance Edge Function deployed.
+- Migration 20260801171417_certificate_email_type_role_variables.sql pushed.
+- Certificate email subject now uses {{certificate_type_label}}.
+- Leadership certificates render as "Leadership Training Completion Certificate".
+- Live project certificates render as "Live Project Completion Certificate".
+- Certificate rich-text email bodies now render as HTML instead of visible markup.
+
+Upload instructions:
+- Upload the contents of this folder to Hostinger public_html.
+- Keep the included .htaccess file at the public_html root.

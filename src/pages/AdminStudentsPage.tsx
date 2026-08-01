@@ -37,6 +37,7 @@ import {
 import { AdminCohort, useAdminCohorts } from '../features/admin/useAdminCohorts';
 import { AdminProgram, useAdminPrograms } from '../features/admin/useAdminPrograms';
 import { AdminProjectRole, useAdminProjectRoles } from '../features/admin/useAdminProjects';
+import { nextSortState, sortRows, SortState } from '../lib/sortUtils';
 
 const statusOptions: Array<{ label: string; value: AdminStudentStatus | 'all' }> = [
   { label: 'All Students', value: 'all' },
@@ -66,7 +67,7 @@ const studentImportHeaders = ['studentId', 'fullName', 'email', 'altEmail', 'pho
 const studentImportPasteHeader = studentImportHeaders.join('\t');
 const studentImportPasteStarter = `${studentImportPasteHeader}\n`;
 const studentExportHeaders = ['serialNumber', ...studentImportHeaders];
-const studentSortOptions = ['sequence', 'student', 'access', 'education', 'mentor', 'onboarding', 'duration', 'auth', 'status'] as const;
+const studentSortOptions = ['sequence', 'student', 'access', 'education', 'mentor', 'onboarding', 'duration', 'role', 'auth', 'status', 'actions'] as const;
 
 type StudentSortKey = (typeof studentSortOptions)[number];
 type SortDirection = 'asc' | 'desc';
@@ -421,6 +422,7 @@ type BulkProfileEditForm = {
 
 type StudentImportAssignmentMode = 'add' | 'replace';
 type StudentImportEntryMode = 'file' | 'paste';
+type StudentImportSortKey = 'row' | 'student' | 'email' | 'profile' | 'cohorts' | 'programs' | 'edit' | 'status';
 type StudentImportProgress = {
   completed: number;
   created: number;
@@ -1257,6 +1259,7 @@ function ImportPreviewModal({
   const [bulkProgramNames, setBulkProgramNames] = useState<string[]>([]);
   const [bulkRoleIds, setBulkRoleIds] = useState<string[]>([]);
   const [editingRowNumber, setEditingRowNumber] = useState<number | null>(null);
+  const [importSort, setImportSort] = useState<SortState<StudentImportSortKey> | null>(null);
   const [pasteText, setPasteText] = useState(studentImportPasteStarter);
   const [templateDownloading, setTemplateDownloading] = useState(false);
   const validRows = preview?.rows.filter((row) => row.errors.length === 0) ?? [];
@@ -1278,7 +1281,21 @@ function ImportPreviewModal({
       }),
     [previewFilter, previewRows]
   );
-  const visibleRows = filteredRows.slice(0, 100);
+  const sortedFilteredRows = useMemo(
+    () =>
+      sortRows(filteredRows, importSort, (row, key) => {
+        if (key === 'row') return row.rowNumber;
+        if (key === 'student') return `${row.payload.fullName ?? ''} ${row.payload.studentId ?? ''}`;
+        if (key === 'email') return `${row.payload.email ?? ''} ${row.payload.altEmail ?? ''}`;
+        if (key === 'profile') return `${row.payload.educationYear ?? ''} ${row.payload.personalMentor ?? ''} ${row.payload.onboardingDate ?? ''} ${row.payload.liveProjectDuration ?? ''}`;
+        if (key === 'cohorts') return row.payload.cohortNames?.join(' ');
+        if (key === 'programs') return `${row.payload.programNames?.join(' ') ?? ''} ${row.payload.liveProjectRoleIds?.join(' ') ?? ''}`;
+        if (key === 'status') return row.errors.length > 0 ? row.errors.join(' ') : row.existingStudent ? 'ready existing student' : 'ready new student';
+        return '';
+      }),
+    [filteredRows, importSort]
+  );
+  const visibleRows = sortedFilteredRows.slice(0, 100);
   const selectedRowSet = useMemo(() => new Set(selectedRowNumbers), [selectedRowNumbers]);
   const visibleSelectedCount = visibleRows.filter((row) => selectedRowSet.has(row.rowNumber)).length;
   const editingRow = editingRowNumber === null ? null : previewRows.find((row) => row.rowNumber === editingRowNumber) ?? null;
@@ -1315,6 +1332,22 @@ function ImportPreviewModal({
         sendPortalInvite: existingStudent ? false : row.sendPortalInvite
       };
     });
+  }
+
+  function renderImportSortHeader(label: string, key: StudentImportSortKey) {
+    const isActive = importSort?.key === key;
+    return (
+      <button
+        aria-label={`Sort by ${label}`}
+        aria-sort={isActive ? (importSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+        className={`data-sort-button ${isActive ? 'data-sort-button--active' : ''}`}
+        onClick={() => setImportSort((current) => nextSortState(current, key))}
+        type="button"
+      >
+        <span>{label}</span>
+        <span aria-hidden="true">{isActive ? (importSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+      </button>
+    );
   }
 
   function updateRow(rowNumber: number, update: (row: StudentImportPreviewRow) => StudentImportPreviewRow) {
@@ -1565,14 +1598,14 @@ function ImportPreviewModal({
                             {visibleRows.length > 0 && visibleSelectedCount === visibleRows.length ? <CheckSquare size={18} /> : <Square size={18} />}
                           </button>
                         </th>
-                        <th scope="col">Row</th>
-                        <th scope="col">Student</th>
-                        <th scope="col">Email</th>
-                        <th scope="col">Profile</th>
-                        <th scope="col">Cohorts</th>
-                        <th scope="col">Programs</th>
-                        <th scope="col">Edit</th>
-                        <th scope="col">Status</th>
+                        <th scope="col">{renderImportSortHeader('Row', 'row')}</th>
+                        <th scope="col">{renderImportSortHeader('Student', 'student')}</th>
+                        <th scope="col">{renderImportSortHeader('Email', 'email')}</th>
+                        <th scope="col">{renderImportSortHeader('Profile', 'profile')}</th>
+                        <th scope="col">{renderImportSortHeader('Cohorts', 'cohorts')}</th>
+                        <th scope="col">{renderImportSortHeader('Programs', 'programs')}</th>
+                        <th scope="col">{renderImportSortHeader('Edit', 'edit')}</th>
+                        <th scope="col">{renderImportSortHeader('Status', 'status')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2901,10 +2934,10 @@ export function AdminStudentsPage() {
                   <th scope="col">{renderSortHeader('Personal Mentor', 'mentor')}</th>
                   <th scope="col">{renderSortHeader('Onboarding Date', 'onboarding')}</th>
                   <th scope="col">{renderSortHeader('Live Project Duration', 'duration')}</th>
-                  <th scope="col">Live Project Role</th>
+                  <th scope="col">{renderSortHeader('Live Project Role', 'role')}</th>
                   <th scope="col">{renderSortHeader('Account Status', 'auth')}</th>
                   <th scope="col">{renderSortHeader('Status', 'status')}</th>
-                  <th scope="col">Actions</th>
+                  <th scope="col">{renderSortHeader('Actions', 'actions')}</th>
                 </tr>
               </thead>
               <tbody>

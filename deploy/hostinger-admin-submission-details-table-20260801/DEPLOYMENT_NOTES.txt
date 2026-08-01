@@ -1,0 +1,22 @@
+Hostinger deployment package
+
+Package: hostinger-admin-submission-details-table-20260801
+Build date: 2026-08-01
+
+Included frontend/API changes:
+- Admin Project Submissions now uses a tabular details view.
+- The table shows student, project, report link, LinkedIn link, dates, live project duration, feedback, club details, declarations count, and live project certificate status.
+- Approved submissions remain visible through the existing status filter.
+- Issued live project certificate ID/status is shown when available.
+- Review actions and bulk approval remain available for pending rows.
+- Live project submission fields are mandatory where applicable.
+- LinkedIn profile is mandatory and must be a valid LinkedIn profile URL.
+
+Previously applied Supabase certificate email changes are still included:
+- Certificate email variables in Email Center.
+- Certificate subject variable labels.
+- Certificate rich-text HTML rendering fix.
+
+Upload instructions:
+- Upload the contents of this folder to Hostinger public_html.
+- Keep the included .htaccess file at the public_html root.

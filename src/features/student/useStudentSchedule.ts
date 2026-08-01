@@ -31,6 +31,7 @@ export type StudentScheduleItem = {
 
 export type StudentScheduleQuery = {
   accessType?: StudentScheduleAccessType | 'all';
+  enabled?: boolean;
   includePast?: boolean;
   limit?: number;
   page?: number;
@@ -50,7 +51,7 @@ export function useStudentSchedule(query: StudentScheduleQuery) {
   const status = query.status ?? 'all';
 
   return useQuery({
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && query.enabled !== false,
     queryFn: () =>
       apiGet<PaginatedResponse<StudentScheduleItem>>('/students/me/schedule', {
         accessToken: accessToken ?? undefined,

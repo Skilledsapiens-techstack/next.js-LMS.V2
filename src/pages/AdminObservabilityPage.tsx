@@ -11,6 +11,7 @@ const emptySummary: ObservabilitySummary = {
   activeUsers: {
     studentsLastFiveMinutes: 0,
     studentsLastHour: 0,
+    studentsLastTwentyFourHours: 0,
     studentsToday: 0,
     totalLastHour: 0
   },
@@ -265,6 +266,7 @@ export function AdminObservabilityPage() {
           <div className="observability-mini-grid">
             <div><span>5 minutes</span><strong>{formatNumber(summary.activeUsers.studentsLastFiveMinutes)}</strong></div>
             <div><span>1 hour</span><strong>{formatNumber(summary.activeUsers.studentsLastHour)}</strong></div>
+            <div><span>Last 24 hours</span><strong>{formatNumber(summary.activeUsers.studentsLastTwentyFourHours)}</strong></div>
             <div><span>Today</span><strong>{formatNumber(summary.activeUsers.studentsToday)}</strong></div>
           </div>
           <div className="observability-compact-list">

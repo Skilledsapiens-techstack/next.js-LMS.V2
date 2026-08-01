@@ -623,12 +623,14 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
     searchColumns: ['full_name', 'email', 'alt_email', 'phone', 'student_id', 'college_name', 'cohort_name', 'program_name', 'wa_group_name', 'you_are_from', 'duration'],
     sortColumns: {
       access: { column: 'program_name', ascending: true },
+      actions: { column: 'id', ascending: true },
       auth: { column: 'onboarding_mail_status', ascending: true },
       duration: { column: 'duration', ascending: true },
       education: { column: 'you_are_from', ascending: true },
       mentor: { column: 'personalmentor', ascending: true },
       newest: { column: 'created_at', ascending: false },
       onboarding: { column: 'project_start_date', ascending: true },
+      role: { column: 'live_project_role_ids', ascending: true },
       sequence: { column: 'onboarding_sequence', ascending: true },
       status: { column: 'active', ascending: false },
       student: { column: 'full_name', ascending: true }
@@ -845,6 +847,8 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/admins/students/college-options') return getAdminStudentCollegeOptions(context) as Promise<TResponse>;
 
   if (cleanPath === '/admins/students') return getAdminStudentsList(context, options.query) as Promise<TResponse>;
+
+  if (cleanPath === '/admins/project-submissions') return getAdminProjectSubmissionsList(context, options.query) as Promise<TResponse>;
 
   if (cleanPath === '/admins/guest-leads') return getAdminGuestLeadsList(context, options.query) as Promise<TResponse>;
 
@@ -2106,6 +2110,7 @@ async function getLightweightOperationsSummary(context: Awaited<ReturnType<typeo
   const [
     activeFiveMinutes,
     activeOneHour,
+    activeTwentyFourHours,
     activeToday,
     recentStudents,
     recentAdminActions,
@@ -2122,6 +2127,7 @@ async function getLightweightOperationsSummary(context: Awaited<ReturnType<typeo
   ] = await Promise.all([
     safeCountRows(context, 'students', (request) => request.eq('active', true).gte('last_seen_at', fiveMinutesAgo)),
     safeCountRows(context, 'students', (request) => request.eq('active', true).gte('last_seen_at', oneHourAgo)),
+    safeCountRows(context, 'students', (request) => request.eq('active', true).gte('last_seen_at', twentyFourHoursAgo)),
     safeCountRows(context, 'students', (request) => request.eq('active', true).gte('last_seen_at', today)),
     context.supabase.from('students').select('id,email,full_name,student_id,last_seen_at,cohort_name,program_name').eq('active', true).gte('last_seen_at', oneHourAgo).order('last_seen_at', { ascending: false }).limit(8),
     safeCountRows(context, 'audit_logs', (request) => request.gte('created_at', twentyFourHoursAgo)),
@@ -2147,6 +2153,7 @@ async function getLightweightOperationsSummary(context: Awaited<ReturnType<typeo
     activeUsers: {
       studentsLastFiveMinutes: activeFiveMinutes,
       studentsLastHour: activeOneHour,
+      studentsLastTwentyFourHours: activeTwentyFourHours,
       studentsToday: activeToday,
       totalLastHour: activeOneHour
     },
@@ -2181,6 +2188,7 @@ function emptyLightweightOperationsSummary() {
     activeUsers: {
       studentsLastFiveMinutes: 0,
       studentsLastHour: 0,
+      studentsLastTwentyFourHours: 0,
       studentsToday: 0,
       totalLastHour: 0
     },
@@ -2898,6 +2906,66 @@ async function getTableList(context: Awaited<ReturnType<typeof createContext>>, 
   if (error) throw new ApiClientError(error.message, 503);
 
   return createPaginatedResponse((data ?? []).map(enrichRow).map(camelize), count ?? 0, page, limit);
+}
+
+async function getAdminProjectSubmissionsList(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const endpoint = TABLE_ENDPOINTS['/admins/project-submissions'];
+  const page = Number(query?.page ?? 1);
+  const limit = Math.min(Number(query?.limit ?? 25), 500);
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+  let request = context.supabase.from(endpoint.table).select('*', { count: 'exact' });
+
+  request = applyCommonFilters(request, query, endpoint);
+  request = applyCommonSort(request, query, endpoint);
+  const { count, data, error } = await request.range(from, to);
+  if (error) throw new ApiClientError(error.message, 503);
+
+  const rows = data ?? [];
+  const studentIds = uniqueStrings(rows.map((row) => String(row.student_id ?? '').trim()).filter(Boolean));
+  const studentEmails = uniqueStrings(rows.map((row) => normalizeEmail(row.student_email)).filter(Boolean));
+  let studentRows: Array<Record<string, unknown>> = [];
+
+  if (studentIds.length > 0) {
+    const studentsResult = await context.supabase
+      .from('students')
+      .select('id,email,college_name')
+      .in('id', studentIds)
+      .limit(5000);
+
+    if (studentsResult.error) throw new ApiClientError(studentsResult.error.message, 503);
+    studentRows = [...studentRows, ...(studentsResult.data ?? [])];
+  }
+
+  if (studentEmails.length > 0) {
+    const studentsResult = await context.supabase
+      .from('students')
+      .select('id,email,college_name')
+      .in('email', studentEmails)
+      .limit(5000);
+
+    if (studentsResult.error) throw new ApiClientError(studentsResult.error.message, 503);
+    studentRows = [...studentRows, ...(studentsResult.data ?? [])];
+  }
+
+  const studentById = new Map<string, Record<string, unknown>>();
+  const studentByEmail = new Map<string, Record<string, unknown>>();
+  studentRows.forEach((student) => {
+    const id = String(student.id ?? '').trim();
+    const email = normalizeEmail(student.email);
+    if (id) studentById.set(id, student);
+    if (email) studentByEmail.set(email, student);
+  });
+
+  const enrichedRows = rows.map((row) => {
+    const student = studentById.get(String(row.student_id ?? '').trim()) ?? studentByEmail.get(normalizeEmail(row.student_email));
+    return {
+      ...row,
+      college_name: row.college_name ?? student?.college_name ?? null
+    };
+  });
+
+  return createPaginatedResponse(enrichedRows.map(enrichRow).map(camelize), count ?? 0, page, limit);
 }
 
 async function getAdminStudentsList(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
@@ -4966,6 +5034,7 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
   const collegeClubName = typeof payload.college_club_name === 'string' ? payload.college_club_name.trim() : '';
   const collegeClubOther = typeof payload.college_club_other === 'string' ? payload.college_club_other.trim() : '';
   const wantsSkilledSapiensCollaboration = typeof payload.wants_skilled_sapiens_collaboration === 'boolean' ? payload.wants_skilled_sapiens_collaboration : null;
+  const skilledSapiensSupportDetails = typeof payload.skilled_sapiens_support_details === 'string' ? payload.skilled_sapiens_support_details.trim() : '';
   const declarationConfirmations = asStringArray(payload.declaration_confirmations).map((item) => item.trim()).filter(Boolean);
   const declarationAccepted = payload.declaration_accepted === true;
   const durationConfirmed = payload.duration_confirmed === true;
@@ -4973,6 +5042,10 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
   if (!projectId) throw new ApiClientError('Select a project before submitting.', 400);
   if (!cohortId) throw new ApiClientError('Select the cohort for this submission.', 400);
   if (!isHttpUrl(submissionLink)) throw new ApiClientError('Enter a valid report link that starts with http:// or https://.', 400);
+  if (!linkedinProfileId) throw new ApiClientError('Enter your LinkedIn profile link before submitting.', 400);
+  if (!isLinkedInProfileUrl(linkedinProfileId)) {
+    throw new ApiClientError('Enter a valid LinkedIn profile link that starts with http:// or https://.', 400);
+  }
   if (studentFeedback.length < 30) throw new ApiClientError('Add detailed project feedback before submitting.', 400);
   if (!declarationAccepted) throw new ApiClientError('Confirm the project declaration before submitting.', 400);
   if (declarationConfirmations.length < 6) throw new ApiClientError('Confirm all project submission declarations before submitting.', 400);
@@ -4982,6 +5055,9 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
   if (collegeClubMember && collegeClubName === 'Other' && !collegeClubOther) throw new ApiClientError('Enter your club or committee name.', 400);
   if (collegeClubMember && wantsSkilledSapiensCollaboration === null) {
     throw new ApiClientError('Select whether you want to collaborate with Skilled Sapiens for events or club support.', 400);
+  }
+  if (collegeClubMember && wantsSkilledSapiensCollaboration === true && !skilledSapiensSupportDetails) {
+    throw new ApiClientError('Tell us what support you need from Skilled Sapiens.', 400);
   }
 
   const [profile, dashboard, projectBundle] = await Promise.all([
@@ -5090,6 +5166,7 @@ async function submitStudentProjectReport(context: Awaited<ReturnType<typeof cre
     duration_confirmation_accepted: durationConfirmed,
     submission_link: submissionLink,
     submitted_at: now.toISOString(),
+    skilled_sapiens_support_details: collegeClubMember && wantsSkilledSapiensCollaboration ? skilledSapiensSupportDetails : null,
     wants_skilled_sapiens_collaboration: collegeClubMember ? wantsSkilledSapiensCollaboration : null
   };
 
@@ -7457,6 +7534,17 @@ function isValidEmail(value: string) {
 
 function isHttpUrl(value: string) {
   return /^https?:\/\//i.test(value);
+}
+
+function isLinkedInProfileUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    const isLinkedInHost = hostname === 'linkedin.com' || hostname.endsWith('.linkedin.com');
+    return (url.protocol === 'https:' || url.protocol === 'http:') && isLinkedInHost && /^\/(in|pub)\/[^/]+\/?$/i.test(url.pathname);
+  } catch {
+    return false;
+  }
 }
 
 function extractHttpUrl(value: string | undefined) {

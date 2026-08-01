@@ -9,6 +9,8 @@ import { StatusBadge } from '../components/StatusBadge';
 import { WhatsAppContactWidget } from '../components/WhatsAppContactWidget';
 import { useStudentFeatureControls } from '../features/useFeatureControls';
 import { StudentAnnouncement, useStudentAnnouncements } from '../features/student/useStudentAnnouncements';
+import { useStudentCertificates } from '../features/student/useStudentCertificates';
+import { StudentScheduleItem, useStudentSchedule } from '../features/student/useStudentSchedule';
 import { apiGet, apiPost } from '../lib/supabaseApi';
 
 type AppShellProps = {
@@ -86,6 +88,41 @@ function announcementMeta(announcement: StudentAnnouncement) {
   return 'Announcement';
 }
 
+function getScheduleDateTime(item: StudentScheduleItem) {
+  const dateMatch = item.date?.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const timeMatch = item.time?.match(/^(\d{1,2}):(\d{2})/);
+
+  if (dateMatch) {
+    const [, year, month, day] = dateMatch;
+    const hour = timeMatch ? Number(timeMatch[1]) : 0;
+    const minute = timeMatch ? Number(timeMatch[2]) : 0;
+    const scheduledAt = new Date(Number(year), Number(month) - 1, Number(day), hour, minute);
+    return Number.isNaN(scheduledAt.getTime()) ? null : scheduledAt;
+  }
+
+  const scheduledAt = new Date(item.date);
+  return Number.isNaN(scheduledAt.getTime()) ? null : scheduledAt;
+}
+
+function isActiveScheduleItem(item: StudentScheduleItem, now: number) {
+  if (item.status === 'Completed') return false;
+
+  const scheduledAt = getScheduleDateTime(item);
+  if (!scheduledAt) return true;
+
+  const durationMinutes = Number(item.durationMinutes);
+  const durationMs = Number.isFinite(durationMinutes) && durationMinutes > 0 ? durationMinutes * 60 * 1000 : 0;
+  return scheduledAt.getTime() + durationMs > now;
+}
+
+function countActiveScheduleItems(items: StudentScheduleItem[] | undefined, now: number) {
+  return (items ?? []).filter((item) => isActiveScheduleItem(item, now)).length;
+}
+
+function formatNavCount(count: number) {
+  return count > 99 ? '99+' : String(count);
+}
+
 export function AppShell({ navItems, portal }: AppShellProps) {
   const isLearnerShell = portal === 'student' || portal === 'guest';
   const portalLabel = isLearnerShell ? 'Student Portal' : 'Admin Portal';
@@ -93,6 +130,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   const [isNavOpen, setIsNavOpen] = useState(false);
   const [isAnnouncementOpen, setIsAnnouncementOpen] = useState(false);
   const [dismissedBannerId, setDismissedBannerId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const announcementMenuRef = useRef<HTMLDivElement | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
@@ -111,7 +149,13 @@ export function AppShell({ navItems, portal }: AppShellProps) {
       : filterAdminNavItems(navItems, adminProfileQuery.data?.role, adminProfileQuery.data?.permissions);
   const featureStatusMap = new Map((featureControlsQuery.data?.items ?? []).map((item) => [item.moduleId, item.status]));
   const announcementsEnabled = portal === 'student' && featureStatusMap.get('announcements') !== 'hide';
+  const certificatesEnabled = portal === 'student' && featureStatusMap.get('certificates') !== 'hide';
+  const scheduleEnabled = portal === 'student' && featureStatusMap.get('schedule') !== 'hide';
+  const doubtSessionsEnabled = portal === 'student' && featureStatusMap.get('doubt-sessions') !== 'hide';
   const announcementsQuery = useStudentAnnouncements({ activeOnly: true, enabled: announcementsEnabled, limit: 5, page: 1, priority: 'all' });
+  const certificateCountQuery = useStudentCertificates({ enabled: certificatesEnabled, limit: 1, page: 1 });
+  const workshopCountQuery = useStudentSchedule({ enabled: scheduleEnabled, includePast: true, limit: 500, page: 1, sessionType: 'workshop' });
+  const doubtSessionCountQuery = useStudentSchedule({ enabled: doubtSessionsEnabled, includePast: true, limit: 500, page: 1, sessionType: 'doubt_session' });
   const navSections = groupNavItems(visibleNavItems, portal);
   const activeNavItem = [...visibleNavItems]
     .sort((left, right) => right.path.length - left.path.length)
@@ -119,9 +163,28 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   const topbarTitle = activeNavItem?.label ?? workspaceLabel;
   const announcementItems = useMemo(() => sortAnnouncements(announcementsQuery.data?.items ?? []), [announcementsQuery.data?.items]);
   const activeAnnouncementCount = announcementsEnabled ? announcementsQuery.data?.total ?? 0 : 0;
+  const certificateCount = certificatesEnabled ? certificateCountQuery.data?.total ?? 0 : 0;
   const countLabel = activeAnnouncementCount > 99 ? '99+' : String(activeAnnouncementCount);
+  const activeWorkshopCount = useMemo(() => countActiveScheduleItems(workshopCountQuery.data?.items, now), [now, workshopCountQuery.data?.items]);
+  const activeDoubtSessionCount = useMemo(() => countActiveScheduleItems(doubtSessionCountQuery.data?.items, now), [doubtSessionCountQuery.data?.items, now]);
+  const navBadgeCounts = useMemo(
+    () => new Map([
+      ['schedule', activeWorkshopCount],
+      ['doubt-sessions', activeDoubtSessionCount],
+      ['certificates', certificateCount],
+      ['announcements', activeAnnouncementCount]
+    ]),
+    [activeAnnouncementCount, activeDoubtSessionCount, activeWorkshopCount, certificateCount]
+  );
   const bannerAnnouncement = announcementItems.find((item) => item.pinned || item.priority === 'urgent');
   const whatsappFeature = featureControlsQuery.data?.items.find((item) => item.moduleId === 'whatsapp-widget');
+
+  useEffect(() => {
+    if (portal !== 'student') return undefined;
+
+    const intervalId = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(intervalId);
+  }, [portal]);
 
   useEffect(() => {
     setIsAnnouncementOpen(false);
@@ -187,6 +250,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
               <div className="nav-section__items">
                 {section.items.map((item) => {
                   const Icon = item.icon;
+                  const navBadgeCount = portal === 'student' ? navBadgeCounts.get(item.moduleId) ?? 0 : 0;
 
                   return (
                     <NavLink
@@ -198,6 +262,11 @@ export function AppShell({ navItems, portal }: AppShellProps) {
                     >
                       <Icon size={18} />
                       <span>{item.label}</span>
+                      {navBadgeCount > 0 ? (
+                        <small className="nav-item__badge nav-item__badge--count" aria-label={`${navBadgeCount} active ${item.label}`}>
+                          {formatNavCount(navBadgeCount)}
+                        </small>
+                      ) : null}
                       {isLearnerShell && item.moduleId === 'career-readiness' ? <small className="nav-item__badge nav-item__badge--new">New</small> : null}
                       {portal === 'student' && featureStatusMap.get(item.moduleId) === 'upcoming' ? <small className="nav-item__badge">Soon</small> : null}
                     </NavLink>
