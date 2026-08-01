@@ -48,6 +48,22 @@ const PROJECT_SUBMISSION_DECLARATIONS = [
 
 const PROJECT_FEEDBACK_MIN_WORDS = 80;
 const CV_POINTS_TOOLKIT_ID = 'cv_points_approval';
+const MAX_LIVE_PROJECT_DAYS = 30;
+const CLUB_OPTIONS = [
+  'Marketing Club',
+  'Consulting Club',
+  'Finance/Economics Club',
+  'HR Club',
+  'Product Management Club',
+  'Analytics Club',
+  'Placement Cell',
+  'Academic Club',
+  'Management Club',
+  'Industry Relations Club',
+  'Alumni Cell',
+  'Public Relations',
+  'Other'
+] as const;
 
 type CvPointsContent = {
   accordions?: CvPointsSection[];
@@ -163,11 +179,16 @@ function compareDateInputs(left: string, right: string) {
   return new Date(`${left}T00:00:00.000Z`).getTime() - new Date(`${right}T00:00:00.000Z`).getTime();
 }
 
-function addMonthsInput(value: string, months: number) {
+function addDaysInput(value: string, days: number) {
   if (!isValidDateInput(value)) return '';
   const date = new Date(`${value}T00:00:00.000Z`);
-  date.setUTCMonth(date.getUTCMonth() + months);
+  date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+function totalProjectDays(startDate: string, endDate: string) {
+  if (!isValidDateInput(startDate) || !isValidDateInput(endDate)) return 0;
+  return Math.floor(compareDateInputs(endDate, startDate) / 86_400_000) + 1;
 }
 
 function todayInputValue() {
@@ -392,14 +413,20 @@ function ProjectSubmissionModal({
   onClose: () => void;
   onSubmit: (input: {
     cohortId: string;
+    collegeClubMember?: boolean;
+    collegeClubName?: string;
+    collegeClubOther?: string;
     declarationAccepted: boolean;
     declarationConfirmations: string[];
     durationConfirmed: boolean;
+    linkedinProfileId?: string;
+    liveProjectTotalDays?: number;
     projectEndDate: string;
     projectStartDate?: string;
     remarks?: string;
     studentFeedback: string;
     submissionLink: string;
+    wantsSkilledSapiensCollaboration?: boolean;
   }) => Promise<void>;
   project: StudentProject;
 }) {
@@ -408,14 +435,21 @@ function ProjectSubmissionModal({
   const [studentFeedback, setStudentFeedback] = useState('');
   const [projectEndDate, setProjectEndDate] = useState('');
   const [durationConfirmed, setDurationConfirmed] = useState(false);
+  const [linkedinProfileId, setLinkedinProfileId] = useState('');
+  const [clubMemberValue, setClubMemberValue] = useState('');
+  const [clubName, setClubName] = useState('');
+  const [clubOther, setClubOther] = useState('');
+  const [collaborationValue, setCollaborationValue] = useState('');
   const [checkedDeclarations, setCheckedDeclarations] = useState<string[]>([]);
   const [localError, setLocalError] = useState('');
   const selectedCohort = cohorts.find((cohort) => cohort.id === cohortId) ?? cohorts[0];
   const programLabels = projectProgramLabels(project, selectedCohort);
   const projectStartDate = project.studentProjectStartDate?.slice(0, 10) ?? '';
-  const maxProjectEndDate = addMonthsInput(projectStartDate, 1);
+  const maxProjectEndDate = addDaysInput(projectStartDate, MAX_LIVE_PROJECT_DAYS - 1);
   const todayEndDate = todayInputValue();
   const effectiveMaxProjectEndDate = earlierDateInput(maxProjectEndDate, todayEndDate);
+  const selectedTotalDays = totalProjectDays(projectStartDate, projectEndDate);
+  const isClubMember = clubMemberValue === 'yes';
   const allDeclarationsChecked = checkedDeclarations.length === PROJECT_SUBMISSION_DECLARATIONS.length;
   const feedbackWordCount = countWords(studentFeedback);
   const feedbackWordsRemaining = Math.max(PROJECT_FEEDBACK_MIN_WORDS - feedbackWordCount, 0);
@@ -436,8 +470,10 @@ function ProjectSubmissionModal({
       return "Future end dates are not allowed. Please select today's date or an earlier date within your allowed project duration.";
     }
     if (maxProjectEndDate && compareDateInputs(endDate, maxProjectEndDate) > 0) {
-      return 'Live project duration can be a maximum of 1 month. Please select an end date within 1 month of your onboarding date.';
+      return 'Maximum allowed live project duration is 30 days. Please select an end date within 30 days of your project start date.';
     }
+    const totalDays = totalProjectDays(projectStartDate, endDate);
+    if (totalDays > MAX_LIVE_PROJECT_DAYS) return 'Maximum allowed live project duration is 30 days.';
     return '';
   }
 
@@ -464,6 +500,22 @@ function ProjectSubmissionModal({
       setLocalError('Confirm that you understand your live project duration will be recorded from the start date to the selected end date.');
       return;
     }
+    if (!clubMemberValue) {
+      setLocalError('Select whether you are a member of any club or committee in your college.');
+      return;
+    }
+    if (isClubMember && !clubName) {
+      setLocalError('Select your club or committee name.');
+      return;
+    }
+    if (isClubMember && clubName === 'Other' && !clubOther.trim()) {
+      setLocalError('Enter your club or committee name.');
+      return;
+    }
+    if (isClubMember && !collaborationValue) {
+      setLocalError('Select whether you want to collaborate with Skilled Sapiens for events or club support.');
+      return;
+    }
     const durationError = validateProjectDuration(projectEndDate);
     if (durationError) {
       setLocalError(durationError);
@@ -471,14 +523,20 @@ function ProjectSubmissionModal({
     }
     await onSubmit({
       cohortId,
+      collegeClubMember: isClubMember,
+      collegeClubName: isClubMember ? clubName : undefined,
+      collegeClubOther: isClubMember && clubName === 'Other' ? clubOther.trim() : undefined,
       declarationAccepted: allDeclarationsChecked,
       declarationConfirmations: checkedDeclarations,
       durationConfirmed,
+      linkedinProfileId: linkedinProfileId.trim() || undefined,
+      liveProjectTotalDays: selectedTotalDays || undefined,
       projectEndDate,
       projectStartDate,
       remarks: undefined,
       studentFeedback,
-      submissionLink
+      submissionLink,
+      wantsSkilledSapiensCollaboration: isClubMember ? collaborationValue === 'yes' : undefined
     });
   }
 
@@ -549,6 +607,16 @@ function ProjectSubmissionModal({
             <input disabled={isSubmitting} onChange={(event) => setSubmissionLink(event.target.value)} placeholder="https://..." required type="url" value={submissionLink} />
           </label>
 
+          <label>
+            <span>Your LinkedIn Profile ID</span>
+            <input
+              disabled={isSubmitting}
+              onChange={(event) => setLinkedinProfileId(event.target.value)}
+              placeholder="LinkedIn profile URL or ID"
+              value={linkedinProfileId}
+            />
+          </label>
+
           <div className="live-project-duration-grid">
             <label>
               <span>Project start date *</span>
@@ -572,6 +640,20 @@ function ProjectSubmissionModal({
             </label>
           </div>
 
+          <div className="live-project-duration-note">
+            <strong>Total live project duration: {selectedTotalDays > 0 ? `${selectedTotalDays} ${selectedTotalDays === 1 ? 'day' : 'days'}` : 'Select an end date'}</strong>
+            <p>
+              Your live project duration will be calculated from your Project Start Date to the Project End Date selected above. If you submit your project report today,
+              the selected end date will be recorded as your final project completion date, and your total live project duration will be locked. This duration cannot be
+              changed later after submission.
+            </p>
+            <p>
+              If you want a longer duration shown on your certificate, such as 4 weeks, please submit your project report later, preferably during the 4th week of your
+              project, and select the correct project end date before submitting.
+            </p>
+            <p>Maximum allowed live project duration is 30 days.</p>
+          </div>
+
           <label className="live-project-declaration live-project-duration-confirmation">
             <input
               checked={durationConfirmed}
@@ -581,6 +663,58 @@ function ProjectSubmissionModal({
             />
             <span>I understand that my live project duration will be recorded from the project start date to the project end date selected above.</span>
           </label>
+
+          <div className="live-project-student-extra-grid">
+            <label>
+              <span>Are you a member of any club/committee in your college? *</span>
+              <select
+                disabled={isSubmitting}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setClubMemberValue(nextValue);
+                  if (nextValue !== 'yes') {
+                    setClubName('');
+                    setClubOther('');
+                    setCollaborationValue('');
+                  }
+                }}
+                required
+                value={clubMemberValue}
+              >
+                <option value="">Select</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </label>
+
+            {isClubMember ? (
+              <>
+                <label>
+                  <span>Which club/committee? *</span>
+                  <select disabled={isSubmitting} onChange={(event) => setClubName(event.target.value)} required value={clubName}>
+                    <option value="">Select club</option>
+                    {CLUB_OPTIONS.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
+                {clubName === 'Other' ? (
+                  <label>
+                    <span>Club/committee name *</span>
+                    <input disabled={isSubmitting} onChange={(event) => setClubOther(event.target.value)} required value={clubOther} />
+                  </label>
+                ) : null}
+                <label>
+                  <span>Do you want to collaborate with Skilled Sapiens for events/support needed for your club? *</span>
+                  <select disabled={isSubmitting} onChange={(event) => setCollaborationValue(event.target.value)} required value={collaborationValue}>
+                    <option value="">Select</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
+              </>
+            ) : null}
+          </div>
 
           <label>
             <span>Share your detailed project feedbacks *</span>

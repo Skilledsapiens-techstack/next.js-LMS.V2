@@ -404,6 +404,21 @@ type BulkAssignForm = {
   programNames: string[];
 };
 
+type BulkProfileEditForm = {
+  collegeName: string;
+  educationYear: string;
+  liveProjectDuration: string;
+  onboardingDate: string;
+  personalMentor: string;
+  updateCollegeName: boolean;
+  updateEducationYear: boolean;
+  updateLiveProjectDuration: boolean;
+  updateOnboardingDate: boolean;
+  updatePersonalMentor: boolean;
+  updateWaGroup: boolean;
+  waGroup: string;
+};
+
 type StudentImportAssignmentMode = 'add' | 'replace';
 type StudentImportEntryMode = 'file' | 'paste';
 type StudentImportProgress = {
@@ -1897,6 +1912,135 @@ function BulkAssignModal({
   );
 }
 
+function BulkProfileEditModal({
+  collegeOptions,
+  form,
+  onClose,
+  onSubmit,
+  selectedCount,
+  setForm,
+  submitting
+}: {
+  collegeOptions: string[];
+  form: BulkProfileEditForm;
+  onClose: () => void;
+  onSubmit: () => Promise<void>;
+  selectedCount: number;
+  setForm: (updater: (current: BulkProfileEditForm) => BulkProfileEditForm) => void;
+  submitting: boolean;
+}) {
+  const updateForm = <K extends keyof BulkProfileEditForm>(key: K, value: BulkProfileEditForm[K]) => {
+    setForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const hasSelectedFields =
+    form.updateEducationYear ||
+    form.updateCollegeName ||
+    form.updateOnboardingDate ||
+    form.updatePersonalMentor ||
+    form.updateLiveProjectDuration ||
+    form.updateWaGroup;
+
+  return (
+    <div className="student-modal-backdrop" role="presentation">
+      <section aria-labelledby="bulk-profile-edit-title" aria-modal="true" className="student-modal bulk-profile-edit-modal" role="dialog">
+        <header className="student-modal__header">
+          <div>
+            <span className="modal-eyebrow">Bulk edit</span>
+            <h2 id="bulk-profile-edit-title">Edit details for {selectedCount} students</h2>
+          </div>
+          <button aria-label="Close bulk edit" className="student-modal__icon-button" disabled={submitting} onClick={onClose} type="button">
+            <X size={26} />
+          </button>
+        </header>
+        <div className="student-modal__body">
+          <div className="form-banner">
+            Enable only the fields you want to change. Enabled fields with a blank value will be cleared for every selected student.
+          </div>
+          <div className="bulk-profile-edit-grid">
+            <label className="bulk-profile-edit-field">
+              <span>
+                <input checked={form.updateEducationYear} onChange={(event) => updateForm('updateEducationYear', event.target.checked)} type="checkbox" />
+                Education Year
+              </span>
+              <select disabled={!form.updateEducationYear} value={form.educationYear} onChange={(event) => updateForm('educationYear', event.target.value)}>
+                <option value="">Clear education year</option>
+                {educationYearOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="bulk-profile-edit-field">
+              <span>
+                <input checked={form.updateCollegeName} onChange={(event) => updateForm('updateCollegeName', event.target.checked)} type="checkbox" />
+                College
+              </span>
+              <input disabled={!form.updateCollegeName} list="bulk-college-options" value={form.collegeName} onChange={(event) => updateForm('collegeName', event.target.value)} placeholder="College name or blank to clear" type="text" />
+              <datalist id="bulk-college-options">
+                {collegeOptions.map((college) => (
+                  <option key={college} value={college} />
+                ))}
+              </datalist>
+            </label>
+            <label className="bulk-profile-edit-field">
+              <span>
+                <input checked={form.updateOnboardingDate} onChange={(event) => updateForm('updateOnboardingDate', event.target.checked)} type="checkbox" />
+                Onboarding Date
+              </span>
+              <input disabled={!form.updateOnboardingDate} value={form.onboardingDate} onChange={(event) => updateForm('onboardingDate', event.target.value)} type="date" />
+            </label>
+            <label className="bulk-profile-edit-field">
+              <span>
+                <input checked={form.updatePersonalMentor} onChange={(event) => updateForm('updatePersonalMentor', event.target.checked)} type="checkbox" />
+                Personal Mentor
+              </span>
+              <select disabled={!form.updatePersonalMentor} value={form.personalMentor} onChange={(event) => updateForm('personalMentor', event.target.value)}>
+                <option value="">Clear mentor value</option>
+                {personalMentorOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="bulk-profile-edit-field">
+              <span>
+                <input checked={form.updateLiveProjectDuration} onChange={(event) => updateForm('updateLiveProjectDuration', event.target.checked)} type="checkbox" />
+                Live Project Duration
+              </span>
+              <select disabled={!form.updateLiveProjectDuration} value={form.liveProjectDuration} onChange={(event) => updateForm('liveProjectDuration', event.target.value)}>
+                <option value="">Clear duration</option>
+                {liveProjectDurationOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="bulk-profile-edit-field">
+              <span>
+                <input checked={form.updateWaGroup} onChange={(event) => updateForm('updateWaGroup', event.target.checked)} type="checkbox" />
+                WA Group
+              </span>
+              <input disabled={!form.updateWaGroup} value={form.waGroup} onChange={(event) => updateForm('waGroup', event.target.value)} placeholder="WhatsApp group name or blank to clear" type="text" />
+            </label>
+          </div>
+        </div>
+        <footer className="student-modal__footer enroll-student-modal__footer">
+          <button className="segmented-button" disabled={submitting} onClick={onClose} type="button">
+            Cancel
+          </button>
+          <button className="segmented-button segmented-button--active" disabled={submitting || !hasSelectedFields} onClick={() => void onSubmit()} type="button">
+            {submitting ? 'Updating...' : 'Update Selected'}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 export function AdminStudentsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const page = asPositiveInteger(searchParams.get('page'), 1);
@@ -1927,6 +2071,21 @@ export function AdminStudentsPage() {
   const [importExistingEmails, setImportExistingEmails] = useState<Set<string>>(new Set());
   const [isBulkAssignOpen, setIsBulkAssignOpen] = useState(false);
   const [bulkAssignForm, setBulkAssignForm] = useState<BulkAssignForm>({ assignmentMode: 'add', cohortNames: [], programNames: [] });
+  const [isBulkProfileEditOpen, setIsBulkProfileEditOpen] = useState(false);
+  const [bulkProfileEditForm, setBulkProfileEditForm] = useState<BulkProfileEditForm>({
+    collegeName: '',
+    educationYear: '',
+    liveProjectDuration: '',
+    onboardingDate: '',
+    personalMentor: '',
+    updateCollegeName: false,
+    updateEducationYear: false,
+    updateLiveProjectDuration: false,
+    updateOnboardingDate: false,
+    updatePersonalMentor: false,
+    updateWaGroup: false,
+    waGroup: ''
+  });
 
   const adminProfileQuery = useAdminProfile();
   const adminRole = adminProfileQuery.data?.role;
@@ -2390,20 +2549,22 @@ export function AdminStudentsPage() {
   }
 
   async function runBulkUpdate(payload: Omit<AdminStudentsBulkPayload, 'studentIds'>, message: string) {
-    if (selectedStudentIds.length === 0) return;
+    if (selectedStudentIds.length === 0) return false;
     try {
       const result = await bulkUpdateStudents.mutateAsync({ ...payload, studentIds: selectedStudentIds });
       setActionMessage(`${message}: ${result.updated} updated${result.failed ? `, ${result.failed} failed` : ''}.`);
       setSelectedStudentIds([]);
+      return true;
     } catch (error) {
       setActionMessage(readableError(error, 'Bulk action failed.'));
+      return false;
     }
   }
 
   async function handleBulkAssign() {
     const selectedPrograms = programRecords.filter((program) => bulkAssignForm.programNames.includes(program.name));
     const selectedCohorts = cohortRecords.filter((cohort) => bulkAssignForm.cohortNames.includes(cohort.name));
-    await runBulkUpdate(
+    const updated = await runBulkUpdate(
       {
         cohortIds: selectedCohorts.map((cohort) => cohort.id),
         cohortNames: bulkAssignForm.cohortNames,
@@ -2413,8 +2574,39 @@ export function AdminStudentsPage() {
       },
       bulkAssignForm.assignmentMode === 'replace' ? 'Bulk replacement finished' : 'Bulk assignment finished'
     );
-    setBulkAssignForm({ assignmentMode: 'add', cohortNames: [], programNames: [] });
-    setIsBulkAssignOpen(false);
+    if (updated) {
+      setBulkAssignForm({ assignmentMode: 'add', cohortNames: [], programNames: [] });
+      setIsBulkAssignOpen(false);
+    }
+  }
+
+  async function handleBulkProfileEdit() {
+    const payload: Omit<AdminStudentsBulkPayload, 'studentIds'> = {};
+    if (bulkProfileEditForm.updateEducationYear) payload.educationYear = bulkProfileEditForm.educationYear || null;
+    if (bulkProfileEditForm.updateCollegeName) payload.collegeName = bulkProfileEditForm.collegeName || null;
+    if (bulkProfileEditForm.updateOnboardingDate) payload.onboardingDate = bulkProfileEditForm.onboardingDate || null;
+    if (bulkProfileEditForm.updatePersonalMentor) payload.personalMentor = bulkProfileEditForm.personalMentor || null;
+    if (bulkProfileEditForm.updateLiveProjectDuration) payload.liveProjectDuration = bulkProfileEditForm.liveProjectDuration || null;
+    if (bulkProfileEditForm.updateWaGroup) payload.waGroup = bulkProfileEditForm.waGroup || null;
+
+    const updated = await runBulkUpdate(payload, 'Bulk student details update finished');
+    if (updated) {
+      setBulkProfileEditForm({
+        collegeName: '',
+        educationYear: '',
+        liveProjectDuration: '',
+        onboardingDate: '',
+        personalMentor: '',
+        updateCollegeName: false,
+        updateEducationYear: false,
+        updateLiveProjectDuration: false,
+        updateOnboardingDate: false,
+        updatePersonalMentor: false,
+        updateWaGroup: false,
+        waGroup: ''
+      });
+      setIsBulkProfileEditOpen(false);
+    }
   }
 
   async function handleBackfillAuthLinks() {
@@ -2648,6 +2840,10 @@ export function AdminStudentsPage() {
               <button className="segmented-button" disabled={bulkUpdateStudents.isPending} onClick={() => setIsBulkAssignOpen(true)} type="button">
                 <Users size={16} />
                 Assign
+              </button>
+              <button className="segmented-button" disabled={bulkUpdateStudents.isPending} onClick={() => setIsBulkProfileEditOpen(true)} type="button">
+                <Pencil size={16} />
+                Bulk Edit
               </button>
               <button className="segmented-button" disabled={backfillAuthLinks.isPending} onClick={() => void handleBackfillAuthLinks()} type="button">
                 <Link2 size={16} />
@@ -2895,6 +3091,17 @@ export function AdminStudentsPage() {
           programOptions={programRecords}
           selectedCount={selectedCount}
           setForm={setBulkAssignForm}
+          submitting={bulkUpdateStudents.isPending}
+        />
+      ) : null}
+      {isBulkProfileEditOpen && canManageStudents ? (
+        <BulkProfileEditModal
+          collegeOptions={collegeOptions}
+          form={bulkProfileEditForm}
+          onClose={() => setIsBulkProfileEditOpen(false)}
+          onSubmit={handleBulkProfileEdit}
+          selectedCount={selectedCount}
+          setForm={setBulkProfileEditForm}
           submitting={bulkUpdateStudents.isPending}
         />
       ) : null}

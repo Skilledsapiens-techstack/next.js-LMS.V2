@@ -24,6 +24,7 @@ import {
   useAdminCertificates,
   useAdminCertificateProgramSettings,
   useGenerateAdminCertificatePdf,
+  useBulkIssueLiveProjectCertificates,
   useIssueLeadershipCertificates,
   useIssueLiveProjectCertificate,
   useIssueManualCertificate,
@@ -522,28 +523,58 @@ function FinalIssuanceModal({
 }
 
 function RequestQueue({
+  bulkEndDate,
+  bulkError,
+  bulkIssueDate,
+  bulkSendEmail,
   isLoading,
+  isBulkIssuing,
   items,
+  onBulkEndDateChange,
+  onBulkIssue,
+  onBulkIssueDateChange,
+  onBulkSendEmailChange,
   onClearSearch,
+  onClearSelected,
   onReject,
   onReview,
   onSearchInputChange,
   onSearchSubmit,
+  onSelectVisible,
+  onToggleRequest,
   searchInput,
   searchTerm,
+  selectedRequestIds,
   total
 }: {
+  bulkEndDate: string;
+  bulkError?: string;
+  bulkIssueDate: string;
+  bulkSendEmail: boolean;
   isLoading: boolean;
+  isBulkIssuing: boolean;
   items: AdminCertificateRequest[];
+  onBulkEndDateChange: (value: string) => void;
+  onBulkIssue: () => void;
+  onBulkIssueDateChange: (value: string) => void;
+  onBulkSendEmailChange: (value: boolean) => void;
   onClearSearch: () => void;
+  onClearSelected: () => void;
   onReject: (request: AdminCertificateRequest) => void;
   onReview: (request: AdminCertificateRequest) => void;
   onSearchInputChange: (value: string) => void;
   onSearchSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onSelectVisible: () => void;
+  onToggleRequest: (requestId: string) => void;
   searchInput: string;
   searchTerm: string;
+  selectedRequestIds: Set<string>;
   total: number;
 }) {
+  const selectableItems = items.filter((request) => Boolean(request.projectStartDate));
+  const selectedCount = selectedRequestIds.size;
+  const allVisibleSelected = selectableItems.length > 0 && selectableItems.every((request) => selectedRequestIds.has(request.id));
+
   return (
     <section className="certificate-section">
       <header className="certificate-section__header">
@@ -571,6 +602,42 @@ function RequestQueue({
           </form>
           <span>{total} matching</span>
         </div>
+        {items.length > 0 ? (
+          <div className="certificate-request-bulkbar">
+            <div className="certificate-request-bulkbar__header">
+              <label className="certificate-checkbox">
+                <input checked={allVisibleSelected} disabled={selectableItems.length === 0 || isBulkIssuing} onChange={onSelectVisible} type="checkbox" />
+                <span>Select visible requests</span>
+              </label>
+              <span>
+                {selectedCount} selected · {selectableItems.length} can bulk issue
+              </span>
+            </div>
+            <div className="certificate-request-bulkbar__fields">
+              <label className="certificate-field">
+                <span>Bulk project end date *</span>
+                <input disabled={isBulkIssuing} max={todayInputValue()} onChange={(event) => onBulkEndDateChange(event.target.value)} required type="date" value={bulkEndDate} />
+              </label>
+              <label className="certificate-field">
+                <span>Issue date *</span>
+                <input disabled={isBulkIssuing} max={todayInputValue()} onChange={(event) => onBulkIssueDateChange(event.target.value)} required type="date" value={bulkIssueDate} />
+              </label>
+              <label className="certificate-checkbox certificate-checkbox--inline">
+                <input checked={bulkSendEmail} disabled={isBulkIssuing} onChange={(event) => onBulkSendEmailChange(event.target.checked)} type="checkbox" />
+                <span>Send certificate email after PDF generation</span>
+              </label>
+            </div>
+            {bulkError ? <p className="admin-submission-message admin-submission-message--error">{bulkError}</p> : null}
+            <div className="certificate-request-bulkbar__actions">
+              <button className="segmented-button" disabled={selectedCount === 0 || isBulkIssuing} onClick={onClearSelected} type="button">
+                Clear selected
+              </button>
+              <button className="button-primary" disabled={selectedCount === 0 || !bulkEndDate || !bulkIssueDate || isBulkIssuing} onClick={onBulkIssue} type="button">
+                {isBulkIssuing ? 'Issuing...' : `Issue ${selectedCount || ''} selected certificate${selectedCount === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          </div>
+        ) : null}
         {isLoading ? <p className="certificate-muted">Loading live project certificate requests.</p> : null}
         {!isLoading && items.length === 0 ? (
           <div className="certificate-empty-inline">
@@ -584,7 +651,16 @@ function RequestQueue({
         {items.length > 0 ? (
           <div className="certificate-request-list">
             {items.map((request) => (
-              <article className="certificate-request-card" key={request.id}>
+              <article className="certificate-request-card certificate-request-card--selectable" key={request.id}>
+                <label className="certificate-request-card__selector">
+                  <input
+                    checked={selectedRequestIds.has(request.id)}
+                    disabled={!request.projectStartDate || isBulkIssuing}
+                    onChange={() => onToggleRequest(request.id)}
+                    type="checkbox"
+                  />
+                  <span className="sr-only">Select {request.studentName}</span>
+                </label>
                 <div>
                   <h3>
                     {request.requestId} · {request.studentName}
@@ -595,6 +671,8 @@ function RequestQueue({
                   <p>
                     {request.programKey ?? 'No program'} · {request.cohortName ?? 'No cohort'} · {formatDate(request.submittedAt)}
                   </p>
+                  {request.liveProjectTotalDays ? <p>Total duration submitted: {request.liveProjectTotalDays} days</p> : null}
+                  {!request.projectStartDate ? <p className="certificate-request-warning">Project start date missing. Use Review & Issue for this request.</p> : null}
                   <div className="chip-row">
                     <StatusBadge tone={statusTone(request.moderatorStatus)}>{formatOption(request.moderatorStatus)}</StatusBadge>
                     <StatusBadge tone={statusTone(request.adminStatus)}>{formatOption(request.adminStatus)}</StatusBadge>
@@ -1113,6 +1191,10 @@ export function AdminCertificatesPage() {
   const [manualDuplicateOverride, setManualDuplicateOverride] = useState(false);
   const [requestToReject, setRequestToReject] = useState<AdminCertificateRequest | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [selectedLiveProjectRequestIds, setSelectedLiveProjectRequestIds] = useState<Set<string>>(new Set());
+  const [bulkLiveProjectEndDate, setBulkLiveProjectEndDate] = useState(todayInputValue());
+  const [bulkLiveProjectIssueDate, setBulkLiveProjectIssueDate] = useState(todayInputValue());
+  const [bulkLiveProjectSendEmail, setBulkLiveProjectSendEmail] = useState(true);
 
   const adminProfileQuery = useAdminProfile();
   const adminRole = adminProfileQuery.data?.role;
@@ -1141,6 +1223,7 @@ export function AdminCertificatesPage() {
   });
   const certificateSettingsQuery = useAdminCertificateProgramSettings();
   const issueCertificateMutation = useIssueLiveProjectCertificate();
+  const bulkIssueLiveProjectMutation = useBulkIssueLiveProjectCertificates();
   const rejectCertificateRequestMutation = useRejectLiveProjectCertificateRequest();
   const resolveCertificateReviewItemMutation = useResolveAdminCertificateReviewItem();
   const issueLeadershipMutation = useIssueLeadershipCertificates();
@@ -1262,6 +1345,7 @@ export function AdminCertificatesPage() {
   const allFilteredStudentsSelected = selectableFilteredEligibleStudents.length > 0 && selectableFilteredEligibleStudents.every((student) => selectedStudentIds.has(student.id));
   const selectedStudentCountExceedsBatchLimit = selectedStudentIds.size > leadershipCertificateBatchLimit;
   const manualStudentOptions = manualStudentsQuery.data?.items ?? [];
+  const liveProjectCertificateRequests = requestsQuery.data?.items ?? [];
 
   useEffect(() => {
     if (selectedStudentIds.size === 0) return;
@@ -1280,6 +1364,22 @@ export function AdminCertificatesPage() {
       return changed ? next : current;
     });
   }, [eligibleStudents, leadershipEligibilityByStudentId, selectedStudentIds.size]);
+
+  useEffect(() => {
+    if (selectedLiveProjectRequestIds.size === 0) return;
+    const visibleRequestIds = new Set(liveProjectCertificateRequests.map((request) => request.id));
+    setSelectedLiveProjectRequestIds((current) => {
+      const next = new Set(current);
+      let changed = false;
+      current.forEach((requestId) => {
+        if (!visibleRequestIds.has(requestId)) {
+          next.delete(requestId);
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, [liveProjectCertificateRequests, selectedLiveProjectRequestIds.size]);
   const certificates = certificatesQuery.data;
   const totalPages = certificates?.totalPages ?? 1;
   const visibleCertificateTabs = useMemo(() => (canIssueCertificates ? certificateTabs : certificateTabs.filter((tab) => tab.id === 'issued')), [canIssueCertificates]);
@@ -1389,6 +1489,47 @@ export function AdminCertificatesPage() {
     const result = await issueCertificateMutation.mutateAsync(input);
     setCertificateMessage(result.message);
     setSelectedRequest(null);
+  }
+
+  function toggleLiveProjectRequest(requestId: string) {
+    setSelectedLiveProjectRequestIds((current) => {
+      const next = new Set(current);
+      if (next.has(requestId)) {
+        next.delete(requestId);
+      } else {
+        next.add(requestId);
+      }
+      return next;
+    });
+  }
+
+  function selectVisibleLiveProjectRequests() {
+    const selectableIds = liveProjectCertificateRequests.filter((request) => Boolean(request.projectStartDate)).map((request) => request.id);
+    setSelectedLiveProjectRequestIds((current) => {
+      const everyVisibleSelected = selectableIds.length > 0 && selectableIds.every((requestId) => current.has(requestId));
+      const next = new Set(current);
+      if (everyVisibleSelected) {
+        selectableIds.forEach((requestId) => next.delete(requestId));
+      } else {
+        selectableIds.forEach((requestId) => next.add(requestId));
+      }
+      return next;
+    });
+  }
+
+  async function handleBulkIssueLiveProjectCertificates() {
+    const result = await bulkIssueLiveProjectMutation.mutateAsync({
+      endDate: bulkLiveProjectEndDate,
+      issueDate: bulkLiveProjectIssueDate,
+      requestIds: [...selectedLiveProjectRequestIds],
+      sendEmail: bulkLiveProjectSendEmail
+    });
+    const failedPreview = result.failed
+      .slice(0, 3)
+      .map((item) => `${item.requestId}: ${item.error}`)
+      .join(' | ');
+    setCertificateMessage(`${result.message}${failedPreview ? ` Failed: ${failedPreview}${result.failed.length > 3 ? ` | +${result.failed.length - 3} more` : ''}` : ''}`);
+    if (result.certificates.length > 0) setSelectedLiveProjectRequestIds(new Set());
   }
 
   async function handleIssueLeadershipCertificates(event: FormEvent<HTMLFormElement>) {
@@ -1739,15 +1880,28 @@ export function AdminCertificatesPage() {
 
       {activeTab === 'live-projects' && canIssueCertificates ? (
         <RequestQueue
+          bulkEndDate={bulkLiveProjectEndDate}
+          bulkError={bulkIssueLiveProjectMutation.isError ? bulkIssueLiveProjectMutation.error.message : undefined}
+          bulkIssueDate={bulkLiveProjectIssueDate}
+          bulkSendEmail={bulkLiveProjectSendEmail}
           isLoading={requestsQuery.isLoading}
-          items={requestsQuery.data?.items ?? []}
+          isBulkIssuing={bulkIssueLiveProjectMutation.isPending}
+          items={liveProjectCertificateRequests}
+          onBulkEndDateChange={setBulkLiveProjectEndDate}
+          onBulkIssue={handleBulkIssueLiveProjectCertificates}
+          onBulkIssueDateChange={setBulkLiveProjectIssueDate}
+          onBulkSendEmailChange={setBulkLiveProjectSendEmail}
           onClearSearch={clearRequestSearch}
+          onClearSelected={() => setSelectedLiveProjectRequestIds(new Set())}
           onReject={openRejectCertificateRequest}
           onReview={setSelectedRequest}
           onSearchInputChange={setRequestSearchInput}
           onSearchSubmit={handleRequestSearch}
+          onSelectVisible={selectVisibleLiveProjectRequests}
+          onToggleRequest={toggleLiveProjectRequest}
           searchInput={requestSearchInput}
           searchTerm={requestSearch}
+          selectedRequestIds={selectedLiveProjectRequestIds}
           total={requestsQuery.data?.total ?? 0}
         />
       ) : null}

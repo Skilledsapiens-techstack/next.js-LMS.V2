@@ -77,6 +77,7 @@ export const adminNavItems: NavItem[] = [
   { label: 'Enrollments', path: '/admin/enrollments', moduleId: 'enrollments', icon: Ticket, mode: 'read-only' },
   { label: 'Admin Users', path: '/admin/admin-users', moduleId: 'admin-users', icon: UserCog, mode: 'write' },
   { label: 'Community', path: '/admin/community', moduleId: 'community', icon: MessageCircle, mode: 'read-only' },
+  { label: 'WhatsApp Groups', path: '/admin/whatsapp-groups', moduleId: 'whatsapp-groups', icon: MessageCircle, mode: 'write' },
   { label: 'Announcements', path: '/admin/announcements', moduleId: 'announcements', icon: Megaphone, mode: 'read-only' },
   { label: 'Support', path: '/admin/support', moduleId: 'support', icon: HelpCircle, mode: 'write' },
   { label: 'Email Centre', path: '/admin/email-center', moduleId: 'email-center', icon: Mail, mode: 'write' },

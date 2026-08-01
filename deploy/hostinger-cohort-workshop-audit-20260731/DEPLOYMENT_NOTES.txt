@@ -1,0 +1,19 @@
+Hostinger deployment package
+
+Package: hostinger-cohort-workshop-audit-20260731
+Build date: 2026-07-31
+
+Included changes:
+- Cohort cards use live student, workshop, and resource counts.
+- Cohort details default sorting stays oldest first.
+- Cohort detail modal removes the unused Student View tab.
+- Cohort detail modal adds Workshops audit grouped in sequence:
+  1. Induction & Live Project Overview
+  2. Core Modules
+  3. Placement Mentorship
+  4. Other Workshops
+- Workshop audit rows no longer show duration metadata.
+
+Upload instructions:
+- Upload the contents of this folder to Hostinger public_html.
+- Keep the included .htaccess file at the public_html root.
