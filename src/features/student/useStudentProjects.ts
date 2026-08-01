@@ -39,6 +39,7 @@ export type StudentProject = {
   programName?: string;
   projectRole?: string;
   roleId?: string;
+  liveProjectRoles?: string[];
   tasks: StudentProjectTask[];
   title: string;
   updatedAt?: string;

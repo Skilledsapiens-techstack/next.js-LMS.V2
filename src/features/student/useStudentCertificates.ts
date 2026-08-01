@@ -39,6 +39,7 @@ export type StudentCertificatePdfResult = {
 
 export type StudentCertificatesQuery = {
   certificateType?: StudentCertificateType | 'all';
+  enabled?: boolean;
   generationStatus?: StudentCertificateGenerationStatus | 'all';
   limit?: number;
   page?: number;
@@ -56,7 +57,7 @@ export function useStudentCertificates(query: StudentCertificatesQuery) {
   const status = query.status ?? 'all';
 
   return useQuery({
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && query.enabled !== false,
     queryFn: () =>
       apiGet<PaginatedResponse<StudentCertificate>>('/students/me/certificates', {
         accessToken: accessToken ?? undefined,

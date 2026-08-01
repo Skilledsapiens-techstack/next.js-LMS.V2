@@ -1,0 +1,20 @@
+Hostinger deployment package
+
+Package: hostinger-live-project-required-fields-20260801
+Build date: 2026-08-01
+
+Included frontend changes:
+- Live project submission form now marks required fields with *.
+- LinkedIn profile field is mandatory.
+- LinkedIn profile value must be a valid LinkedIn profile URL, for example:
+  https://www.linkedin.com/in/your-profile
+- API validation also rejects blank or invalid LinkedIn profile links.
+
+Previously applied Supabase certificate email changes are still included in this build:
+- Certificate email variables in Email Center.
+- Certificate subject variable labels.
+- Certificate rich-text HTML rendering fix.
+
+Upload instructions:
+- Upload the contents of this folder to Hostinger public_html.
+- Keep the included .htaccess file at the public_html root.

@@ -23,6 +23,7 @@ import {
   useUpdateAdminWhatsAppTemplate,
   WhatsAppStatus
 } from '../features/admin/useAdminWhatsApp';
+import { nextSortState, sortRows, SortState } from '../lib/sortUtils';
 
 type GroupFormState = {
   cohortName: string;
@@ -59,6 +60,8 @@ type ComposerState = {
 };
 
 type MessageFormatAction = 'bold' | 'italic' | 'bullet' | 'numbered' | 'lineBreak';
+type WhatsAppDirectorySortKey = 'group' | 'cohort' | 'program' | 'status' | 'links' | 'actions';
+type WhatsAppLogSortKey = 'message' | 'group' | 'category' | 'sentBy' | 'sentAt';
 
 const emptyGroupForm: GroupFormState = {
   cohortName: '',
@@ -249,7 +252,9 @@ export function AdminWhatsAppGroupsPage() {
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [composer, setComposer] = useState<ComposerState>(emptyComposer);
   const [directorySearch, setDirectorySearch] = useState('');
+  const [directorySort, setDirectorySort] = useState<SortState<WhatsAppDirectorySortKey> | null>(null);
   const [bulkTargetsSearch, setBulkTargetsSearch] = useState('');
+  const [logSort, setLogSort] = useState<SortState<WhatsAppLogSortKey> | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -290,6 +295,30 @@ export function AdminWhatsAppGroupsPage() {
       ].some((value) => String(value ?? '').toLowerCase().includes(normalizedDirectorySearch))
     );
   }, [groups, normalizedDirectorySearch]);
+  const sortedDirectoryGroups = useMemo(
+    () =>
+      sortRows(directoryGroups, directorySort, (group, key) => {
+        if (key === 'group') return group.groupName;
+        if (key === 'cohort') return group.cohortName;
+        if (key === 'program') return group.programName;
+        if (key === 'status') return group.status;
+        if (key === 'links') return [group.inviteLink ? 'invite' : '', group.directChatLink ? 'direct' : ''].join(' ');
+        return '';
+      }),
+    [directoryGroups, directorySort]
+  );
+  const sortedLogs = useMemo(
+    () =>
+      sortRows(logs, logSort, (log, key) => {
+        if (key === 'message') return `${log.messageTitle} ${log.messageBody}`;
+        if (key === 'group') return `${log.groupName} ${log.cohortName ?? ''} ${log.programName ?? ''}`;
+        if (key === 'category') return categoryName(categories, log.categoryId);
+        if (key === 'sentBy') return log.sentBy;
+        if (key === 'sentAt') return log.sentAt;
+        return '';
+      }),
+    [categories, logs, logSort]
+  );
   const cohortsWithGroups = new Set(groups.map((group) => group.cohortName).filter(Boolean));
   const missingCohortGroupRecords = cohortOptions.filter((cohort) => cohort.waGroupName && !cohortsWithGroups.has(cohort.name));
   const groupsMissingLinks = groups.filter((group) => !group.inviteLink && !group.directChatLink);
@@ -513,6 +542,38 @@ export function AdminWhatsAppGroupsPage() {
     } catch (syncError) {
       setError(readableError(syncError, 'Cohort WhatsApp groups could not be synced.'));
     }
+  }
+
+  function renderDirectorySortHeader(label: string, key: WhatsAppDirectorySortKey) {
+    const isActive = directorySort?.key === key;
+    return (
+      <button
+        aria-label={`Sort by ${label}`}
+        aria-sort={isActive ? (directorySort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+        className={`data-sort-button ${isActive ? 'data-sort-button--active' : ''}`}
+        onClick={() => setDirectorySort((current) => nextSortState(current, key))}
+        type="button"
+      >
+        <span>{label}</span>
+        <span aria-hidden="true">{isActive ? (directorySort.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+      </button>
+    );
+  }
+
+  function renderLogSortHeader(label: string, key: WhatsAppLogSortKey) {
+    const isActive = logSort?.key === key;
+    return (
+      <button
+        aria-label={`Sort by ${label}`}
+        aria-sort={isActive ? (logSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+        className={`data-sort-button ${isActive ? 'data-sort-button--active' : ''}`}
+        onClick={() => setLogSort((current) => nextSortState(current, key))}
+        type="button"
+      >
+        <span>{label}</span>
+        <span aria-hidden="true">{isActive ? (logSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+      </button>
+    );
   }
 
   return (
@@ -754,7 +815,7 @@ export function AdminWhatsAppGroupsPage() {
         </div>
         {groups.length === 0 ? (
           <EmptyState />
-        ) : directoryGroups.length === 0 ? (
+        ) : sortedDirectoryGroups.length === 0 ? (
           <div className="whatsapp-admin-directory-empty">
             <span className="section-eyebrow">No matching groups</span>
             <h3>No WhatsApp groups found</h3>
@@ -765,16 +826,16 @@ export function AdminWhatsAppGroupsPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Group</th>
-                  <th>Cohort</th>
-                  <th>Program</th>
-                  <th>Status</th>
-                  <th>Links</th>
-                  <th>Actions</th>
+                  <th>{renderDirectorySortHeader('Group', 'group')}</th>
+                  <th>{renderDirectorySortHeader('Cohort', 'cohort')}</th>
+                  <th>{renderDirectorySortHeader('Program', 'program')}</th>
+                  <th>{renderDirectorySortHeader('Status', 'status')}</th>
+                  <th>{renderDirectorySortHeader('Links', 'links')}</th>
+                  <th>{renderDirectorySortHeader('Actions', 'actions')}</th>
                 </tr>
               </thead>
               <tbody>
-                {directoryGroups.map((group) => (
+                {sortedDirectoryGroups.map((group) => (
                   <tr key={group.id}>
                     <td>
                       <strong>{group.groupName}</strong>
@@ -898,15 +959,15 @@ export function AdminWhatsAppGroupsPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Message</th>
-                  <th>Group</th>
-                  <th>Category</th>
-                  <th>Sent By</th>
-                  <th>Sent At</th>
+                  <th>{renderLogSortHeader('Message', 'message')}</th>
+                  <th>{renderLogSortHeader('Group', 'group')}</th>
+                  <th>{renderLogSortHeader('Category', 'category')}</th>
+                  <th>{renderLogSortHeader('Sent By', 'sentBy')}</th>
+                  <th>{renderLogSortHeader('Sent At', 'sentAt')}</th>
                 </tr>
               </thead>
               <tbody>
-                {logs.map((log) => (
+                {sortedLogs.map((log) => (
                   <tr key={log.id}>
                     <td><strong>{log.messageTitle}</strong><span>{log.messageBody}</span></td>
                     <td>{log.groupName}<span>{log.cohortName || log.programName || ''}</span></td>

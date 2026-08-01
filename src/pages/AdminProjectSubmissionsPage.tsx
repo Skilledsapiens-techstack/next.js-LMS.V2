@@ -12,6 +12,7 @@ import {
   useAdminProjectSubmissions,
   useReviewAdminProjectSubmission
 } from '../features/admin/useAdminProjectSubmissions';
+import { nextSortState, sortRows, SortState } from '../lib/sortUtils';
 
 const statusOptions: AdminProjectSubmissionStatusFilter[] = ['pending', 'duplicates', 'approved', 'changes_requested', 'rejected', 'submitted', 'under_review', 'all'];
 
@@ -61,12 +62,39 @@ function formatDate(value: string | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(undefined, { day: '2-digit', hour: '2-digit', minute: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function formatDateOnly(value: string | undefined) {
+  if (!value) return '-';
+  const date = new Date(`${value.slice(0, 10)}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 function formatStatus(value: string) {
   return value.replace(/_/g, ' ');
 }
 
 function reviewable(item: AdminProjectSubmission) {
   return item.status === 'submitted' || item.status === 'under_review';
+}
+
+function yesNo(value: boolean | null | undefined) {
+  if (value === undefined || value === null) return '-';
+  return value ? 'Yes' : 'No';
+}
+
+function safeUrl(value: string | undefined) {
+  if (!value) return '';
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : '';
+  } catch {
+    return '';
+  }
+}
+
+function uniqueLabels(values: Array<string | undefined>) {
+  return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))).sort((left, right) =>
+    left.localeCompare(right, undefined, { sensitivity: 'base' })
+  );
 }
 
 export function AdminProjectSubmissionsPage() {
@@ -79,9 +107,11 @@ export function AdminProjectSubmissionsPage() {
   const cohortName = searchParams.get('cohortName')?.trim() ?? '';
   const submittedDate = searchParams.get('submittedDate')?.trim().slice(0, 10) ?? '';
   const [searchInput, setSearchInput] = useState(search);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const submissionsQuery = useAdminProjectSubmissions({ cohortName, page, programKey, roleId, search, status, submittedDate });
+  const detailedSubmissionsQuery = useAdminProjectSubmissions({ cohortName, limit: 500, page: 1, programKey, roleId, search, status, submittedDate });
   const programsQuery = useAdminPrograms({ limit: 200, status: 'all' });
   const rolesQuery = useAdminProjectRoles({ limit: 200, status: 'all' });
   const cohortsQuery = useAdminCohorts({ limit: 300, status: 'all' });
@@ -97,6 +127,20 @@ export function AdminProjectSubmissionsPage() {
   useEffect(() => {
     setSelectedIds((current) => current.filter((id) => selectableIds.includes(id)));
   }, [selectableIds]);
+
+  useEffect(() => {
+    if (!detailsOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setDetailsOpen(false);
+    }
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [detailsOpen]);
 
   function setParam(key: string, value: string) {
     const next = new URLSearchParams(searchParams);
@@ -185,9 +229,14 @@ export function AdminProjectSubmissionsPage() {
   return (
     <div className="admin-submission-page">
       <section className="admin-submission-shell">
-        <header className="admin-panel-header">
-          <span className="section-eyebrow">Submission Management</span>
-          <h1>Project Submission Requests</h1>
+        <header className="admin-panel-header admin-panel-header--with-action">
+          <div>
+            <span className="section-eyebrow">Submission Management</span>
+            <h1>Project Submission Requests</h1>
+          </div>
+          <button className="segmented-button admin-submission-detail-cta" onClick={() => setDetailsOpen(true)} type="button">
+            Check Detailed Response
+          </button>
         </header>
 
         <div className="admin-submission-body">
@@ -302,6 +351,207 @@ export function AdminProjectSubmissionsPage() {
           <span className="pagination-link pagination-link--disabled">Next page</span>
         )}
       </nav>
+
+      {detailsOpen ? (
+        <DetailedResponsesOverlay
+          isLoading={detailedSubmissionsQuery.isLoading}
+          items={detailedSubmissionsQuery.data?.items ?? []}
+          onClose={() => setDetailsOpen(false)}
+          total={detailedSubmissionsQuery.data?.total ?? 0}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function DetailedResponsesOverlay({
+  isLoading,
+  items,
+  onClose,
+  total
+}: {
+  isLoading: boolean;
+  items: AdminProjectSubmission[];
+  onClose: () => void;
+  total: number;
+}) {
+  const [sort, setSort] = useState<SortState | null>(null);
+  const [collegeFilter, setCollegeFilter] = useState('all');
+  const [roleFilter, setRoleFilter] = useState('all');
+  const [clubMemberFilter, setClubMemberFilter] = useState('all');
+  const [collaborationFilter, setCollaborationFilter] = useState('all');
+  const originalIndexById = useMemo(() => new Map(items.map((item, index) => [item.id, index + 1])), [items]);
+  const detailColumns = useMemo(
+    () => [
+      { key: 'serialNumber', label: 'S. No', value: (item: AdminProjectSubmission) => originalIndexById.get(item.id) ?? 0 },
+      { key: 'studentName', label: 'Student Name', value: (item: AdminProjectSubmission) => item.studentName || item.studentEmail },
+      { key: 'collegeName', label: 'College Name', value: (item: AdminProjectSubmission) => item.collegeName },
+      { key: 'roleName', label: 'Live Project Role', value: (item: AdminProjectSubmission) => item.roleName || item.roleId },
+      { key: 'submissionLink', label: 'Report link', value: (item: AdminProjectSubmission) => item.submissionLink },
+      { key: 'linkedinProfileId', label: 'LinkedIn link', value: (item: AdminProjectSubmission) => item.linkedinProfileId },
+      { key: 'projectStartDate', label: 'Start date', value: (item: AdminProjectSubmission) => item.projectStartDate },
+      { key: 'projectEndDate', label: 'End date', value: (item: AdminProjectSubmission) => item.projectEndDate },
+      { key: 'liveProjectTotalDays', label: 'Total Duration(In days)', value: (item: AdminProjectSubmission) => item.liveProjectTotalDays },
+      { key: 'studentFeedback', label: 'Student feedback - Wrapped version', value: (item: AdminProjectSubmission) => item.studentFeedback },
+      { key: 'collegeClubMember', label: 'Club member', value: (item: AdminProjectSubmission) => yesNo(item.collegeClubMember) },
+      { key: 'collegeClubName', label: 'Club name', value: (item: AdminProjectSubmission) => item.collegeClubName },
+      { key: 'collegeClubOther', label: 'Other club details', value: (item: AdminProjectSubmission) => item.collegeClubOther },
+      { key: 'wantsSkilledSapiensCollaboration', label: 'Wants collaboration', value: (item: AdminProjectSubmission) => yesNo(item.wantsSkilledSapiensCollaboration) },
+      { key: 'skilledSapiensSupportDetails', label: 'Support needed', value: (item: AdminProjectSubmission) => item.skilledSapiensSupportDetails }
+    ],
+    [originalIndexById]
+  );
+  const collegeOptions = useMemo(() => uniqueLabels(items.map((item) => item.collegeName)), [items]);
+  const roleOptions = useMemo(() => uniqueLabels(items.map((item) => item.roleName || item.roleId)), [items]);
+  const filteredItems = useMemo(
+    () =>
+      items.filter((item) => {
+        const collegeMatches = collegeFilter === 'all' || (item.collegeName || '') === collegeFilter;
+        const roleMatches = roleFilter === 'all' || (item.roleName || item.roleId || '') === roleFilter;
+        const clubMatches =
+          clubMemberFilter === 'all' ||
+          (clubMemberFilter === 'yes' && item.collegeClubMember === true) ||
+          (clubMemberFilter === 'no' && item.collegeClubMember === false);
+        const collaborationMatches =
+          collaborationFilter === 'all' ||
+          (collaborationFilter === 'yes' && item.wantsSkilledSapiensCollaboration === true) ||
+          (collaborationFilter === 'no' && item.wantsSkilledSapiensCollaboration === false);
+        return collegeMatches && roleMatches && clubMatches && collaborationMatches;
+      }),
+    [clubMemberFilter, collaborationFilter, collegeFilter, items, roleFilter]
+  );
+  const sortedItems = useMemo(
+    () => sortRows(filteredItems, sort, (item, key) => detailColumns.find((column) => column.key === key)?.value(item)),
+    [detailColumns, filteredItems, sort]
+  );
+
+  return (
+    <div aria-modal="true" className="admin-submission-detail-overlay" role="dialog">
+      <div className="admin-submission-detail-modal">
+        <header className="admin-submission-detail-header">
+          <div>
+            <span className="section-eyebrow">Detailed Response</span>
+            <h2>Live Project Submission Responses</h2>
+            <p>
+              Showing {sortedItems.length} of {total} matching response{total === 1 ? '' : 's'}.
+            </p>
+          </div>
+          <button aria-label="Close detailed response table" className="icon-button" onClick={onClose} type="button">
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="admin-submission-detail-filters" aria-label="Detailed response filters">
+          <label>
+            <span>College</span>
+            <select value={collegeFilter} onChange={(event) => setCollegeFilter(event.target.value)}>
+              <option value="all">All colleges</option>
+              {collegeOptions.map((college) => (
+                <option key={college} value={college}>
+                  {college}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Role</span>
+            <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
+              <option value="all">All roles</option>
+              {roleOptions.map((role) => (
+                <option key={role} value={role}>
+                  {role}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Club member</span>
+            <select value={clubMemberFilter} onChange={(event) => setClubMemberFilter(event.target.value)}>
+              <option value="all">All</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </label>
+          <label>
+            <span>Wants Collab</span>
+            <select value={collaborationFilter} onChange={(event) => setCollaborationFilter(event.target.value)}>
+              <option value="all">All</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="admin-submission-detail-table-wrap">
+          {isLoading ? (
+            <LoadingState />
+          ) : sortedItems.length > 0 ? (
+            <table className="admin-submission-detail-table">
+              <thead>
+                <tr>
+                  {detailColumns.map((column) => (
+                    <th key={column.key}>
+                      <button
+                        aria-label={`Sort by ${column.label}`}
+                        aria-sort={sort?.key === column.key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+                        className={`data-sort-button ${sort?.key === column.key ? 'data-sort-button--active' : ''}`}
+                        onClick={() => setSort((current) => nextSortState(current, column.key))}
+                        type="button"
+                      >
+                        <span>{column.label}</span>
+                        <span aria-hidden="true">{sort?.key === column.key ? (sort.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+                      </button>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sortedItems.map((item, index) => {
+                  const reportUrl = safeUrl(item.submissionLink);
+                  const linkedinUrl = safeUrl(item.linkedinProfileId);
+                  return (
+                    <tr key={item.id}>
+                      <td>{index + 1}</td>
+                      <td>{item.studentName || item.studentEmail || '-'}</td>
+                      <td>{item.collegeName || '-'}</td>
+                      <td>{item.roleName || item.roleId || '-'}</td>
+                      <td>
+                        {reportUrl ? (
+                          <a href={reportUrl} rel="noreferrer" target="_blank">
+                            Open report
+                          </a>
+                        ) : (
+                          '-'
+                        )}
+                      </td>
+                      <td>
+                        {linkedinUrl ? (
+                          <a href={linkedinUrl} rel="noreferrer" target="_blank">
+                            Open LinkedIn
+                          </a>
+                        ) : (
+                          item.linkedinProfileId || '-'
+                        )}
+                      </td>
+                      <td>{formatDateOnly(item.projectStartDate)}</td>
+                      <td>{formatDateOnly(item.projectEndDate)}</td>
+                      <td>{item.liveProjectTotalDays ?? '-'}</td>
+                      <td className="admin-submission-detail-feedback">{item.studentFeedback || '-'}</td>
+                      <td>{yesNo(item.collegeClubMember)}</td>
+                      <td>{item.collegeClubName || '-'}</td>
+                      <td>{item.collegeClubOther || '-'}</td>
+                      <td>{yesNo(item.wantsSkilledSapiensCollaboration)}</td>
+                      <td>{item.skilledSapiensSupportDetails || '-'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <EmptyState />
+          )}
+        </div>
+      </div>
     </div>
   );
 }

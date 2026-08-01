@@ -28,6 +28,7 @@ export type StudentProjectSubmission = {
   roleName?: string;
   projectEndDate?: string;
   projectStartDate?: string;
+  skilledSapiensSupportDetails?: string;
   status: StudentProjectSubmissionStatus;
   studentFeedback?: string;
   submissionLink?: string;
@@ -49,6 +50,7 @@ export type StudentProjectSubmissionInput = {
   projectEndDate: string;
   projectStartDate?: string;
   remarks?: string;
+  skilledSapiensSupportDetails?: string;
   studentFeedback: string;
   submissionLink: string;
   wantsSkilledSapiensCollaboration?: boolean;

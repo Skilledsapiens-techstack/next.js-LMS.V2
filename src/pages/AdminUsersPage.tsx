@@ -5,8 +5,10 @@ import { PageHeader } from '../components/PageHeader';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { StatusBadge } from '../components/StatusBadge';
 import { AdminUser, AdminUserRole, AdminUserSavePayload, AdminUserStatus, useAdminUsers, useDeactivateAdminUser, useSaveAdminUser } from '../features/admin/useAdminUsers';
+import { nextSortState, sortRows, SortState } from '../lib/sortUtils';
 
 type Draft = AdminUserSavePayload;
+type AdminUserSortKey = 'account' | 'role' | 'status' | 'updated' | 'modules' | 'actions';
 
 const roleOptions: Array<{ description: string; label: string; value: AdminUserRole }> = [
   { description: 'Full LMS control, including roles and protected settings.', label: 'Super Admin', value: 'super_admin' },
@@ -61,7 +63,24 @@ export function AdminUsersPage() {
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [notice, setNotice] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
   const [editingEmail, setEditingEmail] = useState<string | null>(null);
+  const [adminSort, setAdminSort] = useState<SortState<AdminUserSortKey> | null>(null);
   const admins = adminsQuery.data?.admins ?? [];
+  const sortedAdmins = useMemo(
+    () =>
+      sortRows(admins, adminSort, (admin, key) => {
+        if (key === 'account') return `${admin.fullName || ''} ${admin.email}`;
+        if (key === 'role') return roleLabel(admin.role);
+        if (key === 'status') return admin.status;
+        if (key === 'updated') return admin.updatedAt ?? admin.createdAt;
+        if (key === 'modules') {
+          return admin.role === 'super_admin'
+            ? Number.MAX_SAFE_INTEGER
+            : ADMIN_PERMISSION_MODULES.filter((module) => module.permissions.every((permission) => (admin.permissions ?? ROLE_PERMISSIONS[admin.role]).includes(permission))).length;
+        }
+        return '';
+      }),
+    [adminSort, admins]
+  );
   const summary = useMemo(
     () => ({
       active: admins.filter((admin) => admin.status === 'active').length,
@@ -70,6 +89,22 @@ export function AdminUsersPage() {
     }),
     [admins]
   );
+
+  function renderSortHeader(label: string, key: AdminUserSortKey) {
+    const isActive = adminSort?.key === key;
+    return (
+      <button
+        aria-label={`Sort by ${label}`}
+        aria-sort={isActive ? (adminSort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}
+        className={`data-sort-button ${isActive ? 'data-sort-button--active' : ''}`}
+        onClick={() => setAdminSort((current) => nextSortState(current, key))}
+        type="button"
+      >
+        <span>{label}</span>
+        <span aria-hidden="true">{isActive ? (adminSort.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+      </button>
+    );
+  }
 
   function patchDraft(patch: Partial<Draft>) {
     setDraft((current) => ({ ...current, ...patch }));
@@ -267,16 +302,16 @@ export function AdminUsersPage() {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Account</th>
-                    <th>Role</th>
-                    <th>Status</th>
-                    <th>Updated</th>
-                    <th>Modules</th>
-                    <th>Actions</th>
+                    <th>{renderSortHeader('Account', 'account')}</th>
+                    <th>{renderSortHeader('Role', 'role')}</th>
+                    <th>{renderSortHeader('Status', 'status')}</th>
+                    <th>{renderSortHeader('Updated', 'updated')}</th>
+                    <th>{renderSortHeader('Modules', 'modules')}</th>
+                    <th>{renderSortHeader('Actions', 'actions')}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {admins.map((admin) => (
+                  {sortedAdmins.map((admin) => (
                     <tr key={admin.id}>
                       <td>
                         <strong>{admin.fullName || admin.email}</strong>

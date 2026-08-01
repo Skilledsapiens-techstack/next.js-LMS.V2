@@ -1,0 +1,17 @@
+Hostinger deployment package - 2026-08-02
+
+Build command:
+npm run build
+
+Package contents:
+- Production Vite build from dist/
+- .htaccess for SPA routing on Hostinger
+
+Included UI/API changes:
+- Live project submission popup copy/layout updates.
+- Live Project Domain shown instead of Tagged programs.
+- Detailed response admin table, filters, sorting, and layout fixes.
+- Certificate email template variable/subject updates from this change set.
+
+Database note:
+- The Supabase migration for skilled_sapiens_support_details has already been pushed and verified on the remote database.
