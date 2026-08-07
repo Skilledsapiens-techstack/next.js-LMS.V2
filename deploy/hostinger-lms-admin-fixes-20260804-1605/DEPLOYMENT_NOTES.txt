@@ -1,0 +1,15 @@
+Package: hostinger-lms-admin-fixes-20260804-1605
+Date: 04 Aug 2026
+
+Included updates:
+- Admin Feature Control stale Watch Recordings copy cleanup for My Programs Training.
+- Clearer certificate issue summary when PDF/email delivery needs admin attention.
+- Grouped Missing Recording Helper rows with expandable audience details and bulk selection support.
+
+Verification completed before packaging:
+- npm run lint
+- npm run build
+- npm test -- --runInBand
+
+Deployment:
+Upload the contents of this folder, or the zip package, to the Hostinger public_html root for the LMS frontend.

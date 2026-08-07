@@ -7,14 +7,17 @@ import {
   FeatureControl,
   FeatureControlStatus,
   RecordingPlaybackMode,
+  RecordingViewMode,
   getFeatureMessage,
   getRecordingPlaybackMode,
+  getRecordingViewMode,
   useAdminFeatureControls,
   useUpdateAdminFeatureControl
 } from '../features/useFeatureControls';
 
 type DraftFeature = {
   recordingPlaybackMode: RecordingPlaybackMode;
+  recordingViewMode: RecordingViewMode;
   status: FeatureControlStatus;
   upcomingMessage: string;
   whatsappNumber: string;
@@ -25,6 +28,7 @@ const statusOptions: Array<{ description: string; label: string; value: FeatureC
   { description: 'Visible in navigation, opens a coming-soon page.', label: 'Upcoming', value: 'upcoming' },
   { description: 'Hidden from navigation and blocked on direct URL.', label: 'Hide', value: 'hide' }
 ];
+const myProgramsTrainingUpcomingMessage = 'My Programs Training will be available after your training sessions are published.';
 
 function formatDate(value: string | undefined) {
   if (!value) return 'Not updated yet';
@@ -50,6 +54,16 @@ function isWhatsAppWidget(item: FeatureControl) {
 
 function isRecordingsFeature(item: FeatureControl) {
   return item.moduleId === 'recordings';
+}
+
+function featureControlDisplayLabel(item: FeatureControl) {
+  return isRecordingsFeature(item) ? 'My Programs Training' : item.studentLabel;
+}
+
+function normalizeFeatureControlMessage(item: FeatureControl, value: string | null | undefined) {
+  const message = value ?? '';
+  if (!isRecordingsFeature(item)) return message;
+  return /watch recordings/i.test(message) ? myProgramsTrainingUpcomingMessage : message;
 }
 
 function isEmailServiceFeature(item: FeatureControl) {
@@ -79,8 +93,9 @@ function buildDrafts(items: FeatureControl[]) {
       item.id,
       {
         recordingPlaybackMode: getRecordingPlaybackMode(item),
+        recordingViewMode: getRecordingViewMode(item),
         status: item.status,
-        upcomingMessage: item.upcomingMessage ?? '',
+        upcomingMessage: normalizeFeatureControlMessage(item, item.upcomingMessage),
         whatsappNumber: getWhatsAppNumber(item)
       }
     ])
@@ -91,7 +106,8 @@ function isDirty(item: FeatureControl, draft?: DraftFeature) {
   if (!draft) return false;
   const numberChanged = isWhatsAppWidget(item) && getWhatsAppNumber(item) !== draft.whatsappNumber.trim();
   const playbackModeChanged = isRecordingsFeature(item) && getRecordingPlaybackMode(item) !== draft.recordingPlaybackMode;
-  return item.status !== draft.status || (item.upcomingMessage ?? '') !== draft.upcomingMessage.trim() || numberChanged || playbackModeChanged;
+  const recordingViewChanged = isRecordingsFeature(item) && getRecordingViewMode(item) !== draft.recordingViewMode;
+  return item.status !== draft.status || (item.upcomingMessage ?? '') !== draft.upcomingMessage.trim() || numberChanged || playbackModeChanged || recordingViewChanged;
 }
 
 export function AdminFeatureControlPage() {
@@ -122,7 +138,7 @@ export function AdminFeatureControlPage() {
     setDrafts((current) => ({
       ...current,
       [id]: {
-        ...(current[id] ?? { status: 'show', upcomingMessage: '', whatsappNumber: '' }),
+        ...(current[id] ?? { recordingPlaybackMode: 'external', recordingViewMode: 'classic', status: 'show', upcomingMessage: '', whatsappNumber: '' }),
         ...patch
       }
     }));
@@ -152,7 +168,8 @@ export function AdminFeatureControlPage() {
             ? {
                 settings: {
                   ...(item.settings ?? {}),
-                  recording_playback_mode: draft.recordingPlaybackMode
+                  recording_playback_mode: draft.recordingPlaybackMode,
+                  recording_view_mode: draft.recordingViewMode
                 }
               }
             : {})
@@ -243,6 +260,7 @@ export function AdminFeatureControlPage() {
               const isEmailService = isEmailServiceFeature(item);
               const draft = drafts[item.id] ?? {
                 recordingPlaybackMode: getRecordingPlaybackMode(item),
+                recordingViewMode: getRecordingViewMode(item),
                 status: item.status,
                 upcomingMessage: item.upcomingMessage ?? '',
                 whatsappNumber: getWhatsAppNumber(item)
@@ -258,8 +276,7 @@ export function AdminFeatureControlPage() {
                   <div className="feature-control-row__module">
                     <div className="feature-control-row__icon">{isEmailService ? <Mail size={17} /> : item.isCore ? <LockKeyhole size={17} /> : statusIcon(item.status)}</div>
                     <div>
-                      <h2>{item.studentLabel}</h2>
-                      <p>{item.studentPath}</p>
+                      <h2>{featureControlDisplayLabel(item)}</h2>
                       <div className="chip-row">
                         <StatusBadge tone={statusTone(item.status)}>{item.status}</StatusBadge>
                         {item.isCore ? <StatusBadge>Core module</StatusBadge> : null}
@@ -267,55 +284,67 @@ export function AdminFeatureControlPage() {
                     </div>
                   </div>
 
-                  <label className="feature-control-field">
-                    Status
-                    <select disabled={item.isCore || isSaving} value={draft.status} onChange={(event) => updateDraft(item.id, { status: event.target.value as FeatureControlStatus })}>
-                      {statusOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <span>{getStatusDescription(item, draft.status)}</span>
-                  </label>
-
-                  <label className="feature-control-field feature-control-field--message">
-                    {isWidget ? 'Widget help text' : isEmailService ? 'Paused message' : 'Upcoming message'}
-                    <textarea
-                      disabled={item.isCore || isSaving}
-                      maxLength={500}
-                      onChange={(event) => updateDraft(item.id, { upcomingMessage: event.target.value })}
-                      placeholder={getFeatureMessage({ moduleId: item.moduleId, studentLabel: item.studentLabel, upcomingMessage: null })}
-                      value={draft.upcomingMessage}
-                    />
-                  </label>
-
-                  {isWidget ? (
-                    <label className="feature-control-field feature-control-field--phone">
-                      WhatsApp number
-                      <input
-                        aria-invalid={draft.status === 'show' && !normalizeWhatsAppNumber(draft.whatsappNumber)}
-                        disabled={isSaving}
-                        inputMode="tel"
-                        maxLength={24}
-                        onChange={(event) => updateDraft(item.id, { whatsappNumber: event.target.value })}
-                        placeholder="+91 98765 43210"
-                        value={draft.whatsappNumber}
-                      />
-                      <span>Required when status is Show. Include country code; students will open this number from the bottom-right portal widget.</span>
-                    </label>
-                  ) : null}
-
-                  {isRecordings ? (
-                    <label className="feature-control-field feature-control-field--playback">
-                      Recording playback mode
-                      <select disabled={isSaving} value={draft.recordingPlaybackMode} onChange={(event) => updateDraft(item.id, { recordingPlaybackMode: event.target.value as RecordingPlaybackMode })}>
-                        <option value="external">Open YouTube / external link</option>
-                        <option value="popup">In-portal popup player</option>
+                  <div className="feature-control-row__controls">
+                    <label className="feature-control-field">
+                      Status
+                      <select disabled={item.isCore || isSaving} value={draft.status} onChange={(event) => updateDraft(item.id, { status: event.target.value as FeatureControlStatus })}>
+                        {statusOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
                       </select>
-                      <span>Global setting for all student recording links. Non-YouTube URLs will still open externally.</span>
+                      <span>{getStatusDescription(item, draft.status)}</span>
                     </label>
-                  ) : null}
+
+                    <label className="feature-control-field feature-control-field--message">
+                      {isWidget ? 'Widget help text' : isEmailService ? 'Paused message' : 'Upcoming message'}
+                      <textarea
+                        disabled={item.isCore || isSaving}
+                        maxLength={500}
+                        onChange={(event) => updateDraft(item.id, { upcomingMessage: event.target.value })}
+                        placeholder={isRecordings ? myProgramsTrainingUpcomingMessage : getFeatureMessage({ moduleId: item.moduleId, studentLabel: item.studentLabel, upcomingMessage: null })}
+                        value={draft.upcomingMessage}
+                      />
+                    </label>
+
+                    {isWidget ? (
+                      <label className="feature-control-field feature-control-field--phone">
+                        WhatsApp number
+                        <input
+                          aria-invalid={draft.status === 'show' && !normalizeWhatsAppNumber(draft.whatsappNumber)}
+                          disabled={isSaving}
+                          inputMode="tel"
+                          maxLength={24}
+                          onChange={(event) => updateDraft(item.id, { whatsappNumber: event.target.value })}
+                          placeholder="+91 98765 43210"
+                          value={draft.whatsappNumber}
+                        />
+                        <span>Required when status is Show. Include country code; students will open this number from the bottom-right portal widget.</span>
+                      </label>
+                    ) : null}
+
+                    {isRecordings ? (
+                      <>
+                        <label className="feature-control-field feature-control-field--playback">
+                          My Programs Training View
+                          <select disabled={isSaving} value={draft.recordingViewMode} onChange={(event) => updateDraft(item.id, { recordingViewMode: event.target.value as RecordingViewMode })}>
+                            <option value="classic">Classic</option>
+                            <option value="modern">Modern</option>
+                          </select>
+                          <span>Global My Programs training layout for all students. Classic keeps the current screen; Modern shows program cards and an LMS player.</span>
+                        </label>
+                        <label className="feature-control-field feature-control-field--playback">
+                          Recording playback mode
+                          <select disabled={isSaving} value={draft.recordingPlaybackMode} onChange={(event) => updateDraft(item.id, { recordingPlaybackMode: event.target.value as RecordingPlaybackMode })}>
+                            <option value="external">Open YouTube / external link</option>
+                            <option value="popup">In-portal popup player</option>
+                          </select>
+                          <span>Used by Classic view. Modern view embeds YouTube recordings inside the LMS.</span>
+                        </label>
+                      </>
+                    ) : null}
+                  </div>
 
                   <div className="feature-control-row__meta">
                     <span>Updated</span>

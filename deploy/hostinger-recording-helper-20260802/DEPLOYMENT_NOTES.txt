@@ -1,0 +1,16 @@
+Hostinger deployment package: Recording Helper updates
+
+Generated: 2026-08-02
+
+Upload the contents of this folder to Hostinger public_html.
+
+Important backend step:
+- Deploy the Supabase Edge Function `zoom-meetings` after uploading the frontend.
+- This release updates `supabase/functions/zoom-meetings/index.ts` so the missing recording helper can create completed custom workshop rows directly when an earlier sequence workshop is missing.
+
+Included frontend changes:
+- Admin missing recording helper ignores inactive cohorts.
+- Missing recording helper is expandable.
+- Each missing sequence is shown as a separate row.
+- Add link CTA is available from the helper, including when no completed workshop exists yet.
+- Row text in the helper uses normal font weight.

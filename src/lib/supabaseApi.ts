@@ -89,6 +89,7 @@ const ADMIN_READ_PERMISSIONS_BY_PATH: Record<string, AdminPermission> = {
   '/admins/projects': 'admin.projects.view',
   '/admins/recording-candidates': 'admin.recordings.view',
   '/admins/recording-sequences': 'admin.recordings.view',
+  '/admins/resource-domains': 'admin.resources.view',
   '/admins/resources': 'admin.resources.view',
   '/admins/student-audit-logs': 'admin.observability.view',
   '/admins/student-roster-snapshots': 'admin.students.manage',
@@ -241,12 +242,21 @@ const RESOURCE_WRITE_COLUMNS = new Set([
   'payment_link',
   'price',
   'program_keys',
+  'resource_domain_key',
   'resource_id',
   'resource_mode',
   'resource_type',
   'status',
   'title',
   'url'
+]);
+
+const RESOURCE_DOMAIN_WRITE_COLUMNS = new Set([
+  'description',
+  'domain_key',
+  'label',
+  'sort_order',
+  'status'
 ]);
 
 const PROGRAM_WRITE_COLUMNS = new Set([
@@ -613,8 +623,15 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   },
   '/admins/resources': {
     table: 'resources',
-    searchColumns: ['title', 'resource_type', 'resource_mode', 'domain_key'],
+    filterColumns: { resourceDomainKey: 'resource_domain_key' },
+    searchColumns: ['title', 'resource_type', 'resource_mode', 'domain_key', 'resource_domain_key'],
     sortColumns: { newest: { column: 'updated_at', ascending: false }, title: { column: 'title', ascending: true } }
+  },
+  '/admins/resource-domains': {
+    table: 'resource_domains',
+    filterColumns: { status: 'status' },
+    searchColumns: ['label', 'domain_key', 'description'],
+    sortColumns: { order: { column: 'sort_order', ascending: true }, label: { column: 'label', ascending: true } }
   },
   '/admins/students': {
     table: 'students',
@@ -679,6 +696,12 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     normalizeBody: normalizeResourceWriteBody,
     table: 'resources',
     validateBody: validateResourceWriteBody
+  },
+  resource_domains: {
+    columns: RESOURCE_DOMAIN_WRITE_COLUMNS,
+    normalizeBody: normalizeResourceDomainWriteBody,
+    table: 'resource_domains',
+    validateBody: validateResourceDomainWriteBody
   },
   programs: {
     columns: PROGRAM_WRITE_COLUMNS,
@@ -843,6 +866,7 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/students/me/project-toolkit') return getStudentProjectToolkit(context, options.query) as Promise<TResponse>;
 
   if (cleanPath === '/students/me/resources') return getStudentResourcesList(context, options.query) as Promise<TResponse>;
+  if (cleanPath === '/students/me/resource-domains') return getStudentResourceDomainOptions(context, options.query) as Promise<TResponse>;
 
   if (cleanPath === '/admins/students/college-options') return getAdminStudentCollegeOptions(context) as Promise<TResponse>;
 
@@ -992,6 +1016,9 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
 
   const resourceUpdate = cleanPath.match(/^\/admins\/resources\/([^/]+)$/);
   if (resourceUpdate) return updateById(context, 'resources', decodeURIComponent(resourceUpdate[1]), options.body, 'updated') as Promise<TResponse>;
+
+  const resourceDomainUpdate = cleanPath.match(/^\/admins\/resource-domains\/([^/]+)$/);
+  if (resourceDomainUpdate) return updateById(context, 'resource_domains', decodeURIComponent(resourceDomainUpdate[1]), options.body, 'updated') as Promise<TResponse>;
 
   const careerReadinessStatus = cleanPath.match(/^\/admins\/career-readiness-content\/([^/]+)\/status$/);
   if (careerReadinessStatus) {
@@ -1171,6 +1198,7 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/cohorts') return insertRow(context, 'cohorts', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/workshops') return insertRow(context, 'workshops', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/resources') return insertRow(context, 'resources', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/resource-domains') return insertRow(context, 'resource_domains', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/career-readiness-content') {
     return insertRow(
       context,
@@ -1323,6 +1351,7 @@ function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'pos
   if (path === '/admins/recording-sequences' || path.match(/^\/admins\/recording-sequences\/[^/]+/)) return 'admin.recordings.manage';
   if (path.match(/^\/admins\/recordings\/[^/]+\/resources$/)) return 'admin.recordings.manage';
   if (path === '/admins/workshops' || path.match(/^\/admins\/workshops\/[^/]+/)) return 'admin.meetings.manage';
+  if (path === '/admins/resource-domains' || path.match(/^\/admins\/resource-domains\/[^/]+/)) return 'admin.resources.manage';
   if (path === '/admins/resources' || path.match(/^\/admins\/resources\/[^/]+/)) return 'admin.resources.manage';
   if (path === '/admins/announcements' || path.match(/^\/admins\/announcements\/[^/]+/)) return 'admin.announcements.manage';
   if (path === '/admins/email-templates' || path.match(/^\/admins\/email-templates\/[^/]+/)) return 'admin.email.manage';
@@ -1399,7 +1428,7 @@ async function getStudentProfile(context: Awaited<ReturnType<typeof createContex
   const { data, error } = await context.supabase
     .from('students')
     .select('*')
-    .or(`auth_user_id.eq.${context.userId},email.eq.${context.email}`)
+    .or(`auth_user_id.eq.${context.userId},email.eq.${context.email},alt_email.eq.${context.email}`)
     .limit(2);
 
   if (error) throw new ApiClientError(error.message, 503);
@@ -1407,7 +1436,7 @@ async function getStudentProfile(context: Awaited<ReturnType<typeof createContex
   const row = chooseIdentityRow(data, context);
   if (!row) throw new ApiClientError('No student profile is linked to this Supabase user.', 404);
   if (row.active === false) throw new ApiClientError('Student profile is inactive.', 403);
-  if (!row.auth_user_id && row.id && normalizeEmail(row.email) === context.email) {
+  if (!row.auth_user_id && row.id && [row.email, row.alt_email].some((email) => normalizeEmail(email) === context.email)) {
     void context.supabase
       .from('students')
       .update({ auth_user_id: context.userId, updated_at: new Date().toISOString() })
@@ -2304,9 +2333,14 @@ async function getStudentRecordingProgress(context: Awaited<ReturnType<typeof cr
   const studentId = String(student.id ?? '').trim();
   if (!studentId) throw new ApiClientError('Student profile is unavailable.', 404);
 
-  const recordingIds = uniqueStrings(splitCommaValues(query?.recordingIds ?? query?.recording_ids).slice(0, 500))
+  const requestedRecordingIds = uniqueStrings(splitCommaValues(query?.recordingIds ?? query?.recording_ids).slice(0, 500))
     .map((recordingId) => recordingId.trim())
     .filter(Boolean);
+  const recordingIds = requestedRecordingIds.filter((recordingId) => UUID_VALUE_PATTERN.test(recordingId));
+
+  if (requestedRecordingIds.length > 0 && recordingIds.length === 0) {
+    return { items: [] };
+  }
 
   let request = context.supabase
     .from('student_recording_progress')
@@ -2341,10 +2375,29 @@ function isStudentRecordingCompletable(recording: unknown) {
   return Boolean(recordingUrl) && recording.locked !== true && recording.hasAccess !== false;
 }
 
+const UUID_VALUE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function studentRecordingIdentityValues(recording: Record<string, unknown>) {
+  return uniqueStrings([
+    recording.id,
+    recording.workshopUuid,
+    recording.workshop_uuid,
+    recording.workshopId,
+    recording.workshop_id
+  ].map((value) => String(value ?? '').trim()).filter(Boolean));
+}
+
+function getStudentRecordingCanonicalId(recording: Record<string, unknown>, fallback: string) {
+  const canonicalId = studentRecordingIdentityValues(recording).find((value) => UUID_VALUE_PATTERN.test(value));
+  if (canonicalId) return canonicalId;
+  if (UUID_VALUE_PATTERN.test(fallback)) return fallback;
+  throw new ApiClientError('Recording cannot be marked complete because its workshop ID is unavailable.', 503);
+}
+
 async function ensureStudentCanCompleteRecording(context: Awaited<ReturnType<typeof createContext>>, recordingId: string) {
   const list = await getStudentRecordingsList(context, { limit: 500, page: 1 });
   const items = Array.isArray(list.items) ? list.items : [];
-  const recording = items.find((item) => isRecord(item) && String(item.id ?? item.workshopId ?? item.workshop_id ?? '') === recordingId);
+  const recording = items.find((item): item is Record<string, unknown> => isRecord(item) && studentRecordingIdentityValues(item).includes(recordingId));
   if (!recording) throw new ApiClientError('Recording is not visible to this student.', 404);
   if (!isStudentRecordingCompletable(recording)) throw new ApiClientError('Only accessible recordings can be marked complete.', 403);
   return recording;
@@ -2357,13 +2410,14 @@ async function markStudentRecordingComplete(context: Awaited<ReturnType<typeof c
   const student = (await getStudentProfile(context)) as Record<string, unknown>;
   const studentId = String(student.id ?? '').trim();
   if (!studentId) throw new ApiClientError('Student profile is unavailable.', 404);
-  await ensureStudentCanCompleteRecording(context, cleanRecordingId);
+  const recording = await ensureStudentCanCompleteRecording(context, cleanRecordingId);
+  const canonicalRecordingId = getStudentRecordingCanonicalId(recording, cleanRecordingId);
 
   const { data: existing, error: existingError } = await context.supabase
     .from('student_recording_progress')
     .select('recording_id,completed_at')
     .eq('student_id', studentId)
-    .eq('recording_id', cleanRecordingId)
+    .eq('recording_id', canonicalRecordingId)
     .maybeSingle();
 
   if (existingError) {
@@ -2386,7 +2440,7 @@ async function markStudentRecordingComplete(context: Awaited<ReturnType<typeof c
     .insert(
       {
         completed_at: now,
-        recording_id: cleanRecordingId,
+        recording_id: canonicalRecordingId,
         student_id: studentId,
         updated_at: now
       }
@@ -2403,7 +2457,7 @@ async function markStudentRecordingComplete(context: Awaited<ReturnType<typeof c
         .from('student_recording_progress')
         .select('recording_id,completed_at')
         .eq('student_id', studentId)
-        .eq('recording_id', cleanRecordingId)
+        .eq('recording_id', canonicalRecordingId)
         .single();
       if (!completedError && completed) {
         return {
@@ -2823,7 +2877,54 @@ async function getStudentResourcesList(context: Awaited<ReturnType<typeof create
   return { ...createPaginatedResponse(filtered.slice(start, start + limit), filtered.length, page, limit), summary };
 }
 
+async function getStudentResourceDomainOptions(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const filterQuery = { ...(query ?? {}) };
+  delete filterQuery.page;
+  delete filterQuery.limit;
+  delete filterQuery.resourceDomainKey;
+  delete filterQuery.search;
+
+  const data = await callRpc(context, 'student_resources_view', { p_student_email: context.email });
+  const visibleResources = extractItems(data, ['resources', 'items'])
+    .map(enrichRow)
+    .map(camelize)
+    .filter((item) => matchesClientFilters(item, filterQuery));
+  const domainCounts = summarizeStudentResources(visibleResources).domainCounts;
+  const activeDomainKeys = Object.keys(domainCounts).filter((key) => domainCounts[key] > 0);
+  if (activeDomainKeys.length === 0) return [];
+
+  const { data: domains, error } = await context.supabase
+    .from('resource_domains')
+    .select('id, domain_key, label, description, sort_order, status')
+    .eq('status', 'active')
+    .in('domain_key', activeDomainKeys)
+    .order('sort_order', { ascending: true })
+    .order('label', { ascending: true });
+
+  if (error) throw new ApiClientError(error.message, 503);
+  const knownDomains = new Set((domains ?? []).map((domain) => String(domain.domain_key)));
+  const fallbackDomains = activeDomainKeys
+    .filter((domainKey) => !knownDomains.has(domainKey))
+    .map((domainKey, index) => ({
+      description: null,
+      domain_key: domainKey,
+      id: domainKey,
+      label: formatResourceDomainFallbackLabel(domainKey),
+      sort_order: 10_000 + index,
+      status: 'active'
+    }));
+
+  return [...(domains ?? []), ...fallbackDomains].map((domain) => {
+    const camelizedDomain = camelize(domain);
+    return {
+      ...(isRecord(camelizedDomain) ? camelizedDomain : {}),
+      count: domainCounts[String(domain.domain_key)] ?? 0
+    };
+  });
+}
+
 function summarizeStudentResources(items: unknown[]) {
+  const domainCounts: Record<string, number> = {};
   const typeCounts: Record<string, number> = {};
   const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
   let available = 0;
@@ -2836,6 +2937,7 @@ function summarizeStudentResources(items: unknown[]) {
     if (!isRecord(item)) return;
     const isLocked = item.locked === true;
     const accessType = String(item.accessType ?? item.access_type ?? '');
+    const resourceDomainKey = String(item.resourceDomainKey ?? item.resource_domain_key ?? '').trim();
     const resourceType = String(item.resourceType ?? item.resource_type ?? 'general') || 'general';
     const updatedAt = typeof item.updatedAt === 'string' ? item.updatedAt : typeof item.updated_at === 'string' ? item.updated_at : '';
     const updatedTime = updatedAt ? new Date(updatedAt).getTime() : Number.NaN;
@@ -2845,10 +2947,19 @@ function summarizeStudentResources(items: unknown[]) {
     if (accessType === 'paid') paid += 1;
     if (accessType !== 'paid') free += 1;
     if (!Number.isNaN(updatedTime) && updatedTime >= oneWeekAgo) recentlyAdded += 1;
+    if (resourceDomainKey) domainCounts[resourceDomainKey] = (domainCounts[resourceDomainKey] ?? 0) + 1;
     typeCounts[resourceType] = (typeCounts[resourceType] ?? 0) + 1;
   });
 
-  return { available, free, locked, paid, recentlyAdded, typeCounts };
+  return { available, domainCounts, free, locked, paid, recentlyAdded, typeCounts };
+}
+
+function formatResourceDomainFallbackLabel(value: string) {
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 async function getRpcList(context: Awaited<ReturnType<typeof createContext>>, endpoint: { functionName: string; section?: string[] }, query: ApiClientOptions['query']) {
@@ -4751,10 +4862,13 @@ async function issueLiveProjectCertificate(context: Awaited<ReturnType<typeof cr
   });
 
   const generationMessage = await triggerCertificateGeneration(context, [String(data.id)], sendEmail);
+  const needsAttention = certificateDeliveryNeedsAttention(generationMessage);
 
   return {
     certificate: camelize(enrichRow(data)),
-    message: `${certificateId} issued.${generationMessage ? ` ${generationMessage}` : ''}`
+    message: needsAttention
+      ? `${certificateId} issued, but PDF delivery needs attention.${generationMessage ? ` ${generationMessage}` : ''}`
+      : `${certificateId} issued.${generationMessage ? ` ${generationMessage}` : ''}`
   };
 }
 
@@ -4810,10 +4924,15 @@ async function bulkIssueLiveProjectCertificates(context: Awaited<ReturnType<type
     }
   }
 
+  const deliverySummary = await summarizeIssuedCertificateDelivery(context, certificates, sendEmail);
+  const needsAttention = failed.length > 0 || certificateDeliveryNeedsAttention(deliverySummary);
+
   return {
     certificates,
     failed,
-    message: `${certificates.length} live project certificate${certificates.length === 1 ? '' : 's'} issued.${failed.length ? ` ${failed.length} failed.` : ''}`
+    message: needsAttention
+      ? `${certificates.length} live project certificate row${certificates.length === 1 ? '' : 's'} issued, but some items need attention.${failed.length ? ` ${failed.length} issue request${failed.length === 1 ? '' : 's'} failed.` : ''}${deliverySummary ? ` ${deliverySummary}` : ''}`
+      : `${certificates.length} live project certificate${certificates.length === 1 ? '' : 's'} issued.${deliverySummary ? ` ${deliverySummary}` : ''}`
   };
 }
 
@@ -6098,8 +6217,10 @@ function chooseIdentityRow(rows: unknown, context: Awaited<ReturnType<typeof cre
   if (!Array.isArray(rows)) return null;
   return (
     rows.find((row) => isRecord(row) && row.auth_user_id === context.userId && normalizeEmail(row.email) === context.email) ??
+    rows.find((row) => isRecord(row) && row.auth_user_id === context.userId && normalizeEmail(row.alt_email) === context.email) ??
     rows.find((row) => isRecord(row) && row.auth_user_id === context.userId) ??
     rows.find((row) => isRecord(row) && normalizeEmail(row.email) === context.email) ??
+    rows.find((row) => isRecord(row) && normalizeEmail(row.alt_email) === context.email) ??
     null
   );
 }
@@ -6509,6 +6630,7 @@ function normalizeResourceWriteBody(payload: Record<string, unknown>) {
   const programKeys = payload.program_keys === undefined ? undefined : asStringArray(payload.program_keys);
   const paymentLink = payload.payment_link === '' ? null : payload.payment_link;
   const url = payload.url === '' ? null : payload.url;
+  const resourceDomainKey = payload.resource_domain_key === '' ? null : payload.resource_domain_key;
 
   return {
     ...payload,
@@ -6518,9 +6640,25 @@ function normalizeResourceWriteBody(payload: Record<string, unknown>) {
     payment_link: paymentLink,
     price: payload.price === '' || payload.price === undefined ? null : Number(payload.price),
     program_keys: programKeys,
+    resource_domain_key: typeof resourceDomainKey === 'string' ? normalizeResourceDomainKey(resourceDomainKey) : resourceDomainKey,
     resource_mode: typeof payload.resource_mode === 'string' ? payload.resource_mode.trim().toLowerCase() : payload.resource_mode,
     resource_type: typeof payload.resource_type === 'string' ? payload.resource_type.trim().toLowerCase() : payload.resource_type,
     url
+  };
+}
+
+function normalizeResourceDomainKey(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+function normalizeResourceDomainWriteBody(payload: Record<string, unknown>) {
+  return {
+    ...payload,
+    description: typeof payload.description === 'string' && payload.description.trim() ? payload.description.trim() : null,
+    domain_key: typeof payload.domain_key === 'string' ? normalizeResourceDomainKey(payload.domain_key) : payload.domain_key,
+    label: typeof payload.label === 'string' ? payload.label.trim() : payload.label,
+    sort_order: payload.sort_order === '' || payload.sort_order === undefined ? 100 : Number(payload.sort_order),
+    status: typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status
   };
 }
 
@@ -7192,6 +7330,7 @@ function validateResourceWriteBody(payload: Record<string, unknown>, inserting: 
   const currency = typeof payload.currency === 'string' ? payload.currency.trim() : '';
   const paymentLink = typeof payload.payment_link === 'string' ? payload.payment_link.trim() : '';
   const url = typeof payload.url === 'string' ? payload.url.trim() : '';
+  const resourceDomainKey = typeof payload.resource_domain_key === 'string' ? payload.resource_domain_key.trim() : '';
   const cohortNames = payload.cohort_names;
   const programKeys = payload.program_keys;
 
@@ -7201,6 +7340,7 @@ function validateResourceWriteBody(payload: Record<string, unknown>, inserting: 
   if (accessType && !['free', 'paid'].includes(accessType)) throw new ApiClientError('Resource access type is invalid.', 400);
   if (cohortNames !== undefined && !Array.isArray(cohortNames)) throw new ApiClientError('Resource cohorts must be a list.', 400);
   if (programKeys !== undefined && !Array.isArray(programKeys)) throw new ApiClientError('Resource programs must be a list.', 400);
+  if (resourceDomainKey && !/^[a-z0-9_]+$/.test(resourceDomainKey)) throw new ApiClientError('Resource Domain is invalid.', 400);
   if (Array.isArray(cohortNames) && Array.isArray(programKeys) && cohortNames.length === 0 && programKeys.length === 0) {
     throw new ApiClientError('Select at least one cohort or one program.', 400);
   }
@@ -7212,6 +7352,20 @@ function validateResourceWriteBody(payload: Record<string, unknown>, inserting: 
     if (!paymentLink) throw new ApiClientError('Paid resources require a payment link.', 400);
   }
   if (currency && currency.length > 10) throw new ApiClientError('Currency must be 10 characters or fewer.', 400);
+}
+
+function validateResourceDomainWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const domainKey = typeof payload.domain_key === 'string' ? payload.domain_key.trim() : '';
+  const label = typeof payload.label === 'string' ? payload.label.trim() : '';
+  const status = typeof payload.status === 'string' ? payload.status.trim() : '';
+  const sortOrder = Number(payload.sort_order ?? 100);
+
+  if (inserting && !domainKey) throw new ApiClientError('Resource Domain key is required.', 400);
+  if (!domainKey || !/^[a-z0-9_]+$/.test(domainKey)) throw new ApiClientError('Resource Domain key can use lowercase letters, numbers, and underscores only.', 400);
+  if (!label) throw new ApiClientError('Resource Domain label is required.', 400);
+  if (label.length > 80) throw new ApiClientError('Resource Domain label must be 80 characters or fewer.', 400);
+  if (status && !['active', 'inactive'].includes(status)) throw new ApiClientError('Resource Domain status is invalid.', 400);
+  if (!Number.isFinite(sortOrder)) throw new ApiClientError('Resource Domain sort order is invalid.', 400);
 }
 
 function validateStudentWriteBody(payload: Record<string, unknown>, inserting: boolean) {
@@ -7277,6 +7431,7 @@ async function writeAuditLog(
     table !== 'students' &&
     table !== 'workshops' &&
     table !== 'resources' &&
+    table !== 'resource_domains' &&
     table !== 'programs' &&
     table !== 'projects' &&
     table !== 'project_toolkit_items' &&
@@ -7298,27 +7453,29 @@ async function writeAuditLog(
         ? 'workshop'
         : table === 'resources'
           ? 'resource'
-          : table === 'programs'
-            ? 'program'
-            : table === 'projects'
-              ? 'project'
-              : table === 'project_toolkit_items'
-                ? 'project_toolkit_item'
-                : table === 'role_master'
-                  ? 'project_role'
-                  : table === 'certificates'
-                    ? 'certificate'
-                    : table === 'feature_controls'
-                      ? 'feature_control'
-                      : table === 'email_templates'
-                        ? 'email_template'
-                        : table === 'student_guidance_content'
-                          ? 'student_guidance_content'
-                          : table === 'career_readiness_content'
-                            ? 'career_readiness_content'
-                            : table.startsWith('whatsapp_')
-                              ? table
-                            : 'student';
+          : table === 'resource_domains'
+            ? 'resource_domain'
+            : table === 'programs'
+              ? 'program'
+              : table === 'projects'
+                ? 'project'
+                : table === 'project_toolkit_items'
+                  ? 'project_toolkit_item'
+                  : table === 'role_master'
+                    ? 'project_role'
+                    : table === 'certificates'
+                      ? 'certificate'
+                      : table === 'feature_controls'
+                        ? 'feature_control'
+                        : table === 'email_templates'
+                          ? 'email_template'
+                          : table === 'student_guidance_content'
+                            ? 'student_guidance_content'
+                            : table === 'career_readiness_content'
+                              ? 'career_readiness_content'
+                              : table.startsWith('whatsapp_')
+                                ? table
+                                : 'student';
 
   const auditRow = {
     action: `admin_${entityType}_${action}`,
@@ -7333,7 +7490,7 @@ async function writeAuditLog(
   const { error } = await context.supabase.from('audit_logs').insert(auditRow);
   if (error) {
     throw new ApiClientError(
-      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_toolkit_item' ? 'Project toolkit item' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : entityType === 'feature_control' ? 'Feature control' : entityType === 'email_template' ? 'Email template' : entityType === 'student_guidance_content' ? 'Student guidance content' : entityType === 'career_readiness_content' ? 'Career readiness content' : entityType.startsWith('whatsapp_') ? 'WhatsApp record' : 'Student'} was saved, but audit logging failed: ${error.message}`,
+      `${entityType === 'cohort' ? 'Cohort' : entityType === 'workshop' ? 'Workshop' : entityType === 'resource' ? 'Resource' : entityType === 'resource_domain' ? 'Resource Domain' : entityType === 'program' ? 'Program' : entityType === 'project' ? 'Project' : entityType === 'project_toolkit_item' ? 'Project toolkit item' : entityType === 'project_role' ? 'Project role' : entityType === 'certificate' ? 'Certificate' : entityType === 'feature_control' ? 'Feature control' : entityType === 'email_template' ? 'Email template' : entityType === 'student_guidance_content' ? 'Student guidance content' : entityType === 'career_readiness_content' ? 'Career readiness content' : entityType.startsWith('whatsapp_') ? 'WhatsApp record' : 'Student'} was saved, but audit logging failed: ${error.message}`,
       503
     );
   }
@@ -7367,9 +7524,19 @@ function buildAuditDetails(table: string, row: Record<string, unknown>, payload:
     return {
       ...base,
       accessType: row.access_type,
+      resourceDomainKey: row.resource_domain_key,
       resourceId: row.resource_id,
       status: row.status,
       title: row.title
+    };
+  }
+
+  if (table === 'resource_domains') {
+    return {
+      ...base,
+      domainKey: row.domain_key,
+      label: row.label,
+      status: row.status
     };
   }
 
@@ -7611,11 +7778,84 @@ async function triggerCertificateGeneration(context: Awaited<ReturnType<typeof c
       }
     });
     if (error) throw error;
+    const generatedSummary = summarizeCertificateGenerationResponse(data, sendEmail);
+    if (generatedSummary) return generatedSummary;
     const message = isRecord(data) && typeof data.message === 'string' ? data.message : '';
     return message || 'PDF generation started.';
   } catch (error) {
     return `Certificate row saved, but PDF generation needs retry: ${error instanceof Error ? error.message : 'unknown error'}`;
   }
+}
+
+function summarizeCertificateGenerationResponse(data: unknown, sendEmail: boolean) {
+  if (!isRecord(data) || !Array.isArray(data.results)) return '';
+  const results = data.results.filter(isRecord);
+  if (results.length === 0) return '';
+
+  const failedResults = results.filter((result) => String(result.status ?? '') === 'failed');
+  const readyResults = results.filter((result) => String(result.status ?? '') !== 'failed');
+  const emailFailedResults = readyResults.filter((result) => {
+    const certificate = isRecord(result.certificate) ? result.certificate : {};
+    const generationError = String(certificate.generation_error ?? certificate.generationError ?? '');
+    return /email failed/i.test(generationError);
+  });
+  const readyCount = readyResults.length;
+  const failedCount = failedResults.length;
+  const pieces = [`${readyCount} certificate PDF${readyCount === 1 ? '' : 's'} ready.`];
+
+  if (sendEmail && readyCount > 0 && emailFailedResults.length === 0) {
+    pieces.push(`${readyCount} certificate email${readyCount === 1 ? '' : 's'} sent.`);
+  }
+  if (sendEmail && emailFailedResults.length > 0) {
+    pieces.push(`${emailFailedResults.length} certificate email${emailFailedResults.length === 1 ? '' : 's'} failed. Use Email PDF to retry.`);
+  }
+  if (failedCount > 0) {
+    pieces.push(`${failedCount} PDF generation failed.${sendEmail ? ' Email was not sent for failed certificate(s).' : ''} Use Retry PDF after fixing the error.`);
+    const firstError = failedResults
+      .map((result) => String(result.error ?? '').trim())
+      .find(Boolean);
+    if (firstError) pieces.push(`First error: ${firstError}`);
+  }
+
+  return pieces.join(' ');
+}
+
+function certificateDeliveryNeedsAttention(message: string) {
+  return /PDF generation failed|0 certificate PDFs? ready|needs retry|Email was not sent|email failed/i.test(message);
+}
+
+async function summarizeIssuedCertificateDelivery(context: Awaited<ReturnType<typeof createContext>>, certificates: Array<Record<string, unknown>>, sendEmail: boolean) {
+  const ids = certificates.map((certificate) => String(certificate.id ?? '').trim()).filter(Boolean);
+  if (ids.length === 0) return '';
+
+  const { data, error } = await context.supabase
+    .from('certificates')
+    .select('id,certificate_id,generation_status,generation_error,email_requested,email_sent_at')
+    .in('id', ids);
+  if (error) return '';
+
+  const rows = (data ?? []).filter(isRecord);
+  if (rows.length === 0) return '';
+
+  const readyCount = rows.filter((row) => String(row.generation_status ?? '') === 'ready').length;
+  const failedRows = rows.filter((row) => String(row.generation_status ?? '') === 'failed');
+  const emailFailedCount = rows.filter((row) => /email failed/i.test(String(row.generation_error ?? ''))).length;
+  const emailSentCount = rows.filter((row) => row.email_sent_at).length;
+  const pieces = [`${readyCount} certificate PDF${readyCount === 1 ? '' : 's'} ready.`];
+
+  if (failedRows.length > 0) {
+    pieces.push(`${failedRows.length} PDF generation failed.${sendEmail ? ' Email was not sent for failed certificate(s).' : ''} Use the Issued Certificates tab to retry PDF generation.`);
+    const firstError = failedRows.map((row) => String(row.generation_error ?? '').trim()).find(Boolean);
+    if (firstError) pieces.push(`First error: ${firstError}`);
+  } else if (sendEmail) {
+    pieces.push(`${emailSentCount} certificate email${emailSentCount === 1 ? '' : 's'} sent.`);
+  }
+
+  if (sendEmail && emailFailedCount > 0) {
+    pieces.push(`${emailFailedCount} certificate email${emailFailedCount === 1 ? '' : 's'} failed. Use Email PDF to retry.`);
+  }
+
+  return pieces.join(' ');
 }
 
 function randomHex(length: number) {

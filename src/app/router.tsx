@@ -1,5 +1,5 @@
 import { lazy, ReactNode, Suspense } from 'react';
-import { createBrowserRouter, isRouteErrorResponse, Navigate, useRouteError } from 'react-router-dom';
+import { createBrowserRouter, isRouteErrorResponse, Navigate, useLocation, useRouteError } from 'react-router-dom';
 import { ProtectedGuestRoute, ProtectedPortalRoute } from '../auth/ProtectedPortalRoute';
 import { AdminPermissionGate } from '../auth/AdminPermissionGate';
 import { AppShell } from '../layouts/AppShell';
@@ -51,12 +51,12 @@ const GuestAccessPage = lazy(() => import('../pages/GuestAccessPage').then((modu
 const ModulePlaceholderPage = lazy(() => import('../pages/ModulePlaceholderPage').then((module) => ({ default: module.ModulePlaceholderPage })));
 const StudentAnnouncementsPage = lazy(() => import('../pages/StudentAnnouncementsPage').then((module) => ({ default: module.StudentAnnouncementsPage })));
 const StudentCareerReadinessPage = lazy(() => import('../pages/StudentCareerReadinessPage').then((module) => ({ default: module.StudentCareerReadinessPage })));
-const StudentCohortsPage = lazy(() => import('../pages/StudentCohortsPage').then((module) => ({ default: module.StudentCohortsPage })));
 const StudentDashboardPage = lazy(() => import('../pages/StudentDashboardPage').then((module) => ({ default: module.StudentDashboardPage })));
 const StudentDoubtSessionsPage = lazy(() => import('../pages/StudentDoubtSessionsPage').then((module) => ({ default: module.StudentDoubtSessionsPage })));
 const StudentCertificatesPage = lazy(() => import('../pages/StudentCertificatesPage').then((module) => ({ default: module.StudentCertificatesPage })));
 const StudentResourcesPage = lazy(() => import('../pages/StudentResourcesPage').then((module) => ({ default: module.StudentResourcesPage })));
 const StudentRecordingsPage = lazy(() => import('../pages/StudentRecordingsPage').then((module) => ({ default: module.StudentRecordingsPage })));
+const StudentRecordingPlayerPage = lazy(() => import('../pages/StudentRecordingsPage').then((module) => ({ default: module.StudentRecordingPlayerPage })));
 const StudentSchedulePage = lazy(() => import('../pages/StudentSchedulePage').then((module) => ({ default: module.StudentSchedulePage })));
 const StudentProjectsPage = lazy(() => import('../pages/StudentProjectsPage').then((module) => ({ default: module.StudentProjectsPage })));
 const StudentProjectSubmissionsPage = lazy(() =>
@@ -77,6 +77,11 @@ function StudentFeaturePage({ children, moduleId }: { children: ReactNode; modul
 
 function AdminFeaturePage({ children, moduleId }: { children: ReactNode; moduleId: string }) {
   return <AdminPermissionGate moduleId={moduleId}>{children}</AdminPermissionGate>;
+}
+
+function RedirectWithSearch({ to }: { to: string }) {
+  const location = useLocation();
+  return <Navigate replace to={`${to}${location.search}`} />;
 }
 
 function RouteErrorFallback() {
@@ -221,6 +226,28 @@ export const router = createBrowserRouter([
     errorElement: <RouteErrorFallback />,
     children: [
       {
+        path: 'programs/player',
+        element: (
+          <PageLoader>
+            <StudentFeaturePage moduleId="cohorts">
+              <StudentRecordingPlayerPage />
+            </StudentFeaturePage>
+          </PageLoader>
+        )
+      },
+      {
+        path: 'recordings/player',
+        element: <RedirectWithSearch to="/student/programs/player" />
+      },
+      {
+        path: 'cohorts',
+        element: <RedirectWithSearch to="/student/programs" />
+      },
+      {
+        path: 'recordings',
+        element: <RedirectWithSearch to="/student/programs" />
+      },
+      {
         element: <AppShell navItems={studentNavItems} portal="student" />,
         children: [
           {
@@ -242,11 +269,11 @@ export const router = createBrowserRouter([
             )
           },
           {
-            path: 'cohorts',
+            path: 'programs',
             element: (
               <PageLoader>
                 <StudentFeaturePage moduleId="cohorts">
-                  <StudentCohortsPage />
+                  <StudentRecordingsPage />
                 </StudentFeaturePage>
               </PageLoader>
             )
@@ -267,16 +294,6 @@ export const router = createBrowserRouter([
               <PageLoader>
                 <StudentFeaturePage moduleId="career-readiness">
                   <StudentCareerReadinessPage />
-                </StudentFeaturePage>
-              </PageLoader>
-            )
-          },
-          {
-            path: 'recordings',
-            element: (
-              <PageLoader>
-                <StudentFeaturePage moduleId="recordings">
-                  <StudentRecordingsPage />
                 </StudentFeaturePage>
               </PageLoader>
             )

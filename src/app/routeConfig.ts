@@ -35,8 +35,7 @@ export type NavItem = {
 
 export const studentNavItems: NavItem[] = [
   { label: 'Dashboard', path: '/student', moduleId: 'dashboard', icon: LayoutDashboard, mode: 'read-only' },
-  { label: 'My Programs', path: '/student/cohorts', moduleId: 'cohorts', icon: GraduationCap, mode: 'read-only' },
-  { label: 'Watch Recordings', path: '/student/recordings', moduleId: 'recordings', icon: Video, mode: 'read-only' },
+  { label: 'My Programs', path: '/student/programs', moduleId: 'cohorts', icon: GraduationCap, mode: 'read-only' },
   { label: 'Upcoming Workshops', path: '/student/schedule', moduleId: 'schedule', icon: CalendarDays, mode: 'read-only' },
   { label: 'Doubt Sessions', path: '/student/doubt-sessions', moduleId: 'doubt-sessions', icon: HelpCircle, mode: 'read-only' },
   { label: 'Resource Library', path: '/student/resources', moduleId: 'resources', icon: Library, mode: 'read-only' },

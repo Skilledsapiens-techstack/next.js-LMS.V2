@@ -244,6 +244,7 @@ function buildWorkshopRow(body: NonNullable<WorkshopPayload['body']>, zoomMeetin
     date,
     duration_minutes: readDurationMinutes(body.durationMinutes),
     join_url: typeof zoomMeeting.join_url === 'string' ? zoomMeeting.join_url : null,
+    program_key: typeof body.programKey === 'string' && body.programKey.trim() ? body.programKey.trim().toLowerCase() : null,
     session_type: normalizeSessionType(body.sessionType),
     time: typeof body.time === 'string' && body.time ? body.time : null,
     title,
@@ -262,11 +263,12 @@ function buildCustomWorkshopRow(body: NonNullable<WorkshopPayload['body']>) {
     date,
     duration_minutes: readDurationMinutes(body.durationMinutes),
     join_url: requireHttpUrl(body.customJoinUrl, 'Add a valid custom meeting link before saving.'),
+    program_key: typeof body.programKey === 'string' && body.programKey.trim() ? body.programKey.trim().toLowerCase() : null,
     session_type: normalizeSessionType(body.sessionType),
     time: typeof body.time === 'string' && body.time ? body.time : null,
     title,
     workshop_id: `WS-${Date.now()}`,
-    workshop_status: 'Scheduled',
+    workshop_status: body.workshopStatus ?? 'Scheduled',
     zoom_account: 'Custom Link',
     zoom_id: null
   };
@@ -501,7 +503,7 @@ async function createMeeting(supabase: ReturnType<typeof createClient>, actorEma
     const { data, error } = await supabase.from('workshops').insert(workshopRow).select('*').single();
     if (error) throw error;
     await writeAudit(supabase, actorEmail, 'admin_workshop_created', data, { changedFields: Object.keys(workshopRow).sort(), zoomAccount: source });
-    await recordPortalUpdate(supabase, actorEmail, 'session_scheduled', data);
+    if (data.workshop_status !== 'Completed') await recordPortalUpdate(supabase, actorEmail, 'session_scheduled', data);
     return data;
   }
 
@@ -514,7 +516,7 @@ async function createMeeting(supabase: ReturnType<typeof createClient>, actorEma
   const { data, error } = await supabase.from('workshops').insert(workshopRow).select('*').single();
   if (error) throw error;
   await writeAudit(supabase, actorEmail, 'admin_workshop_created', data, { changedFields: Object.keys(workshopRow).sort(), zoomAccount: account });
-  await recordPortalUpdate(supabase, actorEmail, 'session_scheduled', data);
+  if (data.workshop_status !== 'Completed') await recordPortalUpdate(supabase, actorEmail, 'session_scheduled', data);
   return data;
 }
 

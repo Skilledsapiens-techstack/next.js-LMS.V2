@@ -233,11 +233,20 @@ export function StudentSchedulePage() {
         title="Upcoming Workshops"
       />
 
-      <section className="student-schedule-hero" aria-label="Next session">
+      <section className="student-schedule-hero" aria-label="Next workshop">
         <div>
-          <span>Next session</span>
-          <strong>{nextSession?.title ?? 'No scheduled sessions'}</strong>
-          <p>{nextSession ? `${formatDate(nextSession.date)} · ${nextSession.time ? `${nextSession.time} IST` : 'Time not set'}` : 'New weekend sessions are updated every Friday. Please check this page on Fridays for the latest Saturday and Sunday schedule.'}</p>
+          <span>Next workshop</span>
+          <strong>{nextSession?.title ?? 'No scheduled workshops'}</strong>
+          <p>
+            {nextSession ? (
+              `${formatDate(nextSession.date)} · ${nextSession.time ? `${nextSession.time} IST` : 'Time not set'}`
+            ) : (
+              <>
+                New weekend workshops are updated every <strong className="text-red-bold">Friday</strong>. Please check this page on{' '}
+                <strong className="text-red-bold">Fridays</strong> for the latest Saturday and Sunday live workshop schedule.
+              </>
+            )}
+          </p>
         </div>
         {nextSession && hasScheduleAccess(nextSession) && nextSession.joinUrl ? (
           <a className="student-action student-action--primary" href={nextSession.joinUrl} rel="noreferrer" target="_blank">
@@ -276,7 +285,7 @@ export function StudentSchedulePage() {
                 <span>Expired sessions</span>
                 <strong>For your information</strong>
               </div>
-              <p>Past sessions are shown only as history. Recordings, when published, remain available from Watch Recordings.</p>
+              <p>Past sessions are shown only as history. Recordings, when published, remain available from My Programs.</p>
             </header>
           ) : null}
           {visibleItems.map((item) => (

@@ -512,6 +512,10 @@ export function StudentDashboardPage() {
   const nextSession = scheduleItems.find((item) => isLiveByTime(item, now)) ?? scheduleItems[0];
   const sessionAction = getSessionAction(nextSession);
   const nextSessionStatus = nextSession ? (isLiveByTime(nextSession, now) ? 'Live' : nextSession.status) : undefined;
+  const profileName = formatName(profile);
+  const hasProfileName = Boolean(profile?.fullName?.trim());
+  const hasProfileEmail = Boolean(profile?.email?.trim());
+  const hasProfileCollege = Boolean(profile?.collegeName?.trim());
 
   if (isLoading) {
     return (
@@ -541,51 +545,64 @@ export function StudentDashboardPage() {
 
       <section className="student-home-hero">
         <div className="student-home-hero__main">
-          <header className="student-profile-heading">
-            <span className="eyebrow">Learner profile</span>
-            <div className="student-profile-strip" aria-label="Student profile details">
-              <span>{profile?.email ?? 'Email not available'}</span>
-              <span>{profile?.studentId ?? 'Student ID pending'}</span>
-              <span>{profile?.collegeName ?? 'College not available'}</span>
-              <span className="student-profile-strip__access">
-                <StatusBadge>{profile?.active ? 'Active access' : 'Inactive access'}</StatusBadge>
-              </span>
+          <section className="student-profile-card" aria-label="Student profile details">
+            <header className="student-profile-card__header">
+              <div>
+                <span className="eyebrow">Student profile</span>
+              </div>
+              <StatusBadge>{profile?.active ? 'Active access' : 'Inactive access'}</StatusBadge>
+            </header>
+            <div className="student-profile-card__grid">
+              {hasProfileName ? (
+                <div className="student-profile-card__field">
+                  <span>Name</span>
+                  <p>{profileName}</p>
+                </div>
+              ) : null}
+              {hasProfileEmail ? (
+                <div className="student-profile-card__field">
+                  <span>Email</span>
+                  <p>{profile?.email}</p>
+                </div>
+              ) : null}
+              {hasProfileCollege ? (
+                <div className="student-profile-card__field">
+                  <span>College</span>
+                  <p>{profile?.collegeName}</p>
+                </div>
+              ) : null}
+              {cohortNames.length > 0 ? (
+                <div className="student-profile-card__field student-profile-card__field--wide">
+                  <span>Your Tagged Cohort(s) Name</span>
+                  <p>{cohortNames.join(', ')}</p>
+                </div>
+              ) : null}
+              {liveProjectRoles.length > 0 ? (
+                <div className="student-profile-card__field student-profile-card__field--wide">
+                  <span>Registered Live Project Role(s)</span>
+                  <ul className="student-profile-card__list">
+                    {liveProjectRoles.map((role) => (
+                      <li key={role}>{role}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
-          </header>
+          </section>
 
           <div className="student-profile-section student-profile-section--training">
-            {liveProjectRoles.length > 0 ? (
-              <div className="student-profile-field">
-                <span className="student-profile-field__role-label">Your Live Project Leadership Role</span>
-                <ul className="student-training-programs">
-                  {liveProjectRoles.map((role) => (
-                    <li key={role}>{role}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
             <div className="student-home-actions" aria-label="Learning shortcuts">
               <Link className="student-action student-action--primary" to="/student/schedule">
                 <CalendarDays size={18} />
                 View upcoming workshops
               </Link>
-              <Link className="student-action" to="/student/recordings">
+              <Link className="student-action" to="/student/programs">
                 <PlayCircle size={18} />
-                Watch recordings
+                My programs
               </Link>
             </div>
           </div>
 
-          {liveProjectRoles.length > 0 ? (
-            <div className="student-profile-section student-profile-section--project">
-              <div className="student-live-project-roles" aria-label="Assigned live project roles">
-                <div className="student-live-project-role-block">
-                  <span>Your Tagged Cohort(s) Name</span>
-                  <p>{cohortNames.length ? cohortNames.join(', ') : 'Cohort pending'}</p>
-                </div>
-              </div>
-            </div>
-          ) : null}
           {showLeadershipGuidance && (programGuidance || certificateGuidance) ? (
             <div className="student-profile-section student-profile-section--clarity">
               <div>
@@ -616,14 +633,8 @@ export function StudentDashboardPage() {
           <header>
             <div>
               <span className="eyebrow">Certificate path</span>
-              <h2>Training, project, and mentorship at a glance</h2>
+              <h2>Training, Project, and Mentorship at a glance</h2>
             </div>
-            {certificateGuidance ? (
-              <button className="student-guidance-button" onClick={() => setSelectedGuidance(certificateGuidance)} type="button">
-                <Info size={16} />
-                Details
-              </button>
-            ) : null}
           </header>
           <div className="student-certificate-guide__items">
             <article>
@@ -669,7 +680,7 @@ export function StudentDashboardPage() {
               <CalendarDays size={22} />
             </div>
             <div className="student-action-card__content">
-              <span>Next session</span>
+              <span>Next workshop</span>
               <h3>{nextSession?.title ?? 'No upcoming workshop scheduled'}</h3>
               <p>{nextSession ? formatScheduleTime(nextSession) : 'Upcoming workshops mapped to your cohort will appear here.'}</p>
             </div>
@@ -689,7 +700,7 @@ export function StudentDashboardPage() {
             </div>
           </article>
 
-          <Link className="student-action-card" to="/student/recordings">
+          <Link className="student-action-card" to="/student/programs">
             <div className="student-action-card__icon">
               <PlayCircle size={22} />
             </div>
@@ -741,17 +752,17 @@ export function StudentDashboardPage() {
           <div className="student-panel__header">
             <div>
               <span className="eyebrow">Continue</span>
-              <h2>Recent recordings</h2>
+              <h2>Recent Recordings</h2>
             </div>
-            <Link className="student-panel__link" to="/student/recordings">
+            <Link className="student-panel__link" to="/student/programs">
               View all
             </Link>
           </div>
           {renderItemList<StudentRecording>({
-            emptyText: 'Watch Recordings published for your access will appear here.',
+            emptyText: 'Training modules published for your access will appear here.',
             items: recordingItems,
             renderItem: (recording) => (
-              <Link className="student-learning-row" key={recording.id} to="/student/recordings">
+              <Link className="student-learning-row" key={recording.id} to="/student/programs">
                 <Video size={18} />
                 <div>
                   <strong>{recording.title}</strong>
@@ -766,7 +777,7 @@ export function StudentDashboardPage() {
           <div className="student-panel__header">
             <div>
               <span className="eyebrow">Resource Library</span>
-              <h2>Recently available</h2>
+              <h2>Recently Available</h2>
             </div>
             <Link className="student-panel__link" to="/student/resources">
               View all

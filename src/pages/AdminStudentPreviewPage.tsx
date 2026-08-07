@@ -7,7 +7,7 @@ import { AdminStudentPreviewItem, useAdminStudentPreview } from '../features/adm
 
 const moduleCards = [
   { countKey: 'schedule', icon: CalendarDays, label: 'Upcoming Workshops' },
-  { countKey: 'recordings', icon: Video, label: 'Watch Recordings' },
+  { countKey: 'recordings', icon: Video, label: 'Training Modules' },
   { countKey: 'resources', icon: BookOpen, label: 'Resource Library' },
   { countKey: 'projects', icon: GraduationCap, label: 'Live Project Hub' },
   { countKey: 'certificates', icon: FileText, label: 'Certificates' }

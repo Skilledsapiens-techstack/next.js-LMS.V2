@@ -103,7 +103,7 @@ function certificateMatchesProgram(certificate: { cohortName?: string; programKe
 
 function programLink(path: string, cohort: StudentCohort) {
   const programKey = programKeyFor(cohort);
-  return programKey && (path === '/student/resources' || path === '/student/recordings') ? `${path}?programKey=${encodeURIComponent(programKey)}` : path;
+  return programKey && (path === '/student/resources' || path === '/student/programs') ? `${path}?programKey=${encodeURIComponent(programKey)}` : path;
 }
 
 function normalizeExternalLink(value: string | undefined) {
@@ -164,7 +164,7 @@ function ProgramCard({ cohort, stats }: { cohort: StudentCohort; stats: ProgramS
       <div className="program-card__stats" aria-label={`${cardTitle} learning counts`}>
         <span>
           <b>{stats.recordings}</b>
-          Watch Recordings
+          Training Modules
         </span>
         <span>
           <b>{stats.resources}</b>
@@ -177,9 +177,9 @@ function ProgramCard({ cohort, stats }: { cohort: StudentCohort; stats: ProgramS
           <CalendarDays size={16} />
           Upcoming Workshops
         </Link>
-        <Link className="student-action" to={programLink('/student/recordings', cohort)}>
+        <Link className="student-action" to={programLink('/student/programs', cohort)}>
           <PlayCircle size={16} />
-          Watch Recordings
+          My Programs
         </Link>
         <Link className="student-action" to={programLink('/student/resources', cohort)}>
           <Library size={16} />

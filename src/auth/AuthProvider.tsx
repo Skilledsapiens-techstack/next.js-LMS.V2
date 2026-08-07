@@ -228,7 +228,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
         throw new Error('Portal authentication is not configured for this environment.');
       }
 
-      const redirectTo = `${window.location.origin}/login?mode=recovery&intent=${intent}&portal=${portal}`;
+      const redirectParams = new URLSearchParams({
+        mode: 'recovery',
+        intent,
+        portal,
+        email: email.trim().toLowerCase()
+      });
+      const redirectTo = `${window.location.origin}/login?${redirectParams.toString()}`;
       await assertLmsEmailDeliveryEnabled(supabase);
 
       if (portal === 'student') {
@@ -236,6 +242,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           body: {
             action: 'sendSupabaseStudentPasswordSetup',
             email,
+            intent,
             redirect_url: redirectTo
           }
         });

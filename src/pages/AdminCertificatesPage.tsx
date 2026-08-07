@@ -207,7 +207,21 @@ function statusTone(status: AdminCertificateStatus | AdminCertificateRequestAdmi
 function generationTone(status: AdminCertificateGenerationStatus) {
   if (status === 'ready') return 'safe';
   if (status === 'pending' || status === 'generating') return 'warning';
+  if (status === 'failed' || status === 'expired') return 'danger';
   return 'neutral';
+}
+
+function certificatePdfNotice(certificate: AdminCertificate) {
+  if (certificate.generationStatus === 'failed') {
+    return 'Certificate was issued, but PDF generation failed. Email was not sent. Retry PDF after fixing the error, then send the email.';
+  }
+  if (certificate.generationStatus === 'pending' || certificate.generationStatus === 'generating') {
+    return 'Certificate was issued, but the PDF is not ready yet. Email will only send after the PDF is ready.';
+  }
+  if (/email failed/i.test(certificate.generationError ?? '')) {
+    return 'PDF is ready, but email delivery failed. Use Email PDF to retry.';
+  }
+  return '';
 }
 
 function programLabel(program: AdminProgram | undefined, fallback: string | undefined) {
@@ -1630,7 +1644,7 @@ export function AdminCertificatesPage() {
     });
     const firstResult = result.results[0];
     if (firstResult?.status === 'failed') {
-      setCertificateMessage(firstResult.error ?? 'PDF generation failed.');
+      setCertificateMessage(`PDF generation failed. Email was not sent. ${firstResult.error ?? 'Please check the certificate error details and retry.'}`);
       return;
     }
     if (firstResult?.signedUrl) {
@@ -1647,7 +1661,7 @@ export function AdminCertificatesPage() {
     });
     const firstResult = result.results[0];
     if (firstResult?.status === 'failed') {
-      setCertificateMessage(firstResult.error ?? 'Certificate email failed.');
+      setCertificateMessage(`PDF generation failed, so the email was not sent. ${firstResult.error ?? 'Please check the certificate error details and retry.'}`);
       return;
     }
     setCertificateMessage(`Certificate PDF email sent to ${certificate.studentEmail}.`);
@@ -2000,9 +2014,12 @@ export function AdminCertificatesPage() {
 
             {certificates && certificates.items.length > 0 ? (
               <div className="certificate-registry-list">
-                {certificates.items.map((certificate: AdminCertificate) => (
-                  <article className="certificate-registry-row" key={certificate.id}>
-                    <div>
+                {certificates.items.map((certificate: AdminCertificate) => {
+                  const pdfNotice = certificatePdfNotice(certificate);
+                  const hasPdfIssue = certificate.generationStatus === 'failed' || /email failed/i.test(certificate.generationError ?? '');
+                  return (
+                  <article className={`certificate-registry-row${hasPdfIssue ? ' certificate-registry-row--pdf-failed' : ''}`} key={certificate.id}>
+                    <div className="certificate-registry-row__content">
                       <h3>
                         {certificate.studentName} · {certificate.projectTitle ?? certificate.programName ?? certificate.programKey ?? certificate.certificateId}
                       </h3>
@@ -2015,6 +2032,13 @@ export function AdminCertificatesPage() {
                         <span>PDF</span>
                         <StatusBadge tone={generationTone(certificate.generationStatus)}>{formatOption(certificate.generationStatus)}</StatusBadge>
                       </div>
+                      {pdfNotice ? <p className="certificate-registry-row__notice">{pdfNotice}</p> : null}
+                      {certificate.generationError ? (
+                        <details className="certificate-registry-row__error-details">
+                          <summary>View error details</summary>
+                          <p>{certificate.generationError}</p>
+                        </details>
+                      ) : null}
                     </div>
                     <div className="certificate-registry-row__actions">
                       {certificate.verificationUrl ? (
@@ -2048,7 +2072,13 @@ export function AdminCertificatesPage() {
                             onClick={() => void handleEmailCertificatePdf(certificate)}
                             type="button"
                           >
-                            {generateCertificatePdfMutation.isPending ? 'Sending...' : certificate.status === 'revoked' ? lockedButtonLabel('Email') : 'Email PDF'}
+                            {generateCertificatePdfMutation.isPending
+                              ? 'Sending...'
+                              : certificate.status === 'revoked'
+                                ? lockedButtonLabel('Email')
+                                : certificate.generationStatus === 'ready'
+                                  ? 'Email PDF'
+                                  : 'Retry PDF + Email'}
                           </button>
                           <button className="segmented-button segmented-button--danger" disabled={certificate.status === 'revoked'} onClick={() => setCertificateToRevoke(certificate)} type="button">
                             {certificate.status === 'revoked' ? 'Revoked' : 'Revoke'}
@@ -2057,7 +2087,8 @@ export function AdminCertificatesPage() {
                       ) : null}
                     </div>
                   </article>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <EmptyState />

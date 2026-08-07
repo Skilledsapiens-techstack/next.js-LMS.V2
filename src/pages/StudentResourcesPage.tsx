@@ -1,24 +1,12 @@
-import { Bookmark, ExternalLink, FileText, Library, Loader2, Lock, RefreshCw, Search, ShieldCheck } from 'lucide-react';
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { Bookmark, ExternalLink, FileText, Loader2, Lock, RefreshCw, Search } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ErrorState, LoadingState, LockedState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
-import { StudentResource, useStudentResources } from '../features/student/useStudentResources';
+import { StudentResource, useStudentResourceDomains, useStudentResources } from '../features/student/useStudentResources';
 import { StudentPaymentOrder, useStudentPaymentOrders } from '../features/student/useStudentPaymentOrders';
-
-const resourceTypeOptions = [
-  { label: 'All resource types', value: '' },
-  { label: 'General', value: 'general' },
-  { label: 'Template', value: 'template' },
-  { label: 'Case Material', value: 'case_material' },
-  { label: 'Project Resource', value: 'project_resource' },
-  { label: 'Live Session Material', value: 'live_session_material' },
-  { label: 'Placement Resource', value: 'placement_resource' },
-  { label: 'Assignment Reference', value: 'assignment_reference' }
-];
-const resourceTypeOrder = resourceTypeOptions.map((option) => option.value);
 
 const bookmarkStorageKey = 'skilled-sapiens-student-resource-bookmarks';
 
@@ -56,11 +44,11 @@ function formatReadableLabel(value: string | undefined) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function buildPageLink(page: number, resourceType: string, programKey: string) {
+function buildPageLink(page: number, programKey: string, resourceDomainKey: string) {
   const params = new URLSearchParams();
   params.set('page', String(page));
-  if (resourceType) params.set('resourceType', resourceType);
   if (programKey) params.set('programKey', programKey);
+  if (resourceDomainKey) params.set('resourceDomainKey', resourceDomainKey);
   return `?${params.toString()}`;
 }
 
@@ -210,13 +198,11 @@ export function StudentResourcesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const page = asPositiveInteger(searchParams.get('page'), 1);
   const programKey = searchParams.get('programKey')?.trim() ?? '';
-  const resourceType = searchParams.get('resourceType')?.trim() ?? '';
-  const [resourceTypeInput, setResourceTypeInput] = useState(resourceType);
-  const [isApplyingFilters, setIsApplyingFilters] = useState(false);
+  const resourceDomainKey = searchParams.get('resourceDomainKey')?.trim() ?? '';
   const [isCheckingAccess, setIsCheckingAccess] = useState(false);
   const [bookmarkedResourceIds, setBookmarkedResourceIds] = useState<string[]>([]);
-  const resourcesQuery = useStudentResources({ locked: 'all', page, programKey, resourceType });
-  const resourceTypeOptionsQuery = useStudentResources({ locked: 'all', limit: 500, page: 1, programKey });
+  const resourcesQuery = useStudentResources({ locked: 'all', page, programKey, resourceDomainKey });
+  const resourceDomainsQuery = useStudentResourceDomains({ programKey });
   const paymentOrdersQuery = useStudentPaymentOrders({ itemType: 'resource', limit: 100, page: 1, status: 'all' });
   const data = resourcesQuery.data;
   const paymentOrders = paymentOrdersQuery.data?.items ?? [];
@@ -224,8 +210,6 @@ export function StudentResourcesPage() {
   const totalPages = data?.totalPages ?? 1;
   const summary = data?.summary;
   const lockedCount = summary?.locked ?? 0;
-  const availableCount = summary?.available ?? 0;
-  const paidCount = summary?.paid ?? 0;
   const recentlyAddedCount = summary?.recentlyAdded ?? 0;
   const pageResources = data?.items ?? [];
   const sortedResources = useMemo(
@@ -243,22 +227,7 @@ export function StudentResourcesPage() {
   );
   const bookmarkedResources = useMemo(() => sortedResources.filter((resource) => bookmarkedResourceIds.includes(resourceBookmarkId(resource))), [bookmarkedResourceIds, sortedResources]);
   const groupedResources = useMemo(() => groupResourcesByType(sortedResources), [sortedResources]);
-  const availableResourceTypeOptions = useMemo(() => {
-    const counts = resourceTypeOptionsQuery.data?.summary?.typeCounts ?? {};
-    const typeOptions = Object.entries(counts)
-      .filter(([, count]) => count > 0)
-      .map(([value]) => ({
-        label: resourceTypeOptions.find((option) => option.value === value)?.label ?? formatReadableLabel(value),
-        value
-      }))
-      .sort((left, right) => {
-        const leftRank = resourceTypeOrder.includes(left.value) ? resourceTypeOrder.indexOf(left.value) : resourceTypeOrder.length;
-        const rightRank = resourceTypeOrder.includes(right.value) ? resourceTypeOrder.indexOf(right.value) : resourceTypeOrder.length;
-        if (leftRank !== rightRank) return leftRank - rightRank;
-        return left.label.localeCompare(right.label);
-      });
-    return [{ label: 'All resource types', value: '' }, ...typeOptions];
-  }, [resourceTypeOptionsQuery.data?.summary?.typeCounts]);
+  const resourceDomainOptions = resourceDomainsQuery.data ?? [];
   const hasPendingPayment = useMemo(() => pageResources.some((resource) => matchingPaymentOrder(resource, paymentOrders)?.status === 'created'), [pageResources, paymentOrders]);
 
   useEffect(() => {
@@ -271,15 +240,14 @@ export function StudentResourcesPage() {
   }, []);
 
   useEffect(() => {
-    if (resourceTypeOptionsQuery.isLoading || resourceTypeOptionsQuery.isFetching || !resourceType) return;
-    const isVisibleOption = availableResourceTypeOptions.some((option) => option.value === resourceType);
+    if (resourceDomainsQuery.isLoading || resourceDomainsQuery.isFetching || !resourceDomainKey) return;
+    const isVisibleOption = resourceDomainOptions.some((option) => option.domainKey === resourceDomainKey);
     if (isVisibleOption) return;
     const next = new URLSearchParams(searchParams);
     next.set('page', '1');
-    next.delete('resourceType');
-    setResourceTypeInput('');
+    next.delete('resourceDomainKey');
     setSearchParams(next);
-  }, [availableResourceTypeOptions, resourceType, resourceTypeOptionsQuery.isFetching, resourceTypeOptionsQuery.isLoading, searchParams, setSearchParams]);
+  }, [resourceDomainKey, resourceDomainOptions, resourceDomainsQuery.isFetching, resourceDomainsQuery.isLoading, searchParams, setSearchParams]);
 
   function updateBookmarks(nextIds: string[]) {
     setBookmarkedResourceIds(nextIds);
@@ -295,19 +263,12 @@ export function StudentResourcesPage() {
     updateBookmarks(bookmarkedResourceIds.includes(id) ? bookmarkedResourceIds.filter((item) => item !== id) : [...bookmarkedResourceIds, id]);
   }
 
-  function handleSearch(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setIsApplyingFilters(true);
+  function updateResourceDomain(nextDomainKey: string) {
     const next = new URLSearchParams(searchParams);
     next.set('page', '1');
-    next.delete('search');
-    if (resourceTypeInput.trim()) {
-      next.set('resourceType', resourceTypeInput.trim());
-    } else {
-      next.delete('resourceType');
-    }
+    if (nextDomainKey) next.set('resourceDomainKey', nextDomainKey);
+    else next.delete('resourceDomainKey');
     setSearchParams(next);
-    window.setTimeout(() => setIsApplyingFilters(false), 500);
   }
 
   function clearProgramScope() {
@@ -352,46 +313,8 @@ export function StudentResourcesPage() {
         title="Resource Library"
       />
 
-      <div className="metric-grid">
-        <article className="metric-tile">
-          <Library size={22} />
-          <span>Matching resources</span>
-          <strong>{total}</strong>
-        </article>
-        <article className="metric-tile">
-          <ShieldCheck size={22} />
-          <span>Available here</span>
-          <strong>{availableCount}</strong>
-        </article>
-        <article className="metric-tile">
-          <Lock size={22} />
-          <span>Paid here</span>
-          <strong>{paidCount}</strong>
-        </article>
-        <article className="metric-tile">
-          <Bookmark size={22} />
-          <span>Saved here</span>
-          <strong>{bookmarkedResources.length}</strong>
-        </article>
-      </div>
-
-      <section className="student-resource-toolbar" aria-label="Resource filters">
-        <form className="student-resource-search" onSubmit={handleSearch}>
-          <label className="sr-only" htmlFor="resource-type">
-            Resource type
-          </label>
-          <select id="resource-type" value={resourceTypeInput} onChange={(event) => setResourceTypeInput(event.target.value)}>
-            {availableResourceTypeOptions.map((option) => (
-              <option key={option.value || 'all'} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <button className="segmented-button" disabled={isApplyingFilters || resourcesQuery.isFetching} type="submit">
-            {isApplyingFilters || resourcesQuery.isFetching ? <Loader2 className="workshop-action-spinner" size={14} /> : null}
-            {isApplyingFilters || resourcesQuery.isFetching ? 'Applying...' : 'Apply'}
-          </button>
-        </form>
+      {programKey || hasPendingPayment ? (
+      <section className="student-resource-toolbar" aria-label="Resource notices">
         {programKey ? (
           <div className="student-resource-scope">
             <span>Program: {programKey.toUpperCase()}</span>
@@ -410,6 +333,27 @@ export function StudentResourcesPage() {
           </div>
         ) : null}
       </section>
+      ) : null}
+
+      {resourceDomainOptions.length > 0 ? (
+        <nav className="student-resource-domain-tabs" aria-label="Resource Domain filters">
+          <button className={!resourceDomainKey ? 'student-resource-domain-tab student-resource-domain-tab--active' : 'student-resource-domain-tab'} onClick={() => updateResourceDomain('')} type="button">
+            <span>All</span>
+            <strong>{resourceDomainOptions.reduce((totalCount, option) => totalCount + option.count, 0)}</strong>
+          </button>
+          {resourceDomainOptions.map((option) => (
+            <button
+              className={resourceDomainKey === option.domainKey ? 'student-resource-domain-tab student-resource-domain-tab--active' : 'student-resource-domain-tab'}
+              key={option.domainKey}
+              onClick={() => updateResourceDomain(option.domainKey)}
+              type="button"
+            >
+              <span>{option.label}</span>
+              <strong>{option.count}</strong>
+            </button>
+          ))}
+        </nav>
+      ) : null}
 
       {data && sortedResources.length > 0 ? (
         <section className="student-resource-library" aria-label="Visible resources">
@@ -459,13 +403,13 @@ export function StudentResourcesPage() {
       ) : (
         <ResourceEmptyState
           description="Resource library items mapped to your account will appear here."
-          title={resourceType || programKey ? 'No matching resource library items' : 'No resource library items yet'}
+          title={programKey || resourceDomainKey ? 'No matching resource library items' : 'No resource library items yet'}
         />
       )}
 
       <nav className="pagination-bar" aria-label="Resource pagination">
         {data?.hasPreviousPage ? (
-          <Link className="pagination-link" to={buildPageLink(page - 1, resourceType, programKey)}>
+          <Link className="pagination-link" to={buildPageLink(page - 1, programKey, resourceDomainKey)}>
             Previous page
           </Link>
         ) : (
@@ -475,7 +419,7 @@ export function StudentResourcesPage() {
           Page {page} of {totalPages} · {total} matching · {recentlyAddedCount} recent
         </span>
         {data?.hasNextPage ? (
-          <Link className="pagination-link" to={buildPageLink(page + 1, resourceType, programKey)}>
+          <Link className="pagination-link" to={buildPageLink(page + 1, programKey, resourceDomainKey)}>
             Next page
           </Link>
         ) : (
