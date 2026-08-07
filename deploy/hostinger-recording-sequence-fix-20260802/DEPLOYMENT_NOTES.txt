@@ -1,0 +1,15 @@
+Hostinger deployment package: Recording sequence helper fix
+
+Generated: 2026-08-02
+
+Upload the contents of this folder to Hostinger public_html.
+
+Important backend step:
+- Deploy the Supabase Edge Function `zoom-meetings` after uploading the frontend.
+- This release updates `supabase/functions/zoom-meetings/index.ts` so helper-created completed workshops save `program_key`.
+
+Included fixes:
+- Helper-created recording workshops are recognized by sequence rules after publish.
+- Existing published rows can infer sequence from active cohort program/domain when program_key is missing.
+- Missing Recording Helper no longer keeps showing a topic after its helper-created recording is published.
+- Published recording library should show Seq number instead of Unsequenced for matching helper-created recordings.

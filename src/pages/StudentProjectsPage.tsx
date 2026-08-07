@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, BookOpen, CalendarDays, ChevronDown, ExternalLink, FolderKanban, Info, Layers3, Link as LinkIcon, Send, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BookOpen, ChevronDown, ExternalLink, FolderKanban, Info, Layers3, Link as LinkIcon, Send, X } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { ProjectRichText, sanitizeProjectHtml } from '../components/ProjectRichText';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
@@ -240,16 +240,6 @@ function buildRoleOptions(projects: StudentProject[]): ProjectRoleOption[] {
     .map((role) => ({ label: role, value: role }));
 }
 
-function upcomingDeadline(projects: StudentProject[]) {
-  const now = Date.now();
-  const deadlines = projects
-    .map((project) => ({ project, time: project.deadline ? new Date(project.deadline).getTime() : Number.NaN }))
-    .filter((item) => !Number.isNaN(item.time) && item.time >= now)
-    .sort((left, right) => left.time - right.time);
-
-  return deadlines[0]?.project;
-}
-
 function isPastDeadline(value: string | undefined) {
   if (!value) return false;
   const deadline = new Date(`${value.slice(0, 10)}T23:59:59.999`);
@@ -408,6 +398,35 @@ function SubmissionStatusCard({ submission }: { submission: StudentProjectSubmis
         {submission.cohortName ? ` · ${submission.cohortName}` : ''}
       </small>
     </div>
+  );
+}
+
+function LiveProjectHeroSubmissionAction({
+  availableCohorts,
+  latestSubmission,
+  onSubmit,
+  project
+}: {
+  availableCohorts: StudentCohort[];
+  latestSubmission?: StudentProjectSubmission;
+  onSubmit: () => void;
+  project: StudentProject;
+}) {
+  return (
+    <aside className="live-project-hero-action" aria-label="Project submission action and status">
+      <span>Selected project</span>
+      <strong>{project.title}</strong>
+      {availableCohorts.length > 0 ? (
+        <button className="student-action student-action--primary live-project-hero-action__cta" onClick={onSubmit} type="button">
+          <Send size={15} />
+          Submit Report
+        </button>
+      ) : latestSubmission ? (
+        <SubmissionStatusCard submission={latestSubmission} />
+      ) : (
+        <em>No eligible cohort available for submission</em>
+      )}
+    </aside>
   );
 }
 
@@ -1024,14 +1043,22 @@ function LiveProjectDetail({ allSubmissions, cohorts, project }: { allSubmission
   return (
     <section className="live-project-detail">
       <div className="live-project-hero">
-        <span className="eyebrow">Live project</span>
-        <h2>{project.title}</h2>
-        <div className="live-project-hero__badges">
-          <StatusBadge>{projectRoleValue(project)}</StatusBadge>
-          {project.companyName ? <StatusBadge>{project.companyName}</StatusBadge> : null}
-          {project.deadline ? <StatusBadge tone={deadlinePassed ? 'warning' : 'neutral'}>{deadlinePassed ? `Late after ${formatDate(project.deadline)}` : formatDate(project.deadline)}</StatusBadge> : null}
+        <div className="live-project-hero__main">
+          <span className="eyebrow">Live project</span>
+          <h2>{project.title}</h2>
+          <div className="live-project-hero__badges">
+            <StatusBadge>{projectRoleValue(project)}</StatusBadge>
+            {project.companyName ? <StatusBadge>{project.companyName}</StatusBadge> : null}
+            {project.deadline ? <StatusBadge tone={deadlinePassed ? 'warning' : 'neutral'}>{deadlinePassed ? `Late after ${formatDate(project.deadline)}` : formatDate(project.deadline)}</StatusBadge> : null}
+          </div>
+          <p>A complete project brief with objectives, deliverables, supporting sections, and submission status.</p>
         </div>
-        <p>A complete project brief with objectives, deliverables, supporting sections, and submission status.</p>
+        <LiveProjectHeroSubmissionAction
+          availableCohorts={availableCohorts}
+          latestSubmission={latestSubmission}
+          onSubmit={() => setModalOpen(true)}
+          project={project}
+        />
       </div>
 
       <div className={importantLinks.length > 0 ? 'live-project-reader' : 'live-project-reader live-project-reader--full'}>
@@ -1091,6 +1118,7 @@ function LiveProjectDetail({ allSubmissions, cohorts, project }: { allSubmission
           )}
         </div>
 
+        {submitMessage && !modalOpen ? <p className="live-project-submit-note">{submitMessage}</p> : null}
         {availableCohorts.length > 0 ? (
           <button className="student-action student-action--primary live-project-submit" onClick={() => setModalOpen(true)} type="button">
             <Send size={18} />
@@ -1101,21 +1129,19 @@ function LiveProjectDetail({ allSubmissions, cohorts, project }: { allSubmission
         ) : (
           <span className="live-project-submit live-project-submit--disabled">No eligible cohort available for submission</span>
         )}
-
-        {submitMessage && !modalOpen ? <p className="live-project-submit-note">{submitMessage}</p> : null}
-        {modalOpen ? (
-          <ProjectSubmissionModal
-            cohorts={availableCohorts}
-            error={submitMutation.isError ? submitMutation.error.message : undefined}
-            isLate={deadlinePassed}
-            isSubmitting={submitMutation.isPending}
-            message={submitMessage}
-            onClose={() => setModalOpen(false)}
-            onSubmit={handleSubmit}
-            project={project}
-          />
-        ) : null}
       </article>
+      {modalOpen ? (
+        <ProjectSubmissionModal
+          cohorts={availableCohorts}
+          error={submitMutation.isError ? submitMutation.error.message : undefined}
+          isLate={deadlinePassed}
+          isSubmitting={submitMutation.isPending}
+          message={submitMessage}
+          onClose={() => setModalOpen(false)}
+          onSubmit={handleSubmit}
+          project={project}
+        />
+      ) : null}
     </section>
   );
 }
@@ -1138,7 +1164,6 @@ export function StudentProjectsPage() {
     [projects, selectedRole]
   );
   const selectedProject = filteredProjects.find((project) => project.id === selectedProjectId) ?? filteredProjects[0];
-  const nextDeadlineProject = useMemo(() => upcomingDeadline(projects), [projects]);
 
   useEffect(() => {
     if (selectedRole !== 'all' && !roleOptions.some((role) => role.value === selectedRole)) {
@@ -1198,11 +1223,6 @@ export function StudentProjectsPage() {
               <Layers3 size={20} />
               <span>Project roles</span>
               <strong>{roleOptions.length}</strong>
-            </article>
-            <article className="live-project-summary-card">
-              <CalendarDays size={20} />
-              <span>Next deadline</span>
-              <strong>{nextDeadlineProject ? formatDate(nextDeadlineProject.deadline) : 'Not set'}</strong>
             </article>
           </section>
 

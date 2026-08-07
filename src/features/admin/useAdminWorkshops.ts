@@ -46,6 +46,7 @@ export type AdminWorkshopWritePayload = {
   customJoinUrl?: string;
   date: string;
   durationMinutes?: number;
+  programKey?: string | null;
   sessionType?: AdminWorkshopSessionType;
   time?: string;
   title: string;

@@ -1,0 +1,15 @@
+Hostinger deployment package: Recording helper program-level fix
+
+Generated: 2026-08-02
+
+Upload the contents of this folder to Hostinger public_html.
+
+Important backend step:
+- Deploy the Supabase Edge Function `zoom-meetings` after uploading the frontend.
+- This release still requires the updated `zoom-meetings` function for helper-created completed workshops to save `program_key`.
+
+Included fixes:
+- Missing Recording Helper no longer expands program-level gaps into every active cohort.
+- Program/domain-level missing recordings show once as Program level.
+- Cohort-specific missing recordings still show per cohort.
+- Add Link works from the helper for both cohort-level and program-level missing rows.

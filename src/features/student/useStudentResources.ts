@@ -18,6 +18,7 @@ export type StudentResource = {
   phase?: string;
   price?: number;
   programKeys: string[];
+  resourceDomainKey?: string | null;
   resourceId?: string;
   resourceMode?: string;
   resourceType: string;
@@ -32,6 +33,7 @@ export type StudentResourcesSummary = {
   locked: number;
   paid: number;
   recentlyAdded: number;
+  domainCounts: Record<string, number>;
   typeCounts: Record<string, number>;
 };
 
@@ -45,8 +47,16 @@ export type StudentResourcesQuery = {
   limit?: number;
   page?: number;
   programKey?: string;
+  resourceDomainKey?: string;
   resourceType?: string;
   search?: string;
+};
+
+export type StudentResourceDomain = {
+  count: number;
+  domainKey: string;
+  label: string;
+  sortOrder: number;
 };
 
 export function useStudentResources(query: StudentResourcesQuery) {
@@ -56,6 +66,7 @@ export function useStudentResources(query: StudentResourcesQuery) {
   const locked = query.locked ?? 'all';
   const page = query.page ?? 1;
   const programKey = query.programKey?.trim();
+  const resourceDomainKey = query.resourceDomainKey?.trim();
   const resourceType = query.resourceType?.trim();
   const search = query.search?.trim();
 
@@ -70,11 +81,32 @@ export function useStudentResources(query: StudentResourcesQuery) {
           locked,
           page,
           programKey,
+          resourceDomainKey,
           resourceType,
           search
         }
       }),
-    queryKey: ['student-resources', accessToken, page, limit, accessType, locked, programKey, resourceType, search],
+    queryKey: ['student-resources', accessToken, page, limit, accessType, locked, programKey, resourceDomainKey, resourceType, search],
+    staleTime: 60_000
+  });
+}
+
+export function useStudentResourceDomains(query: Pick<StudentResourcesQuery, 'programKey' | 'resourceType'> = {}) {
+  const { accessToken } = useAuth();
+  const programKey = query.programKey?.trim();
+  const resourceType = query.resourceType?.trim();
+
+  return useQuery({
+    enabled: Boolean(accessToken),
+    queryFn: () =>
+      apiGet<StudentResourceDomain[]>('/students/me/resource-domains', {
+        accessToken: accessToken ?? undefined,
+        query: {
+          programKey,
+          resourceType
+        }
+      }),
+    queryKey: ['student-resource-domains', accessToken, programKey, resourceType],
     staleTime: 60_000
   });
 }

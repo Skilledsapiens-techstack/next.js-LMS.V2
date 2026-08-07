@@ -12,6 +12,7 @@ export type AdminResource = {
   currency: string;
   description?: string;
   domainKey?: string;
+  resourceDomainKey?: string | null;
   guestAccessEnabled?: boolean;
   guestAccessExpiresAt?: string | null;
   guestCtaLabel?: string | null;
@@ -53,6 +54,7 @@ export type AdminResourceWritePayload = {
   currency?: string;
   description?: string | null;
   domainKey?: string | null;
+  resourceDomainKey?: string | null;
   guestAccessEnabled?: boolean;
   guestAccessExpiresAt?: string | null;
   guestCtaLabel?: string | null;
@@ -67,6 +69,27 @@ export type AdminResourceWritePayload = {
   status: AdminResourceStatus;
   title: string;
   url?: string | null;
+};
+
+export type AdminResourceDomainStatus = 'active' | 'inactive';
+
+export type AdminResourceDomain = {
+  createdAt?: string;
+  description?: string | null;
+  domainKey: string;
+  id: string;
+  label: string;
+  sortOrder: number;
+  status: AdminResourceDomainStatus;
+  updatedAt?: string;
+};
+
+export type AdminResourceDomainWritePayload = {
+  description?: string | null;
+  domainKey: string;
+  label: string;
+  sortOrder: number;
+  status: AdminResourceDomainStatus;
 };
 
 export type AdminResourcesQuery = {
@@ -107,6 +130,61 @@ export function useAdminResources(query: AdminResourcesQuery) {
       }),
     queryKey: ['admin-resources', accessToken, page, limit, status, accessType, programKey, cohortName, search],
     staleTime: 60_000
+  });
+}
+
+export function useAdminResourceDomains() {
+  const { accessToken } = useAuth();
+
+  return useQuery({
+    enabled: Boolean(accessToken),
+    queryFn: () =>
+      apiGet<PaginatedResponse<AdminResourceDomain>>('/admins/resource-domains', {
+        accessToken: accessToken ?? undefined,
+        query: {
+          limit: 100,
+          page: 1,
+          sort: 'order'
+        }
+      }),
+    queryKey: ['admin-resource-domains', accessToken],
+    staleTime: 60_000
+  });
+}
+
+export function useSaveAdminResourceDomain() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: AdminResourceDomainWritePayload) =>
+      apiPost<AdminResourceDomain, AdminResourceDomainWritePayload>('/admins/resource-domains', {
+        accessToken: accessToken ?? undefined,
+        body
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-resource-domains'] });
+      void queryClient.invalidateQueries({ queryKey: ['student-resource-domains'] });
+    }
+  });
+}
+
+export function useUpdateAdminResourceDomain() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ body, domainId }: { body: AdminResourceDomainWritePayload; domainId: string }) =>
+      apiPatch<AdminResourceDomain, AdminResourceDomainWritePayload>(`/admins/resource-domains/${domainId}`, {
+        accessToken: accessToken ?? undefined,
+        body
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-resource-domains'] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-resources'] });
+      void queryClient.invalidateQueries({ queryKey: ['student-resource-domains'] });
+      void queryClient.invalidateQueries({ queryKey: ['student-resources'] });
+    }
   });
 }
 

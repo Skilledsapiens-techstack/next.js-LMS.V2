@@ -478,8 +478,7 @@ async function generateOne(supabase: ReturnType<typeof createClient>, certificat
     throw new Error('A fresh certificate PDF was already generated in the last 24 hours. Please try again later or contact your program coordinator.');
   }
 
-  const fallbackPdfNeedsRepair = /Google Slides fallback used/i.test(text(certificate.generation_error));
-  if (options.force && minutesAgo(certificate.pdf_generated_at) < REGENERATION_COOLDOWN_MINUTES && !fallbackPdfNeedsRepair) {
+  if (options.force && minutesAgo(certificate.pdf_generated_at) < REGENERATION_COOLDOWN_MINUTES) {
     if (currentPath && currentExpiry.getTime() > Date.now()) {
       const { data: signed, error: signedError } = await supabase.storage.from(TEMP_BUCKET).createSignedUrl(currentPath, 60 * 60 * 24);
       if (signedError) throw signedError;
@@ -511,23 +510,7 @@ async function generateOne(supabase: ReturnType<typeof createClient>, certificat
     pdfBytes = slidesPdf.pdfBytes;
     templateUrl = slidesPdf.templateUrl;
   } else {
-    if (templateType === 'leadership_program') {
-      throw new Error(`Leadership certificates must be generated from the Google Slides template. ${slidesError || 'Google Slides certificate generator is not configured.'}`);
-    }
-
-    const { data: template, error: templateError } = await supabase
-      .from('certificate_templates')
-      .select('*')
-      .eq('template_type', templateType)
-      .eq('is_active', true)
-      .single();
-    if (templateError || !template) throw new Error(`Active ${templateType} template was not found.`);
-
-    const { data: templateFile, error: downloadError } = await supabase.storage.from(text(template.storage_bucket, TEMPLATE_BUCKET)).download(text(template.storage_path));
-    if (downloadError || !templateFile) throw new Error(downloadError?.message ?? 'Template download failed.');
-
-    pdfBytes = await createPdf(new Uint8Array(await templateFile.arrayBuffer()), certificate);
-    templateUrl = `${text(template.storage_bucket, TEMPLATE_BUCKET)}/${text(template.storage_path)}`;
+    throw new Error(`${certificateTypeLabel(certificate.certificate_type)} must be generated from the Google Slides template. ${slidesError || 'Google Slides certificate generator is not configured.'}`);
   }
   const year = new Date().getFullYear();
   const folder = templateType === 'live_project' ? 'live-project' : 'leadership-program';
@@ -542,7 +525,7 @@ async function generateOne(supabase: ReturnType<typeof createClient>, certificat
   if (currentPath && currentPath !== outputPath) await supabase.storage.from(TEMP_BUCKET).remove([currentPath]);
 
   const updatePayload = {
-    generation_error: slidesError ? `Google Slides fallback used: ${slidesError}` : null,
+    generation_error: null,
     generation_status: 'ready',
     pdf_expires_at: expiresAt,
     pdf_generated_at: new Date().toISOString(),

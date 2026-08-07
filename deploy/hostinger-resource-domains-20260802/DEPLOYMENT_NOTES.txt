@@ -1,0 +1,24 @@
+Hostinger deployment package - Resource Domains - 2026-08-02
+
+Build command:
+npm run build
+
+Package contents:
+- Production Vite build from dist/
+- .htaccess for SPA routing on Hostinger
+
+Included changes:
+- Admin Resources: Resource Domain dropdown while creating/editing resources.
+- Admin Resources: manageable Resource Domain list for student-side filter tabs.
+- Student Resource Library: Resource Domain tab filters with counts.
+- Student Resource Library: red hover and active state for Resource Domain tabs.
+
+Database notes:
+- Supabase migration 20260802073550_resource_domains.sql has already been pushed.
+- Migration adds public.resource_domains, seeds Marketing, Product Management, Consulting, Finance, Analytics, HR, and Placements.
+- Migration adds resources.resource_domain_key for Resource Domain assignment.
+
+Deployment:
+1. Upload hostinger-resource-domains-20260802.zip to Hostinger File Manager.
+2. Extract the zip contents directly inside the target public web root.
+3. Keep .htaccess in place so direct LMS routes continue to work.

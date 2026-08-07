@@ -7,13 +7,19 @@ import { useAdminCohorts } from '../features/admin/useAdminCohorts';
 import { useAdminPrograms } from '../features/admin/useAdminPrograms';
 import {
   AdminResource,
+  AdminResourceDomain,
+  AdminResourceDomainStatus,
+  AdminResourceDomainWritePayload,
   AdminResourceStatus,
   AdminResourceWritePayload,
   useAdminResourceAuditLogs,
+  useAdminResourceDomains,
   useAdminResources,
   useArchiveAdminResource,
   useRestoreAdminResource,
+  useSaveAdminResourceDomain,
   useSaveAdminResource,
+  useUpdateAdminResourceDomain,
   useUpdateAdminResource
 } from '../features/admin/useAdminResources';
 
@@ -32,6 +38,7 @@ type ResourceFormState = {
   price: string;
   programKeys: string[];
   resourceId: string;
+  resourceDomainKey: string;
   resourceMode: string;
   resourceType: string;
   status: AdminResourceStatus;
@@ -70,6 +77,14 @@ const resourceModeOptions = [
   { label: 'DOC', value: 'doc' }
 ];
 
+const emptyResourceDomainForm = {
+  description: '',
+  domainKey: '',
+  label: '',
+  sortOrder: '100',
+  status: 'active' as AdminResourceDomainStatus
+};
+
 const emptyResourceForm: ResourceFormState = {
   accessType: 'free',
   cohortNames: [],
@@ -85,6 +100,7 @@ const emptyResourceForm: ResourceFormState = {
   price: '',
   programKeys: [],
   resourceId: `RES-${Date.now()}`,
+  resourceDomainKey: '',
   resourceMode: 'link',
   resourceType: 'general',
   status: 'active',
@@ -131,6 +147,7 @@ function mapResourceToForm(resource: AdminResource): ResourceFormState {
     price: resource.price === undefined ? '' : String(resource.price),
     programKeys: resource.programKeys,
     resourceId: resource.resourceId ?? resource.id,
+    resourceDomainKey: resource.resourceDomainKey ?? '',
     resourceMode: normalizeOptionValue(resource.resourceMode, 'link'),
     resourceType: normalizeOptionValue(resource.resourceType, 'general'),
     status: resource.status,
@@ -186,7 +203,12 @@ export function AdminResourcesPage() {
   const [pendingArchiveResource, setPendingArchiveResource] = useState<AdminResource | null>(null);
   const [archiveActionResourceId, setArchiveActionResourceId] = useState<string | null>(null);
   const [restoreActionResourceId, setRestoreActionResourceId] = useState<string | null>(null);
+  const [domainFormState, setDomainFormState] = useState(emptyResourceDomainForm);
+  const [editingDomainId, setEditingDomainId] = useState<string | null>(null);
+  const [domainFormError, setDomainFormError] = useState<string | null>(null);
+  const [domainActionMessage, setDomainActionMessage] = useState<string | null>(null);
   const resourcesQuery = useAdminResources({ cohortName: cohortFilter, limit: resourcePageSize, page: resourcePage, programKey: programFilter, search, status: statusFilter });
+  const resourceDomainsQuery = useAdminResourceDomains();
   const programsQuery = useAdminPrograms({ limit: 100, page: 1, status: 'all' });
   const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, sort: 'name', status: 'all' });
   const cohortsPageTwoQuery = useAdminCohorts({ enabled: (cohortsPageOneQuery.data?.totalPages ?? 1) >= 2, limit: 100, page: 2, sort: 'name', status: 'all' });
@@ -195,9 +217,12 @@ export function AdminResourcesPage() {
   const updateResourceMutation = useUpdateAdminResource();
   const archiveResourceMutation = useArchiveAdminResource();
   const restoreResourceMutation = useRestoreAdminResource();
+  const saveDomainMutation = useSaveAdminResourceDomain();
+  const updateDomainMutation = useUpdateAdminResourceDomain();
   const auditLogsQuery = useAdminResourceAuditLogs(selectedResourceId);
 
   const resources = resourcesQuery.data?.items ?? [];
+  const resourceDomains = resourceDomainsQuery.data?.items ?? [];
   const totalResources = resourcesQuery.data?.total ?? 0;
   const totalResourcePages = resourcesQuery.data?.totalPages ?? 1;
   const hasPreviousResourcePage = resourcePage > 1;
@@ -210,6 +235,7 @@ export function AdminResourcesPage() {
   const selectableCohorts = useMemo(() => cohorts.filter((cohort) => cohort.status === 'active' || cohort.status === 'upcoming'), [cohorts]);
   const lastRefresh = formatDateTime(resources[0]?.updatedAt);
   const selectedResource = resources.find((resource) => resource.id === selectedResourceId);
+  const resourceDomainLabelMap = useMemo(() => new Map(resourceDomains.map((domain) => [domain.domainKey, domain.label])), [resourceDomains]);
 
   const filteredResources = resources;
 
@@ -247,6 +273,29 @@ export function AdminResourcesPage() {
     if (!title || !url) return undefined;
     return resources.find((resource) => resource.id !== selectedResourceId && resource.title.trim().toLowerCase() === title && (resource.url ?? '').trim().toLowerCase() === url);
   }, [formState.title, formState.url, resources, selectedResourceId]);
+
+  function updateDomainForm<K extends keyof typeof emptyResourceDomainForm>(key: K, value: (typeof emptyResourceDomainForm)[K]) {
+    setDomainFormState((current) => ({ ...current, [key]: value }));
+  }
+
+  function startEditingDomain(domain: AdminResourceDomain) {
+    setEditingDomainId(domain.id);
+    setDomainFormState({
+      description: domain.description ?? '',
+      domainKey: domain.domainKey,
+      label: domain.label,
+      sortOrder: String(domain.sortOrder ?? 100),
+      status: domain.status
+    });
+    setDomainFormError(null);
+    setDomainActionMessage(null);
+  }
+
+  function resetDomainForm() {
+    setEditingDomainId(null);
+    setDomainFormState(emptyResourceDomainForm);
+    setDomainFormError(null);
+  }
 
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -308,6 +357,75 @@ export function AdminResourcesPage() {
       paymentLink: accessType === 'free' ? '' : current.paymentLink,
       price: accessType === 'free' ? '' : current.price
     }));
+  }
+
+  function buildResourceDomainPayload(): AdminResourceDomainWritePayload | null {
+    const label = domainFormState.label.trim();
+    const domainKey = domainFormState.domainKey.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const sortOrder = Number(domainFormState.sortOrder || 100);
+
+    if (!label) {
+      setDomainFormError('Resource Domain label is required.');
+      return null;
+    }
+    if (!domainKey) {
+      setDomainFormError('Resource Domain key is required.');
+      return null;
+    }
+    if (!Number.isFinite(sortOrder)) {
+      setDomainFormError('Sort order must be a number.');
+      return null;
+    }
+
+    return {
+      description: domainFormState.description.trim() || null,
+      domainKey,
+      label,
+      sortOrder,
+      status: domainFormState.status
+    };
+  }
+
+  async function saveResourceDomain(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setDomainFormError(null);
+    setDomainActionMessage(null);
+
+    const payload = buildResourceDomainPayload();
+    if (!payload) return;
+
+    try {
+      if (editingDomainId) {
+        await updateDomainMutation.mutateAsync({ body: payload, domainId: editingDomainId });
+        setDomainActionMessage('Resource Domain updated.');
+      } else {
+        await saveDomainMutation.mutateAsync(payload);
+        setDomainActionMessage('Resource Domain created.');
+      }
+      resetDomainForm();
+    } catch (error) {
+      setDomainFormError(readableError(error, 'Resource Domain could not be saved.'));
+    }
+  }
+
+  async function toggleResourceDomainStatus(domain: AdminResourceDomain) {
+    setDomainFormError(null);
+    setDomainActionMessage(null);
+    try {
+      await updateDomainMutation.mutateAsync({
+        body: {
+          description: domain.description ?? null,
+          domainKey: domain.domainKey,
+          label: domain.label,
+          sortOrder: domain.sortOrder,
+          status: domain.status === 'active' ? 'inactive' : 'active'
+        },
+        domainId: domain.id
+      });
+      setDomainActionMessage(domain.status === 'active' ? 'Resource Domain hidden from student filters.' : 'Resource Domain restored.');
+    } catch (error) {
+      setDomainFormError(readableError(error, 'Resource Domain status could not be changed.'));
+    }
   }
 
   function toggleCohort(name: string) {
@@ -389,6 +507,10 @@ export function AdminResourcesPage() {
       setFormError('Select at least one cohort or one program.');
       return null;
     }
+    if (!formState.resourceDomainKey.trim()) {
+      setFormError('Select a Resource Domain.');
+      return null;
+    }
     if (formState.accessType === 'paid') {
       if (!price || Number(price) <= 0) {
         setFormError('Paid resources require a positive price.');
@@ -423,6 +545,7 @@ export function AdminResourcesPage() {
       price: formState.accessType === 'paid' ? Number(price) : null,
       programKeys: effectiveProgramKeys,
       resourceId,
+      resourceDomainKey: formState.resourceDomainKey.trim(),
       resourceMode: formState.resourceMode,
       resourceType: formState.resourceType,
       status: formState.status,
@@ -588,6 +711,7 @@ export function AdminResourcesPage() {
                       <h3>{resource.title}</h3>
                       <p>{[resource.resourceId ?? resource.id, resource.resourceType, resource.resourceMode].filter(Boolean).join(' · ')}</p>
                       <div className="chip-row">
+                        {resource.resourceDomainKey ? <span>{resourceDomainLabelMap.get(resource.resourceDomainKey) ?? resource.resourceDomainKey}</span> : null}
                         {resource.programKeys.length > 0 ? <span>{resource.programKeys.join(',')}</span> : null}
                         {resource.cohortNames.length > 0 ? <span>{resource.cohortNames.join(',')}</span> : null}
                         <StatusBadge tone={resource.status === 'active' ? 'safe' : 'warning'}>{resource.status}</StatusBadge>
@@ -673,6 +797,19 @@ export function AdminResourcesPage() {
                   </option>
                 ))}
               </select>
+            </label>
+            <label className="admin-project-form__wide">
+              <span>Resource Domain *</span>
+              <select value={formState.resourceDomainKey} onChange={(event) => updateForm('resourceDomainKey', event.target.value)}>
+                <option value="">Select Resource Domain</option>
+                {resourceDomains.map((domain) => (
+                  <option key={domain.id} value={domain.domainKey}>
+                    {domain.label}
+                    {domain.status === 'inactive' ? ' (inactive)' : ''}
+                  </option>
+                ))}
+              </select>
+              <small>This controls the student-side domain filter tabs. Program/cohort visibility remains separate below.</small>
             </label>
             <fieldset className="admin-project-program-picker admin-resource-program-picker">
               <legend>Share with (programs)</legend>
@@ -884,6 +1021,84 @@ export function AdminResourcesPage() {
           </form>
         </section>
       </div>
+      <section className="admin-project-section admin-resource-domain-manager">
+        <header className="admin-project-section__header">
+          <div>
+            <span>Resource Domains</span>
+            <h2>Manage Student Filter Tabs</h2>
+          </div>
+          <button className="segmented-button admin-resource-action" onClick={resetDomainForm} type="button">
+            Clear Domain Form
+          </button>
+        </header>
+
+        <div className="admin-resource-domain-manager__body">
+          <form className="admin-resource-domain-form" onSubmit={saveResourceDomain}>
+            <label>
+              <span>Domain Label *</span>
+              <input value={domainFormState.label} onChange={(event) => updateDomainForm('label', event.target.value)} placeholder="Marketing" />
+            </label>
+            <label>
+              <span>Domain Key *</span>
+              <input value={domainFormState.domainKey} onChange={(event) => updateDomainForm('domainKey', event.target.value)} placeholder="marketing" />
+            </label>
+            <label>
+              <span>Sort Order</span>
+              <input value={domainFormState.sortOrder} onChange={(event) => updateDomainForm('sortOrder', event.target.value)} inputMode="numeric" />
+            </label>
+            <label>
+              <span>Status</span>
+              <select value={domainFormState.status} onChange={(event) => updateDomainForm('status', event.target.value as AdminResourceDomainStatus)}>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </label>
+            <label className="admin-project-form__wide">
+              <span>Description</span>
+              <textarea value={domainFormState.description} onChange={(event) => updateDomainForm('description', event.target.value)} placeholder="Optional admin note" rows={3} />
+            </label>
+            <div className="admin-project-form__actions admin-project-form__wide">
+              <button className="segmented-button segmented-button--gold admin-resource-action" disabled={saveDomainMutation.isPending || updateDomainMutation.isPending} type="submit">
+                {saveDomainMutation.isPending || updateDomainMutation.isPending ? <Loader2 className="workshop-action-spinner" size={14} /> : <Save size={14} />}
+                {editingDomainId ? 'Update Domain' : 'Save Domain'}
+              </button>
+            </div>
+            {domainFormError ? <p className="admin-resource-error-note admin-project-form__wide">{domainFormError}</p> : null}
+            {domainActionMessage ? (
+              <p className="admin-resource-success-note admin-project-form__wide">
+                <CheckCircle2 size={15} />
+                {domainActionMessage}
+              </p>
+            ) : null}
+          </form>
+
+          <div className="admin-resource-domain-list" aria-label="Resource Domain list">
+            {resourceDomainsQuery.isLoading ? (
+              <p>Loading Resource Domains.</p>
+            ) : resourceDomains.length > 0 ? (
+              resourceDomains.map((domain) => (
+                <article key={domain.id}>
+                  <div>
+                    <strong>{domain.label}</strong>
+                    <span>{domain.domainKey}</span>
+                  </div>
+                  <StatusBadge tone={domain.status === 'active' ? 'safe' : 'warning'}>{domain.status}</StatusBadge>
+                  <div>
+                    <button className="segmented-button admin-resource-action" onClick={() => startEditingDomain(domain)} type="button">
+                      Edit
+                    </button>
+                    <button className="segmented-button admin-resource-action" disabled={updateDomainMutation.isPending} onClick={() => void toggleResourceDomainStatus(domain)} type="button">
+                      {domain.status === 'active' ? 'Hide' : 'Restore'}
+                    </button>
+                  </div>
+                </article>
+              ))
+            ) : (
+              <p>No Resource Domains available yet.</p>
+            )}
+          </div>
+        </div>
+      </section>
       {pendingArchiveResource ? (
         <div className="student-modal-backdrop" role="presentation">
           <section className="student-modal workshop-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="archive-resource-title">

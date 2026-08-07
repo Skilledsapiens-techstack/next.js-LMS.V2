@@ -5,6 +5,7 @@ import { PaginatedResponse } from './student/useStudentAnnouncements';
 
 export type FeatureControlStatus = 'show' | 'upcoming' | 'hide';
 export type RecordingPlaybackMode = 'external' | 'popup';
+export type RecordingViewMode = 'classic' | 'modern';
 
 export type FeatureControl = {
   createdAt?: string;
@@ -37,7 +38,7 @@ export const defaultFeatureMessages: Record<string, string> = {
   payments: 'Payments and access details will be available soon.',
   'project-submissions': 'Project submissions will be available soon.',
   projects: 'Live Project Hub will be enabled soon.',
-  recordings: 'Watch Recordings will be available after your sessions are published.',
+  recordings: 'My Programs training modules will be available after your sessions are published.',
   resources: 'Resource Library will be available after onboarding.',
   schedule: 'Upcoming Workshops will be visible once sessions are planned.',
   support: 'Support will be available soon.',
@@ -54,6 +55,12 @@ export function getRecordingPlaybackMode(feature?: Pick<FeatureControl, 'moduleI
   if (!feature || feature.moduleId !== 'recordings') return 'external';
   const value = feature.settings?.recording_playback_mode ?? feature.settings?.recordingPlaybackMode;
   return value === 'popup' ? 'popup' : 'external';
+}
+
+export function getRecordingViewMode(feature?: Pick<FeatureControl, 'moduleId' | 'settings'> | null): RecordingViewMode {
+  if (!feature || feature.moduleId !== 'recordings') return 'classic';
+  const value = feature.settings?.recording_view_mode ?? feature.settings?.recordingViewMode;
+  return value === 'modern' ? 'modern' : 'classic';
 }
 
 export function useStudentFeatureControls(query: { enabled?: boolean } = {}) {

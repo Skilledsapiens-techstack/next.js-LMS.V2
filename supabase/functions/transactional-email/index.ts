@@ -236,6 +236,18 @@ function passwordEmailIntentFromRedirect(value: unknown, fallback: 'create' | 'f
   }
 }
 
+function redirectUrlWithEmail(redirectUrl: string, email: string) {
+  const cleanEmail = normalizeEmail(email);
+  if (!cleanEmail) return redirectUrl;
+  try {
+    const url = new URL(redirectUrl);
+    url.searchParams.set('email', cleanEmail);
+    return url.toString();
+  } catch (_err) {
+    return redirectUrl;
+  }
+}
+
 async function assertPublicCaller(req: Request) {
   if (req.method !== 'POST') throw new Error('POST is required.');
 }
@@ -374,13 +386,23 @@ async function generateAuthActionLink(type: 'invite' | 'recovery', student: Json
   return { status: 'failed', message: bodyText.slice(0, 300) || `Supabase link generation returned ${response.status}`, type };
 }
 
-async function passwordSetupLink(student: JsonRecord, createRedirectUrl: string, recoveryRedirectUrl?: string) {
-  let link = await generateAuthActionLink('invite', student, createRedirectUrl);
-  let mode = 'invite';
-  if (link.status === 'existing') {
-    link = await generateAuthActionLink('recovery', student, recoveryRedirectUrl || createRedirectUrl);
-    mode = 'recovery';
+async function passwordSetupLink(student: JsonRecord, createRedirectUrl: string, recoveryRedirectUrl?: string, preferredMode: 'invite' | 'recovery' = 'invite') {
+  const email = normalizeEmail(student.email);
+  const inviteRedirectUrl = redirectUrlWithEmail(createRedirectUrl, email);
+  const resetRedirectUrl = redirectUrlWithEmail(recoveryRedirectUrl || createRedirectUrl, email);
+  const attempts: Array<'invite' | 'recovery'> = preferredMode === 'recovery' ? ['recovery', 'invite'] : ['invite', 'recovery'];
+  let link: JsonRecord = {};
+  let mode: 'invite' | 'recovery' = preferredMode;
+
+  for (const type of attempts) {
+    link = await generateAuthActionLink(type, student, type === 'recovery' ? resetRedirectUrl : inviteRedirectUrl);
+    if (link.status === 'generated') {
+      mode = type;
+      break;
+    }
+    if (type === 'invite' && link.status !== 'existing') break;
   }
+
   if (link.status !== 'generated') {
     throw new Error(link.message || 'Supabase could not generate a password setup link.');
   }
@@ -1128,10 +1150,13 @@ async function handlePasswordSetup(payload: JsonRecord) {
   await enforceCooldown(email);
 
   const rawRedirectUrl = payload.redirect_url || payload.redirectUrl;
-  const emailIntent = passwordEmailIntentFromRedirect(rawRedirectUrl, 'create');
+  const requestedIntent = text(payload.intent).toLowerCase();
+  const emailIntent = requestedIntent === 'forgot' || requestedIntent === 'create'
+    ? requestedIntent
+    : passwordEmailIntentFromRedirect(rawRedirectUrl, 'create');
   const redirectUrl = normalizeStudentRedirectUrl(rawRedirectUrl, 'create');
   const recoveryRedirectUrl = normalizeStudentRedirectUrl(rawRedirectUrl, emailIntent);
-  const { actionLink, emailOtp, mode, verificationType } = await passwordSetupLink(student, redirectUrl, recoveryRedirectUrl);
+  const { actionLink, emailOtp, mode, verificationType } = await passwordSetupLink(student, redirectUrl, recoveryRedirectUrl, emailIntent === 'forgot' ? 'recovery' : 'invite');
   const name = text(student.full_name, 'Student') || 'Student';
   const isResetEmail = mode === 'recovery' && emailIntent !== 'create';
   const passwordPageUrl = passwordOtpPortalUrl(recoveryRedirectUrl || redirectUrl, email, verificationType, emailIntent);
@@ -1288,7 +1313,7 @@ async function processQueuedStudentEmail(payload: JsonRecord, actor: JsonRecord)
     const rawRedirectUrl = payload.redirect_url || payload.redirectUrl || params.redirect_url || params.redirectUrl;
     const redirectUrl = normalizeStudentRedirectUrl(rawRedirectUrl, 'create');
     const recoveryRedirectUrl = normalizeStudentRedirectUrl(rawRedirectUrl, 'forgot');
-    const { actionLink, emailOtp, mode, verificationType } = await passwordSetupLink(student, redirectUrl, recoveryRedirectUrl);
+    const { actionLink, emailOtp, mode, verificationType } = await passwordSetupLink(student, redirectUrl, recoveryRedirectUrl, 'invite');
     const portalUrl = portalUrlFromRedirect(redirectUrl);
     const passwordPageUrl = passwordOtpPortalUrl(mode === 'recovery' ? recoveryRedirectUrl : redirectUrl, email, verificationType, 'create');
     const emailActionUrl = emailOtp ? passwordPageUrl : actionLink;

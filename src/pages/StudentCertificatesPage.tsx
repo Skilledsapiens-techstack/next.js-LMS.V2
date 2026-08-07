@@ -48,18 +48,19 @@ function certificateTone(certificate: StudentCertificate) {
 
 function downloadButtonLabel(certificate: StudentCertificate, isPreparing: boolean) {
   if (isPreparing) return 'Preparing PDF...';
+  if (certificate.generationStatus === 'failed' || certificate.generationStatus === 'expired') return 'Retry PDF';
   return 'Download PDF';
 }
 
 function certificateReadinessMessage(certificate: StudentCertificate) {
   if (certificate.generationStatus === 'ready') return '';
   if (certificate.generationStatus === 'pending' || certificate.generationStatus === 'generating') {
-    return 'Certificate PDF is being prepared. Click Download PDF to prepare a fresh copy if needed.';
+    return 'Certificate PDF is being prepared. You can retry PDF preparation if it does not become available shortly.';
   }
   return '';
 }
 
-const certificateDownloadFallbackMessage = 'We could not prepare your PDF right now. Please contact your program coordinator at programcoordinator@skilledsapiens.com.';
+const certificateDownloadFallbackMessage = 'We could not prepare your PDF right now. Please refresh the page and try again. If the issue persists, contact your program coordinator on WhatsApp.';
 const certificateDownloadCooldownPrefix = 'A fresh certificate PDF was already generated in the last 24 hours.';
 
 function studentFacingDownloadError(error: unknown) {

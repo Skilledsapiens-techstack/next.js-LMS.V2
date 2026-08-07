@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Clock3, Edit3, ExternalLink, GripVertical, Link2, ListOrdered, Loader2, Play, Plus, RefreshCw, Save, Search, Trash2, Video, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, Clock3, Edit3, ExternalLink, GripVertical, Link2, ListOrdered, Loader2, Play, Plus, RefreshCw, Save, Search, Trash2, Video, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
 import { StatusBadge } from '../components/StatusBadge';
@@ -26,17 +26,28 @@ import {
   useEditAdminPublishedRecording,
   useAdminWorkshops,
   useFetchAdminWorkshopRecordings,
+  useMarkAdminWorkshopCompleted,
   usePublishAdminWorkshopRecording,
-  useRejectAdminWorkshopRecording
+  useRejectAdminWorkshopRecording,
+  useSaveAdminWorkshop
 } from '../features/admin/useAdminWorkshops';
 
 type RecordingTab = 'add-link' | 'pending' | 'published' | 'rejected';
 type ProgramFilter = 'all' | string;
 type CohortFilter = 'all' | string;
 type RecordingSortOption = 'latest-updated' | 'session-newest' | 'session-oldest' | 'program-az' | 'cohort-az';
+type SortDirection = 'asc' | 'desc';
+type MissingRecordingSortKey = 'audience' | 'program' | 'section' | 'sequence' | 'later';
 type RecordingEditForm = {
   alternateUrl: string;
   cohortNames: string[];
+  missingWorkshopContext?: {
+    audienceName: string;
+    audienceType: 'cohort' | 'program';
+    programKey: string;
+    rule: AdminRecordingSequenceRule;
+    section: AdminRecordingSection;
+  };
   passcode: string;
   programKey: string;
   programKeys: string[];
@@ -53,6 +64,40 @@ type ResourceManagerState = {
   title: string;
 };
 
+type MissingRecordingBulkForm = {
+  alternateUrl: string;
+  passcode: string;
+  youtubeUrl: string;
+};
+
+type MissingRecordingIssue = {
+  audienceName: string;
+  audienceType: 'cohort' | 'program';
+  foundLaterSteps: number[];
+  missingRules: AdminRecordingSequenceRule[];
+  programKey: string;
+  section: AdminRecordingSection;
+};
+
+type MissingRecordingRow = {
+  audienceName: string;
+  audienceType: 'cohort' | 'program';
+  foundLaterSteps: number[];
+  key: string;
+  programKey: string;
+  rule: AdminRecordingSequenceRule;
+  section: AdminRecordingSection;
+  workshop?: AdminWorkshop;
+};
+type MissingRecordingGroup = {
+  foundLaterSteps: number[];
+  key: string;
+  programKey: string;
+  rows: MissingRecordingRow[];
+  rule: AdminRecordingSequenceRule;
+  section: AdminRecordingSection;
+};
+
 const pageSize = 25;
 
 const recordingSortOptions: Array<{ label: string; value: RecordingSortOption }> = [
@@ -65,6 +110,12 @@ const recordingSortOptions: Array<{ label: string; value: RecordingSortOption }>
 
 const emptySequenceForm: RecordingSequenceForm = {
   programKeys: []
+};
+
+const emptyMissingRecordingBulkForm: MissingRecordingBulkForm = {
+  alternateUrl: '',
+  passcode: '',
+  youtubeUrl: ''
 };
 
 const recordingSectionOptions: Array<{ label: string; value: AdminRecordingSection }> = [
@@ -159,17 +210,172 @@ function splitSequenceAliases(value: string) {
   );
 }
 
-function sequenceRuleMatchesWorkshop(workshop: AdminWorkshop, rule: AdminRecordingSequenceRule) {
-  const workshopProgramKey = workshop.programKey?.trim().toLowerCase() ?? '';
-  if (!workshopProgramKey || workshopProgramKey !== rule.programKey) return false;
+function workshopProgramKeysForSequence(workshop: AdminWorkshop, activeCohorts: AdminCohort[]) {
+  const activeCohortByName = new Map(activeCohorts.map((cohort): [string, AdminCohort] => [cohort.name.trim().toLowerCase(), cohort]));
+  const cohortProgramKeys = cohortNamesForWorkshop(workshop, activeCohorts).flatMap((cohortName) => {
+    const cohort = activeCohortByName.get(cohortName.trim().toLowerCase());
+    return [cohort?.programKey, cohort?.domainKey];
+  });
+  return uniqueRecordingStrings([workshop.programKey, ...cohortProgramKeys]).map(normalizedProgramKey).filter(Boolean);
+}
+
+function sequenceRuleMatchesWorkshop(workshop: AdminWorkshop, rule: AdminRecordingSequenceRule, activeCohorts: AdminCohort[] = []) {
+  const ruleProgramKey = rule.programKey.trim().toLowerCase();
+  const workshopProgramKeys = workshopProgramKeysForSequence(workshop, activeCohorts);
+  if (!ruleProgramKey || !workshopProgramKeys.includes(ruleProgramKey)) return false;
+  return sequenceRuleTitleMatchesWorkshop(workshop, rule);
+}
+
+function sequenceRuleTitleMatchesWorkshop(workshop: AdminWorkshop, rule: AdminRecordingSequenceRule) {
   const title = normalizeSequenceText(workshop.title);
   if (!title) return false;
   const candidates = [rule.title, ...(rule.matchAliases ?? [])].map(normalizeSequenceText).filter(Boolean);
   return candidates.some((candidate) => candidate === title || (candidate.length >= 8 && title.includes(candidate)) || (title.length >= 8 && candidate.includes(title)));
 }
 
-function sequenceMatchForWorkshop(workshop: AdminWorkshop, rules: AdminRecordingSequenceRule[]) {
-  return rules.find((rule) => rule.status === 'active' && sequenceRuleMatchesWorkshop(workshop, rule));
+function sequenceMatchForWorkshop(workshop: AdminWorkshop, rules: AdminRecordingSequenceRule[], activeCohorts: AdminCohort[] = []) {
+  return rules.find((rule) => rule.status === 'active' && sequenceRuleMatchesWorkshop(workshop, rule, activeCohorts));
+}
+
+function cohortNamesForWorkshop(workshop: AdminWorkshop, activeCohorts: AdminCohort[]) {
+  const activeCohortNames = new Map(
+    activeCohorts
+      .map((cohort): [string, string] => [cohort.name.trim().toLowerCase(), cohort.name])
+      .filter(([key]) => Boolean(key))
+  );
+  if (workshop.cohortNames.length > 0) {
+    return workshop.cohortNames
+      .map((cohortName) => activeCohortNames.get(cohortName.trim().toLowerCase()))
+      .filter((cohortName): cohortName is string => Boolean(cohortName));
+  }
+  const programKey = workshop.programKey;
+  if (!programKey) return [];
+  return activeCohorts.filter((cohort) => cohortProgramMatches(cohort, programKey)).map((cohort) => cohort.name).filter(Boolean);
+}
+
+function missingRecordingAudiencesForWorkshop(workshop: AdminWorkshop, activeCohorts: AdminCohort[]) {
+  const explicitActiveCohorts = workshop.cohortNames.length > 0 ? cohortNamesForWorkshop(workshop, activeCohorts) : [];
+  if (explicitActiveCohorts.length > 0) {
+    return explicitActiveCohorts.map((cohortName) => ({ name: cohortName, type: 'cohort' as const }));
+  }
+  const programKey = workshop.programKey?.trim().toLowerCase();
+  return programKey ? [{ name: programKey, type: 'program' as const }] : [];
+}
+
+function cohortCanSeeWorkshopRecording(workshop: AdminWorkshop, cohortName: string, activeCohorts: AdminCohort[]) {
+  const normalizedCohortName = cohortName.trim().toLowerCase();
+  if (!normalizedCohortName) return false;
+  if (cohortNamesForWorkshop(workshop, activeCohorts).some((name) => name.trim().toLowerCase() === normalizedCohortName)) return true;
+
+  const cohort = activeCohorts.find((item) => item.name.trim().toLowerCase() === normalizedCohortName);
+  if (!cohort) return false;
+  return workshopProgramKeysForSequence(workshop, activeCohorts).some((programKey) => cohortProgramMatches(cohort, programKey));
+}
+
+function recordingExistsForMissingRule(
+  workshops: AdminWorkshop[],
+  rule: AdminRecordingSequenceRule,
+  audienceName: string,
+  audienceType: 'cohort' | 'program',
+  activeCohorts: AdminCohort[]
+) {
+  return workshops.some((workshop) => {
+    if (!hasRecordingLink(workshop) || !sequenceRuleTitleMatchesWorkshop(workshop, rule)) return false;
+    if (audienceType === 'program') return sequenceRuleMatchesWorkshop(workshop, rule, activeCohorts) && workshop.cohortNames.length === 0;
+    return cohortCanSeeWorkshopRecording(workshop, audienceName, activeCohorts);
+  });
+}
+
+function buildMissingRecordingIssues(workshops: AdminWorkshop[], rules: AdminRecordingSequenceRule[], activeCohorts: AdminCohort[]) {
+  const activeRules = rules.filter((rule) => rule.status === 'active');
+  const rulesByProgramSection = new Map<string, AdminRecordingSequenceRule[]>();
+
+  activeRules.forEach((rule) => {
+    const key = `${rule.programKey}::${rule.recordingSection ?? 'other_workshops'}`;
+    rulesByProgramSection.set(key, [...(rulesByProgramSection.get(key) ?? []), rule]);
+  });
+
+  rulesByProgramSection.forEach((sectionRules, key) => {
+    rulesByProgramSection.set(
+      key,
+      [...sectionRules].sort((left, right) => left.sequenceNumber - right.sequenceNumber || left.title.localeCompare(right.title))
+    );
+  });
+
+  const presentByAudienceSection = new Map<string, { audienceName: string; audienceType: 'cohort' | 'program'; presentSteps: Set<number>; programKey: string; section: AdminRecordingSection }>();
+  workshops
+    .filter(hasRecordingLink)
+    .forEach((workshop) => {
+      const match = sequenceMatchForWorkshop(workshop, activeRules, activeCohorts);
+      if (!match) return;
+      missingRecordingAudiencesForWorkshop(workshop, activeCohorts).forEach((audience) => {
+        const section = match.recordingSection ?? 'other_workshops';
+        const audienceKey = `${match.programKey}::${audience.type}::${audience.name}::${section}`;
+        const current = presentByAudienceSection.get(audienceKey) ?? {
+          audienceName: audience.name,
+          audienceType: audience.type,
+          presentSteps: new Set<number>(),
+          programKey: match.programKey,
+          section
+        };
+        const presentSteps = current.presentSteps;
+        presentSteps.add(match.sequenceNumber);
+        presentByAudienceSection.set(audienceKey, current);
+      });
+    });
+
+  return Array.from(presentByAudienceSection.values()).flatMap<MissingRecordingIssue>(({ audienceName, audienceType, presentSteps, programKey, section }) => {
+    const sectionRules = rulesByProgramSection.get(`${programKey}::${section}`) ?? [];
+    const highestPresentStep = Math.max(...Array.from(presentSteps));
+    const missingRules = sectionRules.filter(
+      (rule) => rule.sequenceNumber < highestPresentStep && !presentSteps.has(rule.sequenceNumber) && !recordingExistsForMissingRule(workshops, rule, audienceName, audienceType, activeCohorts)
+    );
+    if (missingRules.length === 0) return [];
+
+    return [{
+      audienceName,
+      audienceType,
+      foundLaterSteps: Array.from(presentSteps).filter((step) => step > Math.min(...missingRules.map((rule) => rule.sequenceNumber))).sort((left, right) => left - right),
+      missingRules,
+      programKey,
+      section
+    }];
+  }).sort((left, right) =>
+    programLabelFor([], left.programKey).localeCompare(programLabelFor([], right.programKey)) ||
+    left.audienceType.localeCompare(right.audienceType) ||
+    left.audienceName.localeCompare(right.audienceName) ||
+    recordingSectionLabel(left.section).localeCompare(recordingSectionLabel(right.section))
+  );
+}
+
+function findMissingRecordingWorkshop(workshops: AdminWorkshop[], rule: AdminRecordingSequenceRule, audienceName: string, audienceType: 'cohort' | 'program', activeCohorts: AdminCohort[]) {
+  return workshops
+    .filter((workshop) =>
+      workshop.status === 'Completed' &&
+      !hasRecordingLink(workshop) &&
+      sequenceRuleMatchesWorkshop(workshop, rule, activeCohorts) &&
+      (audienceType === 'cohort'
+        ? cohortNamesForWorkshop(workshop, activeCohorts).includes(audienceName)
+        : workshop.cohortNames.length === 0 && workshopProgramKeysForSequence(workshop, activeCohorts).includes(audienceName))
+    )
+    .sort((left, right) => timeValue(right.date) - timeValue(left.date))[0];
+}
+
+function missingRecordingDraftWorkshop(row: MissingRecordingRow): AdminWorkshop {
+  return {
+    accessType: 'free',
+    cohortNames: row.audienceType === 'cohort' ? [row.audienceName] : [],
+    date: new Date().toISOString().slice(0, 10),
+    durationMinutes: 90,
+    id: row.key,
+    programKey: row.programKey,
+    sessionType: 'workshop',
+    status: 'Completed',
+    time: '00:00',
+    title: row.rule.title,
+    workshopId: row.key,
+    zoomAccount: 'Custom Link'
+  };
 }
 
 function duplicatePublishedRecordingCohorts(workshops: AdminWorkshop[], currentWorkshopId: string, title: string, cohortNames: string[]) {
@@ -195,11 +401,12 @@ function comparePublishedWorkshops(
   right: AdminWorkshop,
   sortBy: RecordingSortOption,
   programs: AdminProgram[],
-  sequenceRules: AdminRecordingSequenceRule[]
+  sequenceRules: AdminRecordingSequenceRule[],
+  activeCohorts: AdminCohort[]
 ) {
   if (sortBy === 'latest-updated') {
-    const leftSequence = sequenceMatchForWorkshop(left, sequenceRules)?.sequenceNumber;
-    const rightSequence = sequenceMatchForWorkshop(right, sequenceRules)?.sequenceNumber;
+    const leftSequence = sequenceMatchForWorkshop(left, sequenceRules, activeCohorts)?.sequenceNumber;
+    const rightSequence = sequenceMatchForWorkshop(right, sequenceRules, activeCohorts)?.sequenceNumber;
     const leftSequenced = typeof leftSequence === 'number';
     const rightSequenced = typeof rightSequence === 'number';
     if (leftSequenced && rightSequenced && leftSequence !== rightSequence) return leftSequence - rightSequence;
@@ -392,16 +599,72 @@ function totalPagesFor(count: number) {
   return Math.max(1, Math.ceil(count / pageSize));
 }
 
+function defaultCompareMissingRecordingRows(left: MissingRecordingRow, right: MissingRecordingRow, programs: AdminProgram[]) {
+  return (
+    programLabelFor(programs, left.programKey).localeCompare(programLabelFor(programs, right.programKey)) ||
+    left.audienceType.localeCompare(right.audienceType) ||
+    left.audienceName.localeCompare(right.audienceName) ||
+    recordingSectionLabel(left.section).localeCompare(recordingSectionLabel(right.section)) ||
+    left.rule.sequenceNumber - right.rule.sequenceNumber ||
+    left.rule.title.localeCompare(right.rule.title)
+  );
+}
+
+function compareMissingRecordingRows(left: MissingRecordingRow, right: MissingRecordingRow, programs: AdminProgram[], sortKey: MissingRecordingSortKey, direction: SortDirection) {
+  const multiplier = direction === 'asc' ? 1 : -1;
+  let result = 0;
+  if (sortKey === 'audience') result = `${left.audienceType}:${left.audienceName}`.localeCompare(`${right.audienceType}:${right.audienceName}`);
+  if (sortKey === 'program') result = programLabelFor(programs, left.programKey).localeCompare(programLabelFor(programs, right.programKey));
+  if (sortKey === 'section') result = recordingSectionLabel(left.section).localeCompare(recordingSectionLabel(right.section));
+  if (sortKey === 'sequence') result = left.rule.sequenceNumber - right.rule.sequenceNumber || left.rule.title.localeCompare(right.rule.title);
+  if (sortKey === 'later') result = Math.min(...left.foundLaterSteps) - Math.min(...right.foundLaterSteps);
+  return result === 0 ? defaultCompareMissingRecordingRows(left, right, programs) : result * multiplier;
+}
+
+function groupMissingRecordingRows(rows: MissingRecordingRow[], programs: AdminProgram[], sortKey: MissingRecordingSortKey, direction: SortDirection) {
+  const groups = new Map<string, MissingRecordingGroup>();
+  rows.forEach((row) => {
+    const key = `${row.programKey}::${row.section}::${row.rule.id}`;
+    const current = groups.get(key) ?? {
+      foundLaterSteps: [],
+      key,
+      programKey: row.programKey,
+      rows: [],
+      rule: row.rule,
+      section: row.section
+    };
+    current.rows.push(row);
+    current.foundLaterSteps = Array.from(new Set([...current.foundLaterSteps, ...row.foundLaterSteps])).sort((left, right) => left - right);
+    groups.set(key, current);
+  });
+
+  const multiplier = direction === 'asc' ? 1 : -1;
+  return Array.from(groups.values()).sort((left, right) => {
+    let result = 0;
+    if (sortKey === 'audience') result = left.rows.length - right.rows.length || left.rows[0]?.audienceName.localeCompare(right.rows[0]?.audienceName ?? '') || 0;
+    if (sortKey === 'program') result = programLabelFor(programs, left.programKey).localeCompare(programLabelFor(programs, right.programKey));
+    if (sortKey === 'section') result = recordingSectionLabel(left.section).localeCompare(recordingSectionLabel(right.section));
+    if (sortKey === 'sequence') result = left.rule.sequenceNumber - right.rule.sequenceNumber || left.rule.title.localeCompare(right.rule.title);
+    if (sortKey === 'later') result = Math.min(...left.foundLaterSteps) - Math.min(...right.foundLaterSteps);
+    return result === 0 ? compareMissingRecordingRows(left.rows[0], right.rows[0], programs, 'program', 'asc') : result * multiplier;
+  });
+}
+
 export function AdminRecordingCandidatesPage() {
   const [activeTab, setActiveTab] = useState<RecordingTab>('add-link');
   const [programFilter, setProgramFilter] = useState<ProgramFilter>('all');
   const [cohortFilter, setCohortFilter] = useState<CohortFilter>('all');
   const [sortBy, setSortBy] = useState<RecordingSortOption>('latest-updated');
+  const [missingRecordingSort, setMissingRecordingSort] = useState<{ direction: SortDirection; key: MissingRecordingSortKey }>({ direction: 'asc', key: 'program' });
   const [search, setSearch] = useState('');
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [pageByTab, setPageByTab] = useState<Record<RecordingTab, number>>({ 'add-link': 1, pending: 1, published: 1, rejected: 1 });
   const [recordingEditForm, setRecordingEditForm] = useState<RecordingEditForm | null>(null);
+  const [missingBulkForm, setMissingBulkForm] = useState<MissingRecordingBulkForm>(emptyMissingRecordingBulkForm);
+  const [selectedMissingRecordingRows, setSelectedMissingRecordingRows] = useState<string[]>([]);
+  const [expandedMissingRecordingGroups, setExpandedMissingRecordingGroups] = useState<string[]>([]);
   const [showSequenceManager, setShowSequenceManager] = useState(false);
+  const [showMissingRecordingHelper, setShowMissingRecordingHelper] = useState(false);
   const [sequenceForm, setSequenceForm] = useState<RecordingSequenceForm>(emptySequenceForm);
   const [draggedSequenceRuleId, setDraggedSequenceRuleId] = useState<string | null>(null);
   const [resourceManager, setResourceManager] = useState<ResourceManagerState | null>(null);
@@ -419,6 +682,8 @@ export function AdminRecordingCandidatesPage() {
   const rejectRecordingMutation = useRejectAdminWorkshopRecording();
   const createManualCandidateMutation = useCreateAdminManualRecordingCandidate();
   const editPublishedRecordingMutation = useEditAdminPublishedRecording();
+  const createWorkshopMutation = useSaveAdminWorkshop();
+  const markWorkshopCompletedMutation = useMarkAdminWorkshopCompleted();
   const createSequenceRuleMutation = useCreateAdminRecordingSequenceRule();
   const updateSequenceRuleMutation = useUpdateAdminRecordingSequenceRule();
   const deleteSequenceRuleMutation = useDeleteAdminRecordingSequenceRule();
@@ -451,6 +716,39 @@ export function AdminRecordingCandidatesPage() {
     const eligibleCohorts = programFilter === 'all' ? activeCohorts : activeCohorts.filter((cohort) => cohortProgramMatches(cohort, programFilter));
     return Array.from(new Set(eligibleCohorts.map((cohort) => cohort.name).filter(Boolean))).sort((left, right) => left.localeCompare(right));
   }, [activeCohorts, programFilter]);
+  const missingRecordingIssues = useMemo(() => buildMissingRecordingIssues(workshops, sequenceRules, activeCohorts), [activeCohorts, sequenceRules, workshops]);
+  const visibleMissingRecordingIssues = useMemo(
+    () =>
+      missingRecordingIssues.filter((issue) =>
+        (programFilter === 'all' || issue.programKey === programFilter) &&
+        (cohortFilter === 'all' || (issue.audienceType === 'cohort' && issue.audienceName === cohortFilter))
+      ),
+    [cohortFilter, missingRecordingIssues, programFilter]
+  );
+  const visibleMissingRecordingRows = useMemo<MissingRecordingRow[]>(
+    () =>
+      visibleMissingRecordingIssues.flatMap((issue) =>
+        issue.missingRules.map((rule) => ({
+          audienceName: issue.audienceName,
+          audienceType: issue.audienceType,
+          foundLaterSteps: issue.foundLaterSteps,
+          key: `${issue.programKey}-${issue.audienceType}-${issue.audienceName}-${issue.section}-${rule.id}`,
+          programKey: issue.programKey,
+          rule,
+          section: issue.section,
+          workshop: findMissingRecordingWorkshop(workshops, rule, issue.audienceName, issue.audienceType, activeCohorts)
+        }))
+      ).sort((left, right) => compareMissingRecordingRows(left, right, programs, missingRecordingSort.key, missingRecordingSort.direction)),
+    [activeCohorts, missingRecordingSort.direction, missingRecordingSort.key, programs, visibleMissingRecordingIssues, workshops]
+  );
+  const selectedMissingRows = useMemo(
+    () => visibleMissingRecordingRows.filter((row) => selectedMissingRecordingRows.includes(row.key)),
+    [selectedMissingRecordingRows, visibleMissingRecordingRows]
+  );
+  const visibleMissingRecordingGroups = useMemo(
+    () => groupMissingRecordingRows(visibleMissingRecordingRows, programs, missingRecordingSort.key, missingRecordingSort.direction),
+    [missingRecordingSort.direction, missingRecordingSort.key, programs, visibleMissingRecordingRows]
+  );
 
   useEffect(() => {
     if (cohortFilter !== 'all' && !cohortOptions.includes(cohortFilter)) {
@@ -458,6 +756,16 @@ export function AdminRecordingCandidatesPage() {
       setPageByTab({ 'add-link': 1, pending: 1, published: 1, rejected: 1 });
     }
   }, [cohortFilter, cohortOptions]);
+
+  useEffect(() => {
+    const visibleKeys = new Set(visibleMissingRecordingRows.map((row) => row.key));
+    setSelectedMissingRecordingRows((current) => current.filter((key) => visibleKeys.has(key)));
+  }, [visibleMissingRecordingRows]);
+
+  useEffect(() => {
+    const visibleGroupKeys = new Set(visibleMissingRecordingGroups.map((group) => group.key));
+    setExpandedMissingRecordingGroups((current) => current.filter((key) => visibleGroupKeys.has(key)));
+  }, [visibleMissingRecordingGroups]);
 
   useEffect(() => {
     if (resourceManager && recordingResourceLinksQuery.data) {
@@ -483,8 +791,8 @@ export function AdminRecordingCandidatesPage() {
     () =>
       workshops
         .filter((workshop) => hasRecordingLink(workshop) && workshopMatches(workshop, normalizedSearch, programFilter, cohortFilter))
-        .sort((left, right) => comparePublishedWorkshops(left, right, sortBy, programs, sequenceRules)),
-    [cohortFilter, normalizedSearch, programFilter, programs, sequenceRules, sortBy, workshops]
+        .sort((left, right) => comparePublishedWorkshops(left, right, sortBy, programs, sequenceRules, activeCohorts)),
+    [activeCohorts, cohortFilter, normalizedSearch, programFilter, programs, sequenceRules, sortBy, workshops]
   );
 
   const addLinkWorkshops = useMemo(
@@ -567,6 +875,28 @@ export function AdminRecordingCandidatesPage() {
     setRecordingEditForm(buildRecordingEditForm(workshop));
   }
 
+  function startEditingMissingRecording(row: MissingRecordingRow) {
+    if (row.workshop) {
+      startEditingRecording(row.workshop);
+      return;
+    }
+    setRecordingEditForm({
+      ...buildRecordingEditForm(missingRecordingDraftWorkshop(row)),
+      cohortNames: row.audienceType === 'cohort' ? [row.audienceName] : [],
+      missingWorkshopContext: {
+        audienceName: row.audienceName,
+        audienceType: row.audienceType,
+        programKey: row.programKey,
+        rule: row.rule,
+        section: row.section
+      },
+      programKey: row.programKey,
+      programKeys: [row.programKey],
+      title: row.rule.title,
+      workshopId: row.key
+    });
+  }
+
   function startEditingPublishedRecording(workshop: AdminWorkshop) {
     setRecordingEditForm({
       ...buildRecordingEditForm(workshop),
@@ -578,13 +908,102 @@ export function AdminRecordingCandidatesPage() {
     setRecordingEditForm(null);
   }
 
+  function toggleMissingRecordingRow(key: string) {
+    setSelectedMissingRecordingRows((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]);
+  }
+
+  function toggleMissingRecordingGroupSelection(group: MissingRecordingGroup) {
+    const groupKeys = group.rows.map((row) => row.key);
+    setSelectedMissingRecordingRows((current) => {
+      const currentSet = new Set(current);
+      const allSelected = groupKeys.every((key) => currentSet.has(key));
+      if (allSelected) {
+        return current.filter((key) => !groupKeys.includes(key));
+      }
+      groupKeys.forEach((key) => currentSet.add(key));
+      return Array.from(currentSet);
+    });
+  }
+
+  function toggleMissingRecordingGroupExpansion(groupKey: string) {
+    setExpandedMissingRecordingGroups((current) => current.includes(groupKey) ? current.filter((key) => key !== groupKey) : [...current, groupKey]);
+  }
+
+  function selectVisibleMissingRecordingRows() {
+    setSelectedMissingRecordingRows(visibleMissingRecordingRows.map((row) => row.key));
+  }
+
+  function clearSelectedMissingRecordingRows() {
+    setSelectedMissingRecordingRows([]);
+  }
+
+  function toggleAllVisibleMissingRecordingRows() {
+    if (selectedMissingRows.length === visibleMissingRecordingRows.length) {
+      clearSelectedMissingRecordingRows();
+      return;
+    }
+    selectVisibleMissingRecordingRows();
+  }
+
+  function changeMissingRecordingSort(key: MissingRecordingSortKey) {
+    setMissingRecordingSort((current) => ({
+      direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+      key
+    }));
+  }
+
+  function missingRecordingSortLabel(key: MissingRecordingSortKey) {
+    if (missingRecordingSort.key !== key) return '↕';
+    return missingRecordingSort.direction === 'asc' ? '↑' : '↓';
+  }
+
+  async function createManualRecordingForReview(input: {
+    alternateUrl: string;
+    context?: RecordingEditForm['missingWorkshopContext'];
+    passcode: string;
+    workshopId: string;
+    youtubeUrl: string;
+  }) {
+    const playUrl = input.youtubeUrl || input.alternateUrl;
+    let targetWorkshopId = input.workshopId;
+    if (input.context) {
+      const created = await createWorkshopMutation.mutateAsync({
+        cohortNames: input.context.audienceType === 'cohort' ? [input.context.audienceName] : [],
+        customJoinUrl: playUrl,
+        date: new Date().toISOString().slice(0, 10),
+        durationMinutes: 90,
+        programKey: input.context.programKey,
+        sessionType: 'workshop',
+        time: '00:00',
+        title: input.context.rule.title,
+        workshopStatus: 'Completed',
+        zoomAccount: 'Custom Link'
+      });
+      targetWorkshopId = created.workshop?.id ?? '';
+      if (!targetWorkshopId) throw new Error('Missing workshop could not be created.');
+      if (created.workshop?.status !== 'Completed') {
+        await markWorkshopCompletedMutation.mutateAsync(targetWorkshopId);
+      }
+    }
+
+    await createManualCandidateMutation.mutateAsync({
+      body: {
+        youtubeVideoUrl: input.youtubeUrl || null,
+        zoomRecordingPassword: input.passcode.trim() || null,
+        zoomRecordingUrl: input.alternateUrl || null
+      },
+      workshopId: targetWorkshopId
+    });
+  }
+
   async function saveRecordingLinks() {
     if (!recordingEditForm) return;
     const youtubeUrl = recordingEditForm.youtubeUrl.trim();
     const alternateUrl = recordingEditForm.alternateUrl.trim();
+    const playUrl = youtubeUrl || alternateUrl;
 
     setActionMessage(null);
-    if (!youtubeUrl && !alternateUrl) {
+    if (!playUrl) {
       setActionMessage('Add at least one recording link before saving.');
       return;
     }
@@ -598,13 +1017,12 @@ export function AdminRecordingCandidatesPage() {
     }
 
     try {
-      await createManualCandidateMutation.mutateAsync({
-        body: {
-          youtubeVideoUrl: youtubeUrl || null,
-          zoomRecordingPassword: recordingEditForm.passcode.trim() || null,
-          zoomRecordingUrl: alternateUrl || null
-        },
-        workshopId: recordingEditForm.workshopId
+      await createManualRecordingForReview({
+        alternateUrl,
+        context: recordingEditForm.missingWorkshopContext,
+        passcode: recordingEditForm.passcode,
+        workshopId: recordingEditForm.workshopId,
+        youtubeUrl
       });
       await refetchRecordingData();
       setRecordingEditForm(null);
@@ -613,6 +1031,65 @@ export function AdminRecordingCandidatesPage() {
       setActionMessage('Recording link saved for review.');
     } catch (error) {
       setActionMessage(readableError(error, 'Recording link could not be saved for review.'));
+    }
+  }
+
+  async function saveBulkMissingRecordingLinks() {
+    const youtubeUrl = missingBulkForm.youtubeUrl.trim();
+    const alternateUrl = missingBulkForm.alternateUrl.trim();
+    const playUrl = youtubeUrl || alternateUrl;
+
+    setActionMessage(null);
+    if (selectedMissingRows.length === 0) {
+      setActionMessage('Select at least one missing topic before bulk saving.');
+      return;
+    }
+    if (!playUrl) {
+      setActionMessage('Add at least one recording link before bulk saving.');
+      return;
+    }
+    if (youtubeUrl && !isHttpUrl(youtubeUrl)) {
+      setActionMessage('YouTube URL must start with http:// or https://.');
+      return;
+    }
+    if (alternateUrl && !isHttpUrl(alternateUrl)) {
+      setActionMessage('Zoom/manual URL must start with http:// or https://.');
+      return;
+    }
+
+    let savedCount = 0;
+    const failures: string[] = [];
+    for (const row of selectedMissingRows) {
+      const targetWorkshop = row.workshop ?? missingRecordingDraftWorkshop(row);
+      try {
+        await createManualRecordingForReview({
+          alternateUrl,
+          context: row.workshop ? undefined : {
+            audienceName: row.audienceName,
+            audienceType: row.audienceType,
+            programKey: row.programKey,
+            rule: row.rule,
+            section: row.section
+          },
+          passcode: missingBulkForm.passcode,
+          workshopId: targetWorkshop.id,
+          youtubeUrl
+        });
+        savedCount += 1;
+      } catch (error) {
+        failures.push(`${row.rule.title}: ${readableError(error, 'Could not save recording link.')}`);
+      }
+    }
+
+    await refetchRecordingData();
+    setActiveTab('pending');
+    setPageByTab((current) => ({ ...current, pending: 1 }));
+    if (failures.length === 0) {
+      setMissingBulkForm(emptyMissingRecordingBulkForm);
+      setSelectedMissingRecordingRows([]);
+      setActionMessage(`${savedCount} missing recording link${savedCount === 1 ? '' : 's'} saved for review.`);
+    } else {
+      setActionMessage(`${savedCount} saved. ${failures.length} failed. ${failures.slice(0, 2).join(' | ')}`);
     }
   }
 
@@ -1197,7 +1674,9 @@ export function AdminRecordingCandidatesPage() {
     const cohortEditOptions = Array.from(new Set([...recordingEditForm.cohortNames, ...eligibleCohortOptions]))
       .filter((cohortName) => eligibleCohortOptions.includes(cohortName))
       .sort((left, right) => left.localeCompare(right));
-    const isBusy = isPublishedEdit ? editPublishedRecordingMutation.isPending : createManualCandidateMutation.isPending;
+    const isBusy = isPublishedEdit
+      ? editPublishedRecordingMutation.isPending
+      : createManualCandidateMutation.isPending || createWorkshopMutation.isPending || markWorkshopCompletedMutation.isPending;
 
     return (
       <div className={isPublishedEdit ? 'admin-recording-edit-form admin-recording-edit-form--published' : 'admin-recording-edit-form'}>
@@ -1366,6 +1845,188 @@ export function AdminRecordingCandidatesPage() {
         </article>
       </section>
 
+      {visibleMissingRecordingIssues.length > 0 ? (
+        <section className="admin-recording-missing-helper" aria-label="Missing recording helper">
+          <header>
+            <div>
+              <span className="section-eyebrow">MISSING RECORDING HELPER</span>
+              <h2>{visibleMissingRecordingIssues.length} audience{visibleMissingRecordingIssues.length === 1 ? '' : 's'} need earlier recordings</h2>
+              <p>Later sequence recordings are published, but an earlier sequence topic is missing for students.</p>
+            </div>
+            <div className="admin-recording-missing-helper__actions">
+              <StatusBadge tone="warning">{`${visibleMissingRecordingRows.length} missing topic${visibleMissingRecordingRows.length === 1 ? '' : 's'}`}</StatusBadge>
+              <button
+                aria-controls="missing-recording-helper-details"
+                aria-expanded={showMissingRecordingHelper}
+                className="admin-recording-action"
+                onClick={() => setShowMissingRecordingHelper((current) => !current)}
+                type="button"
+              >
+                <ChevronDown className={showMissingRecordingHelper ? 'admin-recording-accordion-icon admin-recording-accordion-icon--open' : 'admin-recording-accordion-icon'} size={15} />
+                {showMissingRecordingHelper ? 'Hide details' : 'View details'}
+              </button>
+            </div>
+          </header>
+          {showMissingRecordingHelper ? (
+            <>
+              <div className="admin-recording-missing-helper__bulk">
+                <div className="admin-recording-missing-helper__bulk-actions">
+                  <StatusBadge>{`${selectedMissingRows.length} selected`}</StatusBadge>
+                  <button
+                    className="admin-recording-action admin-recording-action--primary"
+                    disabled={selectedMissingRows.length === 0 || createManualCandidateMutation.isPending || createWorkshopMutation.isPending || markWorkshopCompletedMutation.isPending}
+                    onClick={() => void saveBulkMissingRecordingLinks()}
+                    type="button"
+                  >
+                    <Save size={14} />
+                    Save selected
+                  </button>
+                </div>
+                <div className="admin-recording-missing-helper__bulk-fields">
+                  <label>
+                    <span>YouTube URL</span>
+                    <input
+                      value={missingBulkForm.youtubeUrl}
+                      onChange={(event) => setMissingBulkForm((current) => ({ ...current, youtubeUrl: event.target.value }))}
+                      placeholder="https://youtube.com/..."
+                    />
+                  </label>
+                  <label>
+                    <span>Zoom/manual URL</span>
+                    <input
+                      value={missingBulkForm.alternateUrl}
+                      onChange={(event) => setMissingBulkForm((current) => ({ ...current, alternateUrl: event.target.value }))}
+                      placeholder="https://..."
+                    />
+                  </label>
+                  <label>
+                    <span>Passcode</span>
+                    <input
+                      value={missingBulkForm.passcode}
+                      onChange={(event) => setMissingBulkForm((current) => ({ ...current, passcode: event.target.value }))}
+                      placeholder="Optional"
+                    />
+                  </label>
+                </div>
+              </div>
+              <div className="admin-recording-missing-helper__list" id="missing-recording-helper-details">
+                <div className="admin-recording-missing-helper__table-head">
+                  <label className="admin-recording-missing-helper__select">
+                    <input
+                      aria-label="Select all visible missing recordings"
+                      checked={visibleMissingRecordingRows.length > 0 && selectedMissingRows.length === visibleMissingRecordingRows.length}
+                      onChange={toggleAllVisibleMissingRecordingRows}
+                      type="checkbox"
+                    />
+                  </label>
+                  <button onClick={() => changeMissingRecordingSort('audience')} type="button">
+                    Audiences {missingRecordingSortLabel('audience')}
+                  </button>
+                  <button onClick={() => changeMissingRecordingSort('program')} type="button">
+                    Program {missingRecordingSortLabel('program')}
+                  </button>
+                  <button onClick={() => changeMissingRecordingSort('section')} type="button">
+                    Section {missingRecordingSortLabel('section')}
+                  </button>
+                  <button onClick={() => changeMissingRecordingSort('sequence')} type="button">
+                    Missing Sequence {missingRecordingSortLabel('sequence')}
+                  </button>
+                  <button onClick={() => changeMissingRecordingSort('later')} type="button">
+                    Later Found {missingRecordingSortLabel('later')}
+                  </button>
+                  <span>Action</span>
+                </div>
+                {visibleMissingRecordingGroups.map((group) => {
+                  const selectedInGroup = group.rows.filter((row) => selectedMissingRecordingRows.includes(row.key)).length;
+                  const isGroupSelected = selectedInGroup === group.rows.length;
+                  const isGroupExpanded = expandedMissingRecordingGroups.includes(group.key);
+                  return (
+                    <article className="admin-recording-missing-helper__group" key={group.key}>
+                      <label className="admin-recording-missing-helper__select">
+                        <input
+                          aria-label={`Select all audiences missing step ${group.rule.sequenceNumber}: ${group.rule.title}`}
+                          checked={isGroupSelected}
+                          onChange={() => toggleMissingRecordingGroupSelection(group)}
+                          type="checkbox"
+                        />
+                      </label>
+                      <div>
+                        <strong>{group.rows.length} audience{group.rows.length === 1 ? '' : 's'} affected</strong>
+                        <span>{selectedInGroup} selected</span>
+                      </div>
+                      <div>
+                        <strong>{programLabelFor(programs, group.programKey)}</strong>
+                      </div>
+                      <div>
+                        <strong>{recordingSectionLabel(group.section)}</strong>
+                      </div>
+                      <div>
+                        <span>Missing sequence</span>
+                        <strong>
+                          Step {group.rule.sequenceNumber}: {group.rule.title}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>Later found</span>
+                        <strong>{group.foundLaterSteps.map((step) => `Step ${step}`).join(', ')}</strong>
+                      </div>
+                      <div className="admin-recording-missing-helper__row-actions">
+                        <button className="admin-recording-action" onClick={() => toggleMissingRecordingGroupExpansion(group.key)} type="button">
+                          <ChevronDown className={isGroupExpanded ? 'admin-recording-accordion-icon admin-recording-accordion-icon--open' : 'admin-recording-accordion-icon'} size={14} />
+                          {isGroupExpanded ? 'Hide rows' : 'View rows'}
+                        </button>
+                      </div>
+                      {isGroupExpanded ? (
+                        <div className="admin-recording-missing-helper__group-rows">
+                          {group.rows.map((row) => {
+                            const editableWorkshop = row.workshop ?? missingRecordingDraftWorkshop(row);
+                            return (
+                              <div className="admin-recording-missing-helper__detail-row" key={row.key}>
+                                <label className="admin-recording-missing-helper__select">
+                                  <input
+                                    aria-label={`Select missing recording for ${row.audienceType === 'program' ? 'program level' : row.audienceName}, step ${row.rule.sequenceNumber}`}
+                                    checked={selectedMissingRecordingRows.includes(row.key)}
+                                    onChange={() => toggleMissingRecordingRow(row.key)}
+                                    type="checkbox"
+                                  />
+                                </label>
+                                <div>
+                                  <strong>{row.audienceType === 'program' ? 'Program level' : row.audienceName}</strong>
+                                  <span>{row.audienceType === 'program' ? row.programKey : 'Cohort'}</span>
+                                </div>
+                                <div>
+                                  <span>Missing sequence</span>
+                                  <strong>
+                                    Step {row.rule.sequenceNumber}: {row.rule.title}
+                                  </strong>
+                                </div>
+                                <div>
+                                  <span>Later found</span>
+                                  <strong>{row.foundLaterSteps.map((step) => `Step ${step}`).join(', ')}</strong>
+                                </div>
+                                <div className="admin-recording-missing-helper__row-actions">
+                                  <button className="admin-recording-action admin-recording-action--primary" onClick={() => startEditingMissingRecording(row)} type="button">
+                                    <Edit3 size={14} />
+                                    Add link
+                                  </button>
+                                </div>
+                                <div className="admin-recording-missing-helper__form">
+                                  {renderRecordingEditForm(editableWorkshop)}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </div>
+            </>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="admin-recording-toolbar" aria-label="Recording filters">
         <div className="admin-recording-search">
           <Search size={18} />
@@ -1529,7 +2190,7 @@ export function AdminRecordingCandidatesPage() {
           {publishedWorkshops.length > 0 ? (
             <div className="admin-recording-list">
               {paginatedPublishedWorkshops.map((workshop) => {
-                const sequenceMatch = sequenceMatchForWorkshop(workshop, sequenceRules);
+                const sequenceMatch = sequenceMatchForWorkshop(workshop, sequenceRules, activeCohorts);
                 const linkedResourceCount = resourceCountByRecordingId.get(workshop.id) ?? 0;
                 return (
                   <article className="admin-recording-row" key={workshop.id}>

@@ -210,8 +210,10 @@ export function StudentCareerReadinessPage() {
     [items, sectionFilterOptions]
   );
   const activeGroup = groupedItems.find((group) => group.category === selectedCategory) ?? null;
-  const visibleGroups = selectedCategory ? groupedItems.filter((group) => group.category === selectedCategory) : groupedItems;
   const categoryTileGroups = groupedItems.filter((group) => group.items.length > 0);
+  const activeCategory = selectedCategory || categoryTileGroups[0]?.category || '';
+  const activeTileGroup = groupedItems.find((group) => group.category === activeCategory) ?? null;
+  const visibleGroups = activeCategory ? groupedItems.filter((group) => group.category === activeCategory) : groupedItems;
   const visibleGuideCount = visibleGroups.reduce((count, group) => count + group.items.length, 0);
   const latestGuides = useMemo(
     () =>
@@ -252,27 +254,19 @@ export function StudentCareerReadinessPage() {
         title="Career Readiness"
       />
 
-      <section className="career-readiness-toolbar" aria-label="Career readiness filters">
-        <label className="sr-only" htmlFor="career-readiness-category">
-          Career readiness section
-        </label>
-        <select id="career-readiness-category" value={selectedCategory} onChange={(event) => selectCategory(event.target.value as CareerReadinessCategory | '')}>
-          <option value="">All sections</option>
-          {sectionFilterOptions.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </section>
-
       {items.length > 0 ? (
         <>
           <section className="career-readiness-category-strip" aria-label="Career readiness categories">
             {categoryTileGroups.map((group) => {
               const Icon = group.icon;
               return (
-                <button className={selectedCategory === group.category ? 'career-readiness-category-tile career-readiness-category-tile--active' : 'career-readiness-category-tile'} key={group.category} onClick={() => selectCategory(group.category)} type="button">
+                <button
+                  aria-pressed={activeCategory === group.category}
+                  className={activeCategory === group.category ? 'career-readiness-category-tile career-readiness-category-tile--active' : 'career-readiness-category-tile'}
+                  key={group.category}
+                  onClick={() => selectCategory(group.category)}
+                  type="button"
+                >
                   <span className="career-readiness-section__icon">
                     <Icon size={21} />
                   </span>
@@ -291,13 +285,13 @@ export function StudentCareerReadinessPage() {
             })}
           </section>
 
-          {selectedCategory ? (
+          {activeCategory ? (
             <section className="career-readiness-workspace" aria-label="Career readiness guides">
               <header>
                 <div>
                   <span>Selected section</span>
-                  <h2>{activeGroup?.label ?? 'Career Readiness Guides'}</h2>
-                  <p>{activeGroup?.description ?? 'Open a guide to read it in full screen.'}</p>
+                  <h2>{activeTileGroup?.label ?? activeGroup?.label ?? 'Career Readiness Guides'}</h2>
+                  <p>{activeTileGroup?.description ?? activeGroup?.description ?? 'Open a guide to read it in full screen.'}</p>
                 </div>
                 {selectedCategory ? (
                   <button className="segmented-button" onClick={() => selectCategory('')} type="button">
@@ -329,7 +323,7 @@ export function StudentCareerReadinessPage() {
             </section>
           ) : null}
 
-          {!selectedCategory && latestGuides.length > 0 ? (
+          {!activeCategory && latestGuides.length > 0 ? (
             <section className="career-readiness-workspace" aria-label="Latest career readiness guides">
               <header>
                 <div>

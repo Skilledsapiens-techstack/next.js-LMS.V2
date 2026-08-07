@@ -231,14 +231,14 @@ export function StudentDoubtSessionsPage() {
       {pastItems.length > 0 ? (
         <div className="student-schedule-summary">
           <article>
-            <History size={20} />
-            <span>Past doubt sessions</span>
-            <strong>{pastItems.length}</strong>
-          </article>
-          <article>
             <MessageCircle size={20} />
             <span>Upcoming</span>
             <strong>{upcomingItems.length}</strong>
+          </article>
+          <article>
+            <History size={20} />
+            <span>Past doubt sessions</span>
+            <strong>{pastItems.length}</strong>
           </article>
         </div>
       ) : null}
@@ -262,7 +262,7 @@ export function StudentDoubtSessionsPage() {
                 <span>Expired sessions</span>
                 <strong>For your information</strong>
               </div>
-              <p>Past doubt sessions are shown as history. Recordings, when published, remain available from Watch Recordings.</p>
+              <p>Past doubt sessions are shown as history. Recordings, when published, remain available from My Programs.</p>
             </header>
           ) : null}
           {visibleItems.map((item) => (
