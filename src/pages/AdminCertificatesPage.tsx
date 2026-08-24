@@ -224,6 +224,11 @@ function certificatePdfNotice(certificate: AdminCertificate) {
   return '';
 }
 
+function canRetryCertificatePdfWithEmail(certificate: AdminCertificate) {
+  if (certificate.status === 'revoked') return false;
+  return certificate.generationStatus !== 'ready' || /email failed/i.test(certificate.generationError ?? '');
+}
+
 function programLabel(program: AdminProgram | undefined, fallback: string | undefined) {
   return program?.name ?? fallback ?? 'Select program';
 }
@@ -1209,6 +1214,8 @@ export function AdminCertificatesPage() {
   const [bulkLiveProjectEndDate, setBulkLiveProjectEndDate] = useState(todayInputValue());
   const [bulkLiveProjectIssueDate, setBulkLiveProjectIssueDate] = useState(todayInputValue());
   const [bulkLiveProjectSendEmail, setBulkLiveProjectSendEmail] = useState(true);
+  const [selectedIssuedCertificateIds, setSelectedIssuedCertificateIds] = useState<Set<string>>(new Set());
+  const [certificateActionState, setCertificateActionState] = useState<{ action: 'email' | 'pdf'; certificateId: string } | { action: 'bulk-email'; certificateId: 'bulk' } | null>(null);
 
   const adminProfileQuery = useAdminProfile();
   const adminRole = adminProfileQuery.data?.role;
@@ -1396,11 +1403,41 @@ export function AdminCertificatesPage() {
   }, [liveProjectCertificateRequests, selectedLiveProjectRequestIds.size]);
   const certificates = certificatesQuery.data;
   const totalPages = certificates?.totalPages ?? 1;
+  const issuedCertificateItems = certificates?.items ?? [];
+  const visibleBulkRetryCertificates = useMemo(() => issuedCertificateItems.filter(canRetryCertificatePdfWithEmail), [issuedCertificateItems]);
+  const selectedVisibleRetryCertificates = useMemo(
+    () => visibleBulkRetryCertificates.filter((certificate) => selectedIssuedCertificateIds.has(certificate.id)),
+    [selectedIssuedCertificateIds, visibleBulkRetryCertificates]
+  );
+  const allVisibleRetryCertificatesSelected =
+    visibleBulkRetryCertificates.length > 0 && visibleBulkRetryCertificates.every((certificate) => selectedIssuedCertificateIds.has(certificate.id));
+  const isCertificateActionPending = generateCertificatePdfMutation.isPending || certificateActionState !== null;
+  const isBulkCertificateActionPending = certificateActionState?.action === 'bulk-email' && generateCertificatePdfMutation.isPending;
   const visibleCertificateTabs = useMemo(() => (canIssueCertificates ? certificateTabs : certificateTabs.filter((tab) => tab.id === 'issued')), [canIssueCertificates]);
 
   useEffect(() => {
     if (!canIssueCertificates && activeTab !== 'issued') setActiveTab('issued');
   }, [activeTab, canIssueCertificates]);
+
+  useEffect(() => {
+    setSelectedIssuedCertificateIds(new Set());
+  }, [activeTab, certificateType, generationStatus, page, search, status]);
+
+  useEffect(() => {
+    if (selectedIssuedCertificateIds.size === 0) return;
+    const selectableIds = new Set(visibleBulkRetryCertificates.map((certificate) => certificate.id));
+    setSelectedIssuedCertificateIds((current) => {
+      const next = new Set(current);
+      let changed = false;
+      current.forEach((certificateId) => {
+        if (!selectableIds.has(certificateId)) {
+          next.delete(certificateId);
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, [selectedIssuedCertificateIds.size, visibleBulkRetryCertificates]);
 
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1497,6 +1534,32 @@ export function AdminCertificatesPage() {
 
   function clearSelectedStudents() {
     setSelectedStudentIds(new Set());
+  }
+
+  function toggleIssuedCertificate(certificate: AdminCertificate) {
+    if (!canRetryCertificatePdfWithEmail(certificate) || isCertificateActionPending) return;
+    setSelectedIssuedCertificateIds((current) => {
+      const next = new Set(current);
+      if (next.has(certificate.id)) {
+        next.delete(certificate.id);
+      } else {
+        next.add(certificate.id);
+      }
+      return next;
+    });
+  }
+
+  function toggleVisibleIssuedCertificates() {
+    if (isCertificateActionPending || visibleBulkRetryCertificates.length === 0) return;
+    setSelectedIssuedCertificateIds((current) => {
+      const next = new Set(current);
+      if (allVisibleRetryCertificatesSelected) {
+        visibleBulkRetryCertificates.forEach((certificate) => next.delete(certificate.id));
+      } else {
+        visibleBulkRetryCertificates.forEach((certificate) => next.add(certificate.id));
+      }
+      return next;
+    });
   }
 
   async function handleIssueLiveProjectCertificate(input: IssueLiveProjectCertificateInput) {
@@ -1638,33 +1701,71 @@ export function AdminCertificatesPage() {
   }
 
   async function handleGenerateCertificatePdf(certificate: AdminCertificate) {
-    const result = await generateCertificatePdfMutation.mutateAsync({
-      certificateId: certificate.id,
-      force: shouldForceCertificatePdf(certificate)
-    });
-    const firstResult = result.results[0];
-    if (firstResult?.status === 'failed') {
-      setCertificateMessage(`PDF generation failed. Email was not sent. ${firstResult.error ?? 'Please check the certificate error details and retry.'}`);
-      return;
+    setCertificateActionState({ action: 'pdf', certificateId: certificate.id });
+    try {
+      const result = await generateCertificatePdfMutation.mutateAsync({
+        certificateId: certificate.id,
+        force: shouldForceCertificatePdf(certificate)
+      });
+      const firstResult = result.results[0];
+      if (firstResult?.status === 'failed') {
+        setCertificateMessage(`PDF generation failed. Email was not sent. ${firstResult.error ?? 'Please check the certificate error details and retry.'}`);
+        return;
+      }
+      if (firstResult?.signedUrl) {
+        window.open(firstResult.signedUrl, '_blank', 'noopener,noreferrer');
+      }
+      setCertificateMessage(result.message);
+    } finally {
+      setCertificateActionState(null);
     }
-    if (firstResult?.signedUrl) {
-      window.open(firstResult.signedUrl, '_blank', 'noopener,noreferrer');
-    }
-    setCertificateMessage(result.message);
   }
 
   async function handleEmailCertificatePdf(certificate: AdminCertificate) {
-    const result = await generateCertificatePdfMutation.mutateAsync({
-      certificateId: certificate.id,
-      force: shouldForceCertificatePdf(certificate),
-      sendEmail: true
-    });
-    const firstResult = result.results[0];
-    if (firstResult?.status === 'failed') {
-      setCertificateMessage(`PDF generation failed, so the email was not sent. ${firstResult.error ?? 'Please check the certificate error details and retry.'}`);
-      return;
+    setCertificateActionState({ action: 'email', certificateId: certificate.id });
+    try {
+      const result = await generateCertificatePdfMutation.mutateAsync({
+        certificateId: certificate.id,
+        force: shouldForceCertificatePdf(certificate),
+        sendEmail: true
+      });
+      const firstResult = result.results[0];
+      if (firstResult?.status === 'failed') {
+        setCertificateMessage(`PDF generation failed, so the email was not sent. ${firstResult.error ?? 'Please check the certificate error details and retry.'}`);
+        return;
+      }
+      setCertificateMessage(`Certificate PDF email sent to ${certificate.studentEmail}.`);
+    } finally {
+      setCertificateActionState(null);
     }
-    setCertificateMessage(`Certificate PDF email sent to ${certificate.studentEmail}.`);
+  }
+
+  async function handleBulkRetryCertificatePdfEmail() {
+    if (selectedVisibleRetryCertificates.length === 0 || isCertificateActionPending) return;
+    setCertificateActionState({ action: 'bulk-email', certificateId: 'bulk' });
+    let readyAndEmailedCount = 0;
+    let failedCount = 0;
+    try {
+      for (const certificate of selectedVisibleRetryCertificates) {
+        const result = await generateCertificatePdfMutation.mutateAsync({
+          certificateId: certificate.id,
+          force: shouldForceCertificatePdf(certificate),
+          sendEmail: true
+        });
+        const firstResult = result.results[0];
+        if (firstResult?.status === 'failed') {
+          failedCount += 1;
+        } else {
+          readyAndEmailedCount += 1;
+        }
+      }
+      setCertificateMessage(
+        `${readyAndEmailedCount} certificate${readyAndEmailedCount === 1 ? '' : 's'} prepared and emailed.${failedCount > 0 ? ` ${failedCount} failed and still need review.` : ''}`
+      );
+      if (failedCount === 0) setSelectedIssuedCertificateIds(new Set());
+    } finally {
+      setCertificateActionState(null);
+    }
   }
 
   function changeTab(tab: CertificateWorkspaceTab) {
@@ -1968,6 +2069,9 @@ export function AdminCertificatesPage() {
           <header className="certificate-section__header">
             <div>
               <span className="certificate-section-eyebrow">Registry</span>
+              <small className="certificate-section-filter-count">
+                {certificatesQuery.isFetching && !certificates ? 'Loading issued certificates...' : `${(certificates?.total ?? 0).toLocaleString()} Issued Certificates for applied filter`}
+              </small>
               <h2>Issued Certificates</h2>
             </div>
           </header>
@@ -2013,12 +2117,41 @@ export function AdminCertificatesPage() {
             </div>
 
             {certificates && certificates.items.length > 0 ? (
+              <>
+              {canIssueCertificates && visibleBulkRetryCertificates.length > 0 ? (
+                <div className="certificate-registry-bulkbar">
+                  <label className="certificate-registry-bulkbar__selector">
+                    <input checked={allVisibleRetryCertificatesSelected} disabled={isCertificateActionPending} onChange={toggleVisibleIssuedCertificates} type="checkbox" />
+                    <span>Select visible certificates that need PDF/email retry</span>
+                  </label>
+                  <div className="certificate-registry-bulkbar__actions">
+                    <span>{selectedVisibleRetryCertificates.length} selected</span>
+                    <button className="student-action student-action--primary" disabled={selectedVisibleRetryCertificates.length === 0 || isCertificateActionPending} onClick={() => void handleBulkRetryCertificatePdfEmail()} type="button">
+                      {isBulkCertificateActionPending ? 'Preparing and emailing...' : 'Retry PDF + Email'}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div className="certificate-registry-list">
                 {certificates.items.map((certificate: AdminCertificate) => {
                   const pdfNotice = certificatePdfNotice(certificate);
                   const hasPdfIssue = certificate.generationStatus === 'failed' || /email failed/i.test(certificate.generationError ?? '');
+                  const isPdfPreparing = certificateActionState?.action === 'pdf' && certificateActionState.certificateId === certificate.id && generateCertificatePdfMutation.isPending;
+                  const isEmailSending = certificateActionState?.action === 'email' && certificateActionState.certificateId === certificate.id && generateCertificatePdfMutation.isPending;
+                  const canSelectForBulk = canIssueCertificates && canRetryCertificatePdfWithEmail(certificate);
                   return (
                   <article className={`certificate-registry-row${hasPdfIssue ? ' certificate-registry-row--pdf-failed' : ''}`} key={certificate.id}>
+                    {canIssueCertificates ? (
+                      <label className="certificate-registry-row__selector">
+                        <input
+                          aria-label={`Select ${certificate.certificateId} for PDF retry and email`}
+                          checked={selectedIssuedCertificateIds.has(certificate.id)}
+                          disabled={!canSelectForBulk || isCertificateActionPending}
+                          onChange={() => toggleIssuedCertificate(certificate)}
+                          type="checkbox"
+                        />
+                      </label>
+                    ) : null}
                     <div className="certificate-registry-row__content">
                       <h3>
                         {certificate.studentName} · {certificate.projectTitle ?? certificate.programName ?? certificate.programKey ?? certificate.certificateId}
@@ -2054,11 +2187,11 @@ export function AdminCertificatesPage() {
                         <>
                           <button
                             className="segmented-button"
-                            disabled={certificate.status === 'revoked' || generateCertificatePdfMutation.isPending}
+                            disabled={certificate.status === 'revoked' || isCertificateActionPending}
                             onClick={() => void handleGenerateCertificatePdf(certificate)}
                             type="button"
                           >
-                            {generateCertificatePdfMutation.isPending
+                            {isPdfPreparing
                               ? 'Preparing...'
                               : certificate.status === 'revoked'
                                 ? lockedButtonLabel('PDF')
@@ -2068,11 +2201,11 @@ export function AdminCertificatesPage() {
                           </button>
                           <button
                             className="segmented-button"
-                            disabled={certificate.status === 'revoked' || generateCertificatePdfMutation.isPending}
+                            disabled={certificate.status === 'revoked' || isCertificateActionPending}
                             onClick={() => void handleEmailCertificatePdf(certificate)}
                             type="button"
                           >
-                            {generateCertificatePdfMutation.isPending
+                            {isEmailSending
                               ? 'Sending...'
                               : certificate.status === 'revoked'
                                 ? lockedButtonLabel('Email')
@@ -2090,6 +2223,7 @@ export function AdminCertificatesPage() {
                   );
                 })}
               </div>
+              </>
             ) : (
               <EmptyState />
             )}

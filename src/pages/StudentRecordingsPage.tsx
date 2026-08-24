@@ -56,6 +56,14 @@ const recordingSectionOptions: Array<{ label: string; value: StudentRecordingSec
   { label: 'Other Workshops', value: 'other_workshops' }
 ];
 
+function isCompactRecordingViewport() {
+  return typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
+}
+
+function shouldOpenModernSidebarByDefault() {
+  return !isCompactRecordingViewport();
+}
+
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultValue;
@@ -817,6 +825,12 @@ function StudentRecordingsModernPlayer({
     isImmersive ? 'student-recordings-modern-player--immersive' : '',
     !isSidebarOpen ? 'student-recordings-modern-player--sidebar-closed' : ''
   ].filter(Boolean).join(' ');
+  function selectRecording(recordingId: string) {
+    onSelectRecording(recordingId);
+    if (isSidebarOpen && isCompactRecordingViewport()) {
+      onToggleSidebar();
+    }
+  }
 
   return (
     <div className={playerClassName}>
@@ -851,7 +865,7 @@ function StudentRecordingsModernPlayer({
                       .filter(Boolean)
                       .join(' ')}
                     key={recording.id}
-                    onClick={() => onSelectRecording(recording.id)}
+                    onClick={() => selectRecording(recording.id)}
                     type="button"
                   >
                     {isCompleted ? <CheckCircle2 size={16} /> : <PlayCircle size={16} />}
@@ -865,6 +879,14 @@ function StudentRecordingsModernPlayer({
           ))}
         </nav>
       </aside>
+      {isSidebarOpen ? (
+        <button
+          aria-label="Close recording sections"
+          className="student-recording-modern-sidebar-scrim"
+          onClick={onToggleSidebar}
+          type="button"
+        />
+      ) : null}
       <main className="student-recording-modern-stage">
         <header className={showImmersiveToggle ? 'student-recording-modern-topbar' : 'student-recording-modern-topbar student-recording-modern-topbar--compact'}>
           <button aria-label="Toggle recording sections" onClick={onToggleSidebar} type="button">
@@ -1000,8 +1022,17 @@ export function StudentRecordingPlayerPage() {
   const [activeRecordingId, setActiveRecordingId] = useState('');
   const [pendingProgressRecordingId, setPendingProgressRecordingId] = useState<string | null>(null);
   const [progressError, setProgressError] = useState('');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(shouldOpenModernSidebarByDefault);
   const workspace = useStudentRecordingWorkspace(selectedProgramKey);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const media = window.matchMedia('(max-width: 900px)');
+    const syncSidebarForViewport = () => setSidebarOpen(!media.matches);
+    syncSidebarForViewport();
+    media.addEventListener('change', syncSidebarForViewport);
+    return () => media.removeEventListener('change', syncSidebarForViewport);
+  }, []);
 
   useEffect(() => {
     if (workspace.selectedRecordings.some((recording) => recording.id === activeRecordingId)) return;
@@ -1113,7 +1144,7 @@ export function StudentRecordingsPage() {
   const [activePlayerRecording, setActivePlayerRecording] = useState<StudentRecording | null>(null);
   const [modernActiveRecordingId, setModernActiveRecordingId] = useState('');
   const [modernImmersive, setModernImmersive] = useState(false);
-  const [modernSidebarOpen, setModernSidebarOpen] = useState(true);
+  const [modernSidebarOpen, setModernSidebarOpen] = useState(shouldOpenModernSidebarByDefault);
   const selectedProgramKey = normalizeProgramKey(searchParams.get('programKey'));
   const page = asPositiveInteger(searchParams.get('page'), 1);
   const recordingsQuery = useStudentRecordings({ limit: 500, page: 1 });
@@ -1197,6 +1228,15 @@ export function StudentRecordingsPage() {
   }, [allDisplayGroups, completedRecordingIds]);
   const modernSelectedGroup = useMemo(() => allDisplayGroups.find((group) => group.key === selectedProgramKey), [allDisplayGroups, selectedProgramKey]);
   const modernSelectedRecordings = useMemo(() => modernSelectedGroup ? recordingsInGroup(modernSelectedGroup) : [], [modernSelectedGroup]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const media = window.matchMedia('(max-width: 900px)');
+    const syncSidebarForViewport = () => setModernSidebarOpen(!media.matches);
+    syncSidebarForViewport();
+    media.addEventListener('change', syncSidebarForViewport);
+    return () => media.removeEventListener('change', syncSidebarForViewport);
+  }, []);
 
   useEffect(() => {
     if (recordingViewMode !== 'modern' || !modernSelectedGroup) return;

@@ -14,6 +14,7 @@ import {
   LifeBuoy,
   Link as LinkIcon,
   ListChecks,
+  MailCheck,
   MonitorCheck,
   PlusCircle,
   Radio,
@@ -29,6 +30,7 @@ import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { AdminDashboardDrilldowns, AdminProfile, useAdminDashboard, useAdminDashboardDrilldowns, useAdminProfile } from '../features/admin/useAdminDashboard';
+import { useAdminEmailMarketingPlans } from '../features/admin/useAdminEmailMarketing';
 import { getAdminRoleLabel } from '../auth/adminPermissions';
 import { JsonRecord } from '../features/student/useStudentDashboard';
 
@@ -152,6 +154,57 @@ function formatDateText(value: string) {
     month: 'short',
     year: 'numeric'
   }).format(parsed);
+}
+
+function isoDate(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function emailMarketingReminder(plan?: { campaignTitle?: string; cohortNames?: string[]; id?: string; plannedRecipientCount?: number; status?: string } | null) {
+  if (!plan) {
+    return {
+      action: 'Create today’s plan',
+      href: '/admin/email-marketing',
+      status: 'Not planned',
+      text: 'No Email Marketing plan is saved for today.',
+      title: 'Email Marketing needs a plan',
+      tone: 'warning' as const
+    };
+  }
+
+  if (plan.status === 'sent') {
+    return {
+      action: 'View plan',
+      href: '/admin/email-marketing',
+      status: 'Sent',
+      text: `${plan.campaignTitle ?? 'Today’s campaign'} was sent to the selected outreach batch.`,
+      title: 'Email Marketing completed today',
+      tone: 'safe' as const
+    };
+  }
+
+  if (plan.status === 'skipped' || plan.status === 'cancelled') {
+    return {
+      action: 'Review plan',
+      href: '/admin/email-marketing',
+      status: plan.status,
+      text: `${plan.campaignTitle ?? 'Today’s campaign'} is marked ${plan.status}.`,
+      title: 'Email Marketing skipped today',
+      tone: 'neutral' as const
+    };
+  }
+
+  return {
+    action: 'Review & send',
+    href: plan.id ? `/admin/email-center?marketingPlanId=${plan.id}` : '/admin/email-marketing',
+    status: plan.status === 'reviewed' ? 'Reviewed' : 'Pending',
+    text: `${plan.campaignTitle ?? 'Today’s campaign'} · ${formatNumber(plan.plannedRecipientCount ?? 0)} planned recipients · ${(plan.cohortNames ?? []).length} cohort${(plan.cohortNames ?? []).length === 1 ? '' : 's'}.`,
+    title: plan.status === 'reviewed' ? 'Email Marketing is ready to send' : 'Email Marketing plan is pending',
+    tone: 'warning' as const
+  };
 }
 
 function buildLiveMetrics(summary: JsonRecord): MetricCard[] {
@@ -399,6 +452,8 @@ export function AdminDashboardPage() {
   const profileQuery = useAdminProfile();
   const dashboardQuery = useAdminDashboard();
   const drilldownsQuery = useAdminDashboardDrilldowns();
+  const todayKey = isoDate(new Date());
+  const emailMarketingPlanQuery = useAdminEmailMarketingPlans({ limit: 1, plannedDate: todayKey });
   const profile = dashboardQuery.data?.admin ?? profileQuery.data;
   const summary = dashboardQuery.data?.summary ?? {};
   const isLoading = profileQuery.isLoading || dashboardQuery.isLoading;
@@ -409,7 +464,9 @@ export function AdminDashboardPage() {
   const learningItems = buildLearningItems(summary);
   const pipelineSignals = buildPipelineSignals(summary, drilldownsQuery.data);
   const hasAttentionItems = queueItems.some((item) => item.count > 0) || healthItems.some((item) => item.tone === 'danger');
-  const isRefreshing = dashboardQuery.isFetching || drilldownsQuery.isFetching;
+  const todayEmailPlan = emailMarketingPlanQuery.data?.items?.[0] ?? null;
+  const emailReminder = emailMarketingReminder(todayEmailPlan);
+  const isRefreshing = dashboardQuery.isFetching || drilldownsQuery.isFetching || emailMarketingPlanQuery.isFetching;
 
   if (isLoading) {
     return (
@@ -455,6 +512,7 @@ export function AdminDashboardPage() {
             onClick={() => {
               void dashboardQuery.refetch();
               void drilldownsQuery.refetch();
+              void emailMarketingPlanQuery.refetch();
             }}
           >
             <RefreshCw className={isRefreshing ? 'admin-spin' : undefined} size={16} />
@@ -462,6 +520,19 @@ export function AdminDashboardPage() {
           </button>
         </div>
       </section>
+
+      <Link className={`admin-email-reminder admin-email-reminder--${emailReminder.tone}`} to={emailReminder.href}>
+        <MailCheck size={22} />
+        <div>
+          <span className="eyebrow">Email Marketing</span>
+          <strong>{emailReminder.title}</strong>
+          <p>{emailMarketingPlanQuery.isError ? 'Email Marketing reminder could not be loaded. Open the module to review manually.' : emailReminder.text}</p>
+        </div>
+        <div className="admin-email-reminder__action">
+          <StatusBadge tone={emailMarketingPlanQuery.isError ? 'warning' : emailReminder.tone}>{emailMarketingPlanQuery.isError ? 'Check' : emailReminder.status}</StatusBadge>
+          <span>{emailReminder.action}</span>
+        </div>
+      </Link>
 
       <section className="admin-section">
         <div className="admin-section__heading">

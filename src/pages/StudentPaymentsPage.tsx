@@ -52,7 +52,8 @@ const itemTypeOptions: Array<{ label: string; value: FinanceItemType | 'all' }> 
   { label: 'All item types', value: 'all' },
   { label: 'Groups', value: 'group' },
   { label: 'Workshops', value: 'workshop' },
-  { label: 'Resources', value: 'resource' }
+  { label: 'Resources', value: 'resource' },
+  { label: 'ATS Packages', value: 'ats_package' }
 ];
 
 function formatDate(value: string | undefined) {

@@ -18,6 +18,10 @@ const environmentSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((value) => value === 'true'),
+  ATS_CREDIT_GRANTS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
   COHORT_WRITES_ENABLED: z
     .enum(['true', 'false'])
     .default('false')

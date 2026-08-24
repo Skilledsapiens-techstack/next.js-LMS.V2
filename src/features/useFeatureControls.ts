@@ -35,6 +35,7 @@ export const defaultFeatureMessages: Record<string, string> = {
   community: 'Community access is coming soon.',
   'doubt-sessions': 'Doubt Sessions will be visible once a mentor schedules them.',
   'email-service': 'Email delivery is temporarily paused.',
+  'ats-resume-score': 'ATS Resume Score will be available soon.',
   payments: 'Payments and access details will be available soon.',
   'project-submissions': 'Project submissions will be available soon.',
   projects: 'Live Project Hub will be enabled soon.',

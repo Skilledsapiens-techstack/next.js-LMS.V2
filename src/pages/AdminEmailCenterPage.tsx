@@ -1,5 +1,6 @@
-import { AlertTriangle, Bold, CheckCircle, CheckSquare, Edit3, Italic, Link, List, ListOrdered, Plus, RefreshCw, RemoveFormatting, Search, Send, Square, Trash2, Underline, X } from 'lucide-react';
+import { AlertTriangle, Bold, CheckCircle, CheckSquare, Download, Edit3, Eye, Italic, Link, List, ListOrdered, Plus, RefreshCw, RemoveFormatting, Search, Send, Square, Trash2, Underline, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../components/PageHeader';
 import { PortalToast } from '../components/PortalToast';
 import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates';
@@ -7,6 +8,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { AdminCohort, useAdminCohorts } from '../features/admin/useAdminCohorts';
 import {
   AdminEmailRecipientFilters,
+  AdminEmailSendResult,
   AdminEmailTemplate,
   AdminEmailTemplatePayload,
   useAdminEmailQueue,
@@ -14,9 +16,18 @@ import {
   useArchiveAdminEmailTemplate,
   useCreateAdminEmailTemplate,
   useResolveAdminEmailRecipients,
+  useRetryFailedAdminEmail,
   useSendAdminEmail,
   useUpdateAdminEmailTemplate
 } from '../features/admin/useAdminEmailCenter';
+import {
+  AdminEmailSendAuditLog,
+  useAdminEmailProviderEvents,
+  useAdminEmailMarketingPlans,
+  useAdminEmailSendAuditLogs,
+  useCreateAdminEmailMarketingPlanEvent,
+  useUpdateAdminEmailMarketingPlan
+} from '../features/admin/useAdminEmailMarketing';
 import { useAdminPrograms } from '../features/admin/useAdminPrograms';
 import { useAdminProjectRoles } from '../features/admin/useAdminProjects';
 import { AdminResource, useAdminResources } from '../features/admin/useAdminResources';
@@ -72,6 +83,17 @@ const paidAccessStatusOptions = [
 
 type EmailCenterTab = 'compose' | 'templates' | 'activity';
 type RelatedPickerKind = 'workshop' | 'recording' | 'resource' | null;
+type SendAuditFilter = 'all' | 'production' | 'rehearsal';
+
+type SendAttemptState = {
+  message: string;
+  queueRowsCreated: number;
+  result?: AdminEmailSendResult;
+  startedAt?: string;
+  status: 'idle' | 'sending' | 'sent' | 'partial' | 'failed';
+};
+
+const defaultRehearsalEmails = 'saurabhvaslas955@gmail.com, skilledsapiens@gmail.com';
 
 const emailTabs: { key: EmailCenterTab; label: string }[] = [
   { key: 'compose', label: 'Compose Mail' },
@@ -370,8 +392,78 @@ function emailSendMessage(result: { error?: string; failed?: number; message?: s
   return fallback;
 }
 
+function sendAttemptTone(status: SendAttemptState['status']) {
+  if (status === 'sent') return 'success';
+  if (status === 'partial') return 'warning';
+  if (status === 'failed') return 'error';
+  return 'info';
+}
+
+function sendAttemptBadgeTone(status: SendAttemptState['status']) {
+  if (status === 'sent') return 'safe';
+  if (status === 'partial') return 'warning';
+  if (status === 'failed') return 'danger';
+  return 'neutral';
+}
+
+function csvCell(value: unknown) {
+  const textValue = Array.isArray(value) ? value.join('; ') : value == null ? '' : String(value);
+  return `"${textValue.replace(/"/g, '""')}"`;
+}
+
+function auditResultText(result: Record<string, unknown>, key: string) {
+  const value = result[key];
+  return value == null ? '' : String(value);
+}
+
+function downloadAuditCsv(attempt: AdminEmailSendAuditLog) {
+  const fileName = `email-send-audit-${attempt.attemptKey || attempt.id}.csv`;
+  const rows = (attempt.results?.length ? attempt.results : [{}]).map((result) => [
+    attempt.attemptKey,
+    attempt.subject || '',
+    attempt.status,
+    attempt.actorEmail || '',
+    attempt.sendMode,
+    attempt.cohortNames.join('; '),
+    auditResultText(result, 'email'),
+    auditResultText(result, 'status'),
+    auditResultText(result, 'messageId'),
+    auditResultText(result, 'error')
+  ]);
+  const header = ['attempt_key', 'subject', 'attempt_status', 'actor_email', 'send_mode', 'cohorts', 'recipient_email', 'recipient_status', 'provider_message_id', 'error'];
+  const csv = [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  return fileName;
+}
+
+function isRehearsalAttempt(attempt: AdminEmailSendAuditLog) {
+  return attempt.metadata?.rehearsalMode === true || attempt.originalPayload?.rehearsalMode === true || attempt.originalPayload?.rehearsal_mode === true;
+}
+
+function auditMetadataNumber(attempt: AdminEmailSendAuditLog, key: string) {
+  const value = attempt.metadata?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 export function AdminEmailCenterPage() {
+  const [searchParams] = useSearchParams();
+  const marketingPlanId = searchParams.get('marketingPlanId') ?? '';
+  const rehearsalRequested = searchParams.get('rehearsal') === '1';
   const templatesQuery = useAdminEmailTemplates({ sort: 'order', status: 'all' });
+  const marketingPlanQuery = useAdminEmailMarketingPlans({ enabled: Boolean(marketingPlanId), limit: 1, planId: marketingPlanId });
+  const sendAuditQuery = useAdminEmailSendAuditLogs({ limit: 50 });
+  const [auditModal, setAuditModal] = useState<AdminEmailSendAuditLog | null>(null);
+  const auditProviderEventsQuery = useAdminEmailProviderEvents({ enabled: Boolean(auditModal?.subject), limit: 50, search: auditModal?.subject ?? '' });
+  const updateMarketingPlan = useUpdateAdminEmailMarketingPlan();
+  const createMarketingPlanEvent = useCreateAdminEmailMarketingPlanEvent();
   const queueQuery = useAdminEmailQueue({ limit: 20 });
   const cohortsQuery = useAdminCohorts({ limit: 500, page: 1, status: 'all' });
   const programsQuery = useAdminPrograms({ limit: 500, page: 1, status: 'all' });
@@ -384,6 +476,7 @@ export function AdminEmailCenterPage() {
   const archiveTemplate = useArchiveAdminEmailTemplate();
   const resolveRecipients = useResolveAdminEmailRecipients();
   const sendEmail = useSendAdminEmail();
+  const retryFailedEmail = useRetryFailedAdminEmail();
   const [activeTab, setActiveTab] = useState<EmailCenterTab>('compose');
   const [phase, setPhase] = useState('custom');
   const [templateKey, setTemplateKey] = useState('custom_blank');
@@ -397,14 +490,20 @@ export function AdminEmailCenterPage() {
   const [recipientFilters, setRecipientFilters] = useState<AdminEmailRecipientFilters>({});
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
+  const [qaMode, setQaMode] = useState(false);
+  const [rehearsalMode, setRehearsalMode] = useState(rehearsalRequested);
+  const [rehearsalEmails, setRehearsalEmails] = useState(defaultRehearsalEmails);
   const [testEmail, setTestEmail] = useState('');
-  const [batchSize, setBatchSize] = useState(50);
+  const [batchSize, setBatchSize] = useState(rehearsalRequested ? 5 : 50);
   const [resolvedSummary, setResolvedSummary] = useState<Awaited<ReturnType<typeof resolveRecipients.mutateAsync>> | null>(null);
   const [confirmSend, setConfirmSend] = useState(false);
+  const [sendAttempt, setSendAttempt] = useState<SendAttemptState>({ message: '', queueRowsCreated: 0, status: 'idle' });
   const [message, setMessage] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
   const [modal, setModal] = useState<{ draft: AdminEmailTemplatePayload; template?: AdminEmailTemplate | null } | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [templateCategoryFilter, setTemplateCategoryFilter] = useState('all');
+  const [sendAuditFilter, setSendAuditFilter] = useState<SendAuditFilter>('all');
+  const appliedMarketingPlanIdRef = useRef('');
 
   const templates = templatesQuery.data?.items ?? [];
   const activeTemplates = templates.filter((template) => template.status === 'active');
@@ -449,10 +548,31 @@ export function AdminEmailCenterPage() {
     ? splitEmails(directEmails).length
     : sendMode === 'cohort_google_group'
       ? selectedCohortRows.filter((cohort) => googleGroupEmail || cohort.googleGroup).length
-      : sendMode === 'all_active_students'
-        ? (resolvedSummary?.recipients ?? 0)
-        : selectedCohorts.length;
+      : null;
   const recipientCount = resolvedSummary?.recipients ?? estimatedRecipientCount;
+  const previewStateLabel = resolveRecipients.isPending
+    ? 'Checking exact audience...'
+    : resolvedSummary
+      ? 'Exact resolved count'
+      : sendMode === 'direct' || sendMode === 'cohort_google_group'
+        ? 'Estimated until preview is refreshed'
+        : 'Preview required for exact count';
+  const previewVerified = Boolean(resolvedSummary && resolvedSummary.willSend > 0);
+  const qaChecklist = [
+    { done: Boolean(subject.trim()), label: 'Subject ready' },
+    { done: Boolean(sanitizeEmailHtml(normalizeBodyForEditor(body)).replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim()), label: 'Body ready' },
+    { done: sendMode === 'direct' ? splitEmails(directEmails).length > 0 : sendMode === 'cohort_google_group' ? selectedCohortRows.some((cohort) => googleGroupEmail || cohort.googleGroup) : sendMode === 'all_active_students' || selectedCohorts.length > 0, label: 'Audience selected' },
+    {
+      done: previewVerified,
+      label: resolveRecipients.isPending
+        ? 'Preview checking'
+        : resolvedSummary
+          ? resolvedSummary.willSend > 0
+            ? 'Preview verified'
+            : 'Preview blocked'
+          : 'Preview needed'
+    }
+  ];
   const selectedTargetLabel = sendMode === 'all_active_students'
     ? recipientFilters.collegeName
       ? `Active LMS students · ${recipientFilters.collegeName}`
@@ -461,7 +581,12 @@ export function AdminEmailCenterPage() {
       ? selectedCohorts.join(', ')
       : 'Not selected';
   const activeRecipientFilterCount = Object.values(recipientFilters).filter(Boolean).length;
-  const lastRefresh = [templatesQuery.dataUpdatedAt, queueQuery.dataUpdatedAt, cohortsQuery.dataUpdatedAt, programsQuery.dataUpdatedAt, rolesQuery.dataUpdatedAt, collegeOptionsQuery.dataUpdatedAt].filter(Boolean).sort((a, b) => b - a)[0];
+  const sendAuditItems = sendAuditQuery.data?.items ?? [];
+  const filteredSendAuditItems = sendAuditItems.filter((attempt) => {
+    if (sendAuditFilter === 'all') return true;
+    return sendAuditFilter === 'rehearsal' ? isRehearsalAttempt(attempt) : !isRehearsalAttempt(attempt);
+  });
+  const lastRefresh = [templatesQuery.dataUpdatedAt, queueQuery.dataUpdatedAt, sendAuditQuery.dataUpdatedAt, cohortsQuery.dataUpdatedAt, programsQuery.dataUpdatedAt, rolesQuery.dataUpdatedAt, collegeOptionsQuery.dataUpdatedAt].filter(Boolean).sort((a, b) => b - a)[0];
 
   useEffect(() => {
     if (!selectedTemplate) return;
@@ -470,9 +595,37 @@ export function AdminEmailCenterPage() {
   }, [selectedTemplate?.id]);
 
   useEffect(() => {
+    const marketingPlan = marketingPlanQuery.data?.items?.[0];
+    if (!marketingPlanId || !marketingPlan || appliedMarketingPlanIdRef.current === marketingPlanId) return;
+    const nextPhase = normalizeTemplatePhase(marketingPlan.campaignPhase);
+    const preferredTemplateKey = typeof marketingPlan.metadata?.preferredTemplateKey === 'string' ? marketingPlan.metadata.preferredTemplateKey : '';
+    const matchingTemplate =
+      activeTemplates.find((template) => template.templateKey === preferredTemplateKey) ??
+      activeTemplates.find((template) => template.phase === nextPhase || template.category === nextPhase);
+
+    appliedMarketingPlanIdRef.current = marketingPlanId;
+    setActiveTab('compose');
+    setPhase(nextPhase);
+    setTemplateKey('custom_blank');
+    setRelatedItemId('');
+    setRelatedParams({
+      cohort: marketingPlan.cohortNames.join(', '),
+      cohorts: marketingPlan.cohortNames.join(', ')
+    });
+    setSendMode('cohort_students');
+    setSelectedCohorts(marketingPlan.cohortNames);
+    setBatchSize(rehearsalMode ? 5 : Math.min(300, Math.max(25, marketingPlan.suggestedBatchSize || 100)));
+    if (rehearsalMode) setQaMode(true);
+    setSubject(marketingPlan.suggestedSubject || matchingTemplate?.subject || marketingPlan.campaignTitle);
+    setBody(normalizeBodyForEditor(marketingPlan.suggestedBody || matchingTemplate?.body || ''));
+    setMessage({ tone: 'success', text: `${marketingPlan.campaignTitle} loaded from Email Marketing${rehearsalMode ? ' in rehearsal mode' : ''}.` });
+  }, [activeTemplates, marketingPlanId, marketingPlanQuery.data?.items, rehearsalMode]);
+
+  useEffect(() => {
     setResolvedSummary(null);
     setConfirmSend(false);
-  }, [batchSize, body, directEmails, googleGroupEmail, recipientFilters, relatedParams, selectedCohorts, sendMode, subject, templateKey]);
+    setSendAttempt({ message: '', queueRowsCreated: 0, status: 'idle' });
+  }, [batchSize, body, directEmails, googleGroupEmail, recipientFilters, rehearsalEmails, rehearsalMode, relatedParams, selectedCohorts, sendMode, subject, templateKey]);
 
   function handlePhaseChange(nextPhase: string) {
     setPhase(nextPhase);
@@ -513,6 +666,49 @@ export function AdminEmailCenterPage() {
     if (workshop.cohortNames?.length && selectedCohorts.length === 0) {
       setSelectedCohorts(workshop.cohortNames);
       setSendMode('cohort_students');
+    }
+  }
+
+  function useAuditAttemptAsDraft(attempt: AdminEmailSendAuditLog) {
+    setActiveTab('compose');
+    setPhase(normalizeTemplatePhase(attempt.category || attempt.templateKey || 'custom'));
+    setTemplateKey(attempt.templateKey || 'custom_blank');
+    setSendMode(sendModes.some((mode) => mode.value === attempt.sendMode) ? attempt.sendMode as (typeof sendModes)[number]['value'] : 'direct');
+    setSelectedCohorts(attempt.cohortNames ?? []);
+    setRecipientFilters(attempt.recipientFilters as AdminEmailRecipientFilters);
+    setSubject(attempt.subject || '');
+    setBatchSize(Math.min(300, Math.max(25, attempt.batchSize || 50)));
+    setResolvedSummary(null);
+    setConfirmSend(false);
+    setAuditModal(null);
+    setMessage({
+      tone: 'success',
+      text: attempt.templateKey && attempt.templateKey !== 'custom_blank'
+        ? 'Send attempt restored as a draft. Preview again before sending.'
+        : 'Send attempt restored as a draft. Add the message body again, then preview before sending.'
+    });
+  }
+
+  async function retryFailedAttempt(attempt: AdminEmailSendAuditLog) {
+    if (attempt.failed <= 0) return;
+    if (!attempt.bodySnapshot || !attempt.recipientSnapshot?.length) {
+      setMessage({ tone: 'error', text: 'This attempt does not have retry-safe snapshots. Use it as a draft instead.' });
+      return;
+    }
+    const confirmedRetry = window.confirm(`Retry ${attempt.failed} failed recipient${attempt.failed === 1 ? '' : 's'} from this send attempt?`);
+    if (!confirmedRetry) return;
+    try {
+      const result = await retryFailedEmail.mutateAsync({
+        action: 'retryAdminStudentCommunicationFailedOnly',
+        batchSize: Math.max(25, attempt.failed),
+        confirmed: true,
+        originalAttemptKey: attempt.attemptKey
+      });
+      await Promise.all([sendAuditQuery.refetch(), queueQuery.refetch()]);
+      setAuditModal(null);
+      setMessage({ tone: result.ok ? 'success' : 'error', text: emailSendMessage(result, 'Retry completed.') });
+    } catch (error) {
+      setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Failed-recipient retry could not be sent.' });
     }
   }
 
@@ -586,20 +782,29 @@ export function AdminEmailCenterPage() {
   }
 
   function emailPayload(confirmed = false) {
+    const effectiveBatchSize = rehearsalMode ? Math.min(5, Math.max(1, batchSize)) : batchSize;
     return {
       action: 'sendAdminStudentCommunication' as const,
-      batchSize,
+      batchSize: effectiveBatchSize,
       body: sanitizeEmailHtml(normalizeBodyForEditor(body)),
       cohortNames: selectedCohorts,
       confirmed,
       directEmails,
       googleGroupEmail,
       params: relatedParams,
+      qaMode: qaMode || rehearsalMode,
       recipientFilters,
+      rehearsalEmails,
+      rehearsalMode,
       sendMode,
       subject,
       templateKey
     };
+  }
+
+  function handleDownloadAuditCsv(attempt: AdminEmailSendAuditLog) {
+    const fileName = downloadAuditCsv(attempt);
+    setMessage({ tone: 'success', text: `${fileName} downloaded.` });
   }
 
   function validateRecipientSelection() {
@@ -665,9 +870,10 @@ export function AdminEmailCenterPage() {
       const result = await resolveRecipients.mutateAsync(emailPayload(false));
       setResolvedSummary(result);
       if (result.willSend <= 0) {
-        setMessage({ tone: 'error', text: result.message || 'No recipients are available for this batch.' });
-        return;
+      setMessage({ tone: 'error', text: result.message || 'No recipients are available for this batch.' });
+      return;
       }
+      setSendAttempt({ message: '', queueRowsCreated: 0, status: 'idle' });
       setConfirmSend(true);
     } catch (error) {
       setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Recipient summary could not be resolved.' });
@@ -676,13 +882,84 @@ export function AdminEmailCenterPage() {
 
   async function handleConfirmedSend() {
     setMessage(null);
+    const startedAt = new Date().toISOString();
+    setSendAttempt({
+      message: `Sending ${resolvedSummary?.willSend ?? 0} email${resolvedSummary?.willSend === 1 ? '' : 's'} through Brevo...`,
+      queueRowsCreated: 0,
+      startedAt,
+      status: 'sending'
+    });
     try {
       const result = await sendEmail.mutateAsync(emailPayload(true));
-      setConfirmSend(false);
-      setResolvedSummary(null);
-      setMessage({ tone: result.ok ? 'success' : 'error', text: emailSendMessage(result, 'Email request completed, but no delivery message was returned.') });
+      const marketingPlan = marketingPlanQuery.data?.items?.[0];
+      if (result.ok && marketingPlanId && marketingPlan && !rehearsalMode) {
+        await updateMarketingPlan.mutateAsync({
+          body: {
+            sentAt: new Date().toISOString(),
+            status: 'sent'
+          },
+          planId: marketingPlan.id
+        });
+        await createMarketingPlanEvent.mutateAsync({
+          details: {
+            failed: result.failed,
+            recipients: result.recipients,
+            sent: result.sent,
+            templateKey: result.templateKey
+          },
+          eventType: 'sent',
+          planId: marketingPlan.id
+        });
+      } else if (result.ok && marketingPlanId && marketingPlan && rehearsalMode) {
+        await createMarketingPlanEvent.mutateAsync({
+          details: {
+            failed: result.failed,
+            recipients: result.recipients,
+            rehearsalMode: true,
+            sent: result.sent,
+            templateKey: result.templateKey
+          },
+          eventType: 'note',
+          planId: marketingPlan.id
+        });
+      }
+      const [refreshedQueue] = await Promise.all([queueQuery.refetch(), sendAuditQuery.refetch()]);
+      const startedTime = new Date(startedAt).getTime() - 5_000;
+      const queueRowsCreated = (refreshedQueue.data?.items ?? []).filter((item) => {
+        if (item.subject !== subject) return false;
+        const createdTime = item.createdAt ? new Date(item.createdAt).getTime() : 0;
+        return Number.isFinite(createdTime) && createdTime >= startedTime;
+      }).length;
+      const expectedRows = Math.max(0, result.sent ?? 0);
+      const verified = expectedRows > 0 && queueRowsCreated >= expectedRows;
+      const status: SendAttemptState['status'] = result.ok
+        ? verified
+          ? 'sent'
+          : 'partial'
+        : 'failed';
+      const verificationMessage = result.ok
+        ? verified
+          ? `Verified ${queueRowsCreated} email queue row${queueRowsCreated === 1 ? '' : 's'} for this send.`
+          : `Function returned success, but only ${queueRowsCreated}/${expectedRows || resolvedSummary?.willSend || 0} expected queue row${(expectedRows || resolvedSummary?.willSend || 0) === 1 ? '' : 's'} were found in recent activity.`
+        : 'The send function returned an error.';
+      const nextMessage = `${emailSendMessage(result, 'Email request completed, but no delivery message was returned.')} ${verificationMessage}`;
+      setSendAttempt({
+        message: nextMessage,
+        queueRowsCreated,
+        result,
+        startedAt,
+        status
+      });
+      setMessage({ tone: result.ok && verified ? 'success' : 'error', text: nextMessage });
     } catch (error) {
-      setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Email could not be sent.' });
+      const errorMessage = error instanceof Error ? error.message : 'Email could not be sent.';
+      setSendAttempt({
+        message: errorMessage,
+        queueRowsCreated: 0,
+        startedAt,
+        status: 'failed'
+      });
+      setMessage({ tone: 'error', text: errorMessage });
     }
   }
 
@@ -773,7 +1050,7 @@ export function AdminEmailCenterPage() {
     <div className="page-stack admin-email-center-page">
       <PageHeader
         actions={
-          <button className="segmented-button" onClick={() => void Promise.all([templatesQuery.refetch(), queueQuery.refetch(), cohortsQuery.refetch(), programsQuery.refetch(), rolesQuery.refetch(), collegeOptionsQuery.refetch(), workshopsQuery.refetch(), resourcesQuery.refetch()])} type="button">
+          <button className="segmented-button" onClick={() => void Promise.all([templatesQuery.refetch(), queueQuery.refetch(), sendAuditQuery.refetch(), cohortsQuery.refetch(), programsQuery.refetch(), rolesQuery.refetch(), collegeOptionsQuery.refetch(), workshopsQuery.refetch(), resourcesQuery.refetch()])} type="button">
             <RefreshCw size={18} />
             Refresh Email
           </button>
@@ -791,6 +1068,18 @@ export function AdminEmailCenterPage() {
           title={message.tone === 'success' ? 'Action complete' : 'Action failed'}
           tone={message.tone}
         />
+      ) : null}
+
+      {marketingPlanId ? (
+        <div className={marketingPlanQuery.isError ? 'auth-alert auth-alert--error' : 'auth-alert auth-alert--success'}>
+          {marketingPlanQuery.isError
+            ? 'Email Marketing plan could not be loaded. You can still compose manually.'
+            : marketingPlanQuery.isLoading
+              ? 'Loading Email Marketing plan into the composer...'
+              : rehearsalMode
+                ? 'Email Marketing plan loaded in rehearsal mode. QA mode is on and the real send is capped at 5 recipients.'
+                : 'Email Marketing plan loaded. Preview recipients before sending the batch.'}
+        </div>
       ) : null}
 
       <div className="admin-email-tabs" role="tablist" aria-label="Email centre sections">
@@ -1063,9 +1352,19 @@ export function AdminEmailCenterPage() {
               <label className="admin-email-batch-size">
                 <span>Batch size</span>
                 <select value={batchSize} onChange={(event) => setBatchSize(Number(event.target.value))}>
-                  <option value={25}>25</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
+                  {rehearsalMode ? (
+                    <>
+                      <option value={1}>1</option>
+                      <option value={2}>2</option>
+                      <option value={5}>5</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </>
+                  )}
                 </select>
               </label>
               <button className="segmented-button" disabled={resolveRecipients.isPending} type="button" onClick={() => void handlePreview()}>
@@ -1076,6 +1375,18 @@ export function AdminEmailCenterPage() {
                 {sendEmail.isPending ? 'Sending...' : 'Send Email'}
               </button>
             </div>
+            {(resolveRecipients.isPending || sendEmail.isPending || resolvedSummary) ? (
+              <div className={`admin-email-send-state admin-email-send-state--${sendEmail.isPending ? 'sending' : resolveRecipients.isPending ? 'checking' : 'ready'} admin-email-wide`}>
+                <RefreshCw size={16} />
+                <span>
+                  {sendEmail.isPending
+                    ? 'Sending batch through Brevo. Keep this page open until the result appears.'
+                    : resolveRecipients.isPending
+                      ? 'Resolving exact recipients, daily limit, duplicate sends, and suppressions.'
+                      : `${resolvedSummary?.willSend ?? 0} recipients verified for this batch.`}
+                </span>
+              </div>
+            ) : null}
             <div className="admin-email-test-send admin-email-wide">
               <label>
                 <span>Test Email</span>
@@ -1085,6 +1396,40 @@ export function AdminEmailCenterPage() {
                 Send Test
               </button>
             </div>
+            <label className="admin-email-qa-mode admin-email-wide">
+              <input checked={qaMode || rehearsalMode} disabled={rehearsalMode} onChange={(event) => setQaMode(event.target.checked)} type="checkbox" />
+              <span>
+                QA mode
+                <small>Adds a QA tag to this real batch for easier audit and analytics filtering. Recipient safety still applies.</small>
+              </span>
+            </label>
+            <label className="admin-email-qa-mode admin-email-rehearsal-mode admin-email-wide">
+              <input
+                checked={rehearsalMode}
+                onChange={(event) => {
+                  const enabled = event.target.checked;
+                  setRehearsalMode(enabled);
+                  if (enabled) {
+                    setQaMode(true);
+                    setBatchSize((current) => Math.min(5, Math.max(1, current)));
+                  } else {
+                    setBatchSize((current) => current < 25 ? 25 : current);
+                  }
+                }}
+                type="checkbox"
+              />
+              <span>
+                Rehearsal mode
+                <small>Resolves the real cohort/campaign workflow, then sends only to server-allowed QA recipients with a hard 5-email cap. Email Marketing plans stay unsent.</small>
+              </span>
+            </label>
+            {rehearsalMode ? (
+              <label className="admin-email-rehearsal-allowlist admin-email-wide">
+                <span>Rehearsal QA Recipients</span>
+                <textarea onChange={(event) => setRehearsalEmails(event.target.value)} value={rehearsalEmails} />
+                <small>Only emails present in the server allowlist can receive rehearsal sends. Duplicate-send blocking is bypassed for rehearsal QA, but provider suppressions and the 300/day limit still apply.</small>
+              </label>
+            ) : null}
             <div className="admin-email-batch admin-email-wide">
               <span>Daily Brevo package limit is set to 300 LMS emails. Email Centre sends a controlled batch and skips recipients who already received the same template today.</span>
               <button disabled={sendEmail.isPending || resolveRecipients.isPending || phase !== 'onboarding' || selectedCohorts.length === 0} onClick={() => void openSendConfirmation()} type="button">
@@ -1103,8 +1448,8 @@ export function AdminEmailCenterPage() {
             <div className="admin-email-summary">
               <article>
                 <span>Recipients</span>
-                <strong>{recipientCount}</strong>
-                <small>{resolvedSummary ? 'Exact resolved count' : 'Estimated until preview is refreshed'}</small>
+                <strong>{recipientCount ?? 'Preview'}</strong>
+                <small>{rehearsalMode ? `${previewStateLabel} · rehearsal cap 5` : previewStateLabel}</small>
               </article>
               <article>
                 <span>Mode</span>
@@ -1116,9 +1461,16 @@ export function AdminEmailCenterPage() {
               </article>
               <article>
                 <span>This Batch</span>
-                <strong>{resolvedSummary ? `${resolvedSummary.willSend} will send` : `${batchSize} max batch`}</strong>
-                {resolvedSummary ? <small>{resolvedSummary.alreadySentToday} skipped because this template was already sent today. {resolvedSummary.remainingAfterBatch} remain after this batch.</small> : null}
+                <strong>{resolvedSummary ? `${resolvedSummary.willSend} will send` : `${rehearsalMode ? Math.min(5, Math.max(1, batchSize)) : batchSize} max batch`}</strong>
+                {resolvedSummary ? <small>{resolvedSummary.alreadySentToday} already sent today · {resolvedSummary.suppressedRecipients} provider-suppressed · {resolvedSummary.remainingAfterBatch} remain after this batch.</small> : null}
               </article>
+              {rehearsalMode ? (
+                <article>
+                  <span>Rehearsal delivery</span>
+                  <strong>{resolvedSummary ? `${resolvedSummary.willSend} QA email${resolvedSummary.willSend === 1 ? '' : 's'}` : 'QA allowlist'}</strong>
+                  <small>{resolvedSummary?.rehearsalOriginalAudienceCount != null ? `${resolvedSummary.rehearsalOriginalAudienceCount} original cohort recipient${resolvedSummary.rehearsalOriginalAudienceCount === 1 ? '' : 's'} resolved before QA substitution.` : 'Preview will resolve the selected audience, then substitute QA recipients.'}</small>
+                </article>
+              ) : null}
               <article>
                 <span>Cohort</span>
                 <strong>{selectedTargetLabel}</strong>
@@ -1139,6 +1491,15 @@ export function AdminEmailCenterPage() {
                       : 'Add at least one email recipient.'}
                 </div>
               ) : null}
+              <div className="admin-email-qa-checklist">
+                <span>QA Checklist</span>
+                {qaChecklist.map((item) => (
+                  <small className={item.done ? 'admin-email-qa-checklist__item admin-email-qa-checklist__item--done' : 'admin-email-qa-checklist__item'} key={item.label}>
+                    {item.done ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
+                    {item.label}
+                  </small>
+                ))}
+              </div>
               {resolvedSummary?.previewRecipients?.length ? (
                 <div className="admin-email-recipient-preview">
                   <span>First recipients</span>
@@ -1233,24 +1594,88 @@ export function AdminEmailCenterPage() {
       ) : null}
 
       {activeTab === 'activity' ? (
-        <section className="admin-email-card">
-          <div className="admin-email-card__header">
-            <span className="eyebrow">Delivery history</span>
-            <h2>Recent Email Activity</h2>
-          </div>
-          <div className="admin-email-history">
-            {queueQuery.data?.items?.length ? queueQuery.data.items.map((item) => (
-              <article key={item.id} className={`admin-email-history-row admin-email-history-row--${item.status || 'queued'}`}>
-                <div>
-                  <strong>{item.recipientName || item.recipientEmail || 'Recipient not set'}</strong>
-                  <span>{item.templateKey || item.category || 'custom'} · {item.status || 'queued'} · {formatDateTime(item.sentAt || item.createdAt)}</span>
-                  {item.failureMessage ? <p>{item.failureMessage}</p> : null}
-                </div>
-                <small>{item.subject || 'No subject'}</small>
-              </article>
-            )) : <EmptyState />}
-          </div>
-        </section>
+        <>
+          <section className="admin-email-card">
+            <div className="admin-email-card__header admin-email-card__header--row">
+              <div>
+                <span className="eyebrow">Send audit</span>
+                <h2>Recent Send Attempts</h2>
+              </div>
+              <div className="admin-email-audit-toolbar">
+                <label>
+                  <span>View</span>
+                  <select value={sendAuditFilter} onChange={(event) => setSendAuditFilter(event.target.value as SendAuditFilter)}>
+                    <option value="all">All attempts</option>
+                    <option value="production">Production only</option>
+                    <option value="rehearsal">Rehearsals only</option>
+                  </select>
+                </label>
+                <StatusBadge tone="neutral">{`${filteredSendAuditItems.length}/${sendAuditItems.length} attempts`}</StatusBadge>
+              </div>
+            </div>
+            <div className="admin-email-audit-list">
+              {filteredSendAuditItems.length ? filteredSendAuditItems.map((attempt) => {
+                const cohorts = attempt.cohortNames?.length ? attempt.cohortNames.join(', ') : 'All selected filters';
+                const rehearsal = isRehearsalAttempt(attempt);
+                const meta = [
+                  attempt.sendMode || 'send',
+                  attempt.status || 'started',
+                  formatDateTime(attempt.startedAt || attempt.createdAt)
+                ].filter(Boolean).join(' · ');
+                return (
+                  <article key={attempt.id} className={`admin-email-audit-row admin-email-audit-row--${attempt.status || 'started'}`}>
+                    <div>
+                      <strong>{attempt.subject || 'No subject'}</strong>
+                      <span>{meta}</span>
+                      <small>{cohorts}</small>
+                      <p>
+                        Resolved {attempt.resolvedRecipients} · Will send {attempt.willSend} · Sent {attempt.sent} · Failed {attempt.failed} · Queue rows {attempt.queueRowsCreated}
+                      </p>
+                      {attempt.failureMessage ? <em>{attempt.failureMessage}</em> : null}
+                    </div>
+                    <div className="admin-email-audit-row__aside">
+                      <StatusBadge tone={rehearsal ? 'warning' : 'neutral'}>{rehearsal ? 'Rehearsal' : 'Production'}</StatusBadge>
+                      <StatusBadge tone={attempt.status === 'sent' ? 'safe' : attempt.status === 'partial' ? 'warning' : attempt.status === 'failed' ? 'danger' : 'neutral'}>
+                        {attempt.status}
+                      </StatusBadge>
+                      <small>{attempt.actorEmail || 'System'}</small>
+                      <div className="admin-email-audit-row__actions">
+                        <button onClick={() => setAuditModal(attempt)} title="View send details" type="button">
+                          <Eye size={15} /> View
+                        </button>
+                        <button onClick={() => handleDownloadAuditCsv(attempt)} title="Export recipient result CSV" type="button">
+                          <Download size={15} /> CSV
+                        </button>
+                        <button onClick={() => useAuditAttemptAsDraft(attempt)} title="Use this attempt as a new draft" type="button">
+                          <Edit3 size={15} /> Draft
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                );
+              }) : <EmptyState />}
+            </div>
+          </section>
+
+          <section className="admin-email-card">
+            <div className="admin-email-card__header">
+              <span className="eyebrow">Delivery history</span>
+              <h2>Recent Email Activity</h2>
+            </div>
+            <div className="admin-email-history">
+              {queueQuery.data?.items?.length ? queueQuery.data.items.map((item) => (
+                <article key={item.id} className={`admin-email-history-row admin-email-history-row--${item.status || 'queued'}`}>
+                  <div>
+                    <strong>{item.recipientName || item.recipientEmail || 'Recipient not set'}</strong>
+                    <span>{item.templateKey || item.category || 'custom'} · {item.status || 'queued'} · {formatDateTime(item.sentAt || item.createdAt)}</span>
+                    {item.failureMessage ? <p>{item.failureMessage}</p> : null}
+                  </div>
+                  <small>{item.subject || 'No subject'}</small>
+                </article>
+              )) : <EmptyState />}
+            </div>
+          </section>
+        </>
       ) : null}
 
       {modal ? (
@@ -1265,26 +1690,171 @@ export function AdminEmailCenterPage() {
         />
       ) : null}
 
+      {auditModal ? (
+        <div className="modal-backdrop admin-email-modal-backdrop" role="presentation">
+          <section className="admin-email-audit-modal" role="dialog" aria-modal="true" aria-label="Email send audit details">
+            <button className="student-modal__close" onClick={() => setAuditModal(null)} type="button" aria-label="Close">
+              <X size={28} />
+            </button>
+            <div className="admin-email-audit-modal__header">
+              <div>
+                <span className="eyebrow">Send audit</span>
+                <h2>{auditModal.subject || 'No subject'}</h2>
+                <p>{auditModal.sendMode} · {formatDateTime(auditModal.startedAt || auditModal.createdAt)} · {auditModal.actorEmail || 'System'}</p>
+              </div>
+              <div className="admin-email-audit-modal__badges">
+                <StatusBadge tone={isRehearsalAttempt(auditModal) ? 'warning' : 'neutral'}>
+                  {isRehearsalAttempt(auditModal) ? 'Rehearsal' : 'Production'}
+                </StatusBadge>
+                <StatusBadge tone={auditModal.status === 'sent' ? 'safe' : auditModal.status === 'partial' ? 'warning' : auditModal.status === 'failed' ? 'danger' : 'neutral'}>
+                  {auditModal.status}
+                </StatusBadge>
+              </div>
+            </div>
+
+            <div className="admin-email-audit-modal__stats">
+              <article><span>Resolved</span><strong>{auditModal.resolvedRecipients}</strong></article>
+              <article><span>Will send</span><strong>{auditModal.willSend}</strong></article>
+              <article><span>Sent</span><strong>{auditModal.sent}</strong></article>
+              <article><span>Failed</span><strong>{auditModal.failed}</strong></article>
+              <article><span>Queue rows</span><strong>{auditModal.queueRowsCreated}</strong></article>
+              <article><span>Remaining</span><strong>{auditModal.remainingAfterBatch}</strong></article>
+            </div>
+
+            <div className="admin-email-audit-modal__meta">
+              <article>
+                <span>Cohorts</span>
+                <strong>{auditModal.cohortNames.length ? auditModal.cohortNames.join(', ') : 'All selected filters'}</strong>
+              </article>
+              <article>
+                <span>Template</span>
+                <strong>{auditModal.templateKey || 'custom_blank'}</strong>
+              </article>
+              <article>
+                <span>Attempt key</span>
+                <strong>{auditModal.attemptKey}</strong>
+              </article>
+              {isRehearsalAttempt(auditModal) ? (
+                <article>
+                  <span>Send mode</span>
+                  <strong>Rehearsal QA</strong>
+                </article>
+              ) : null}
+              {isRehearsalAttempt(auditModal) ? (
+                <article>
+                  <span>Original audience</span>
+                  <strong>{auditMetadataNumber(auditModal, 'rehearsalOriginalAudienceCount') ?? auditModal.recipients}</strong>
+                </article>
+              ) : null}
+              <article>
+                <span>Provider event archive</span>
+                <strong>{auditProviderEventsQuery.isFetching ? 'Checking...' : `${auditProviderEventsQuery.data?.items?.length ?? 0} events`}</strong>
+              </article>
+              {!auditProviderEventsQuery.isFetching && (auditProviderEventsQuery.data?.items?.length ?? 0) === 0 && auditModal.results?.some((result) => auditResultText(result, 'messageId')) ? (
+                <article className="admin-email-audit-modal__wide admin-email-audit-modal__notice">
+                  <span>Delivery trail</span>
+                  <strong>No archived provider events are linked to this attempt yet. Queue rows still carry Brevo message IDs, and their latest delivery/open/click status appears in Recent Email Activity.</strong>
+                </article>
+              ) : null}
+              {auditModal.failureMessage ? (
+                <article className="admin-email-audit-modal__wide">
+                  <span>Failure</span>
+                  <strong>{auditModal.failureMessage}</strong>
+                </article>
+              ) : null}
+            </div>
+
+            <div className="admin-email-audit-modal__results">
+              <div className="admin-email-audit-modal__results-head">
+                <h3>Recipient Results</h3>
+                <button className="segmented-button" onClick={() => handleDownloadAuditCsv(auditModal)} type="button">
+                  <Download size={16} /> Export CSV
+                </button>
+              </div>
+              <div className="admin-email-audit-result-list">
+                {auditModal.results?.length ? auditModal.results.map((result, index) => (
+                  <article key={`${auditModal.id}-${index}`} className={`admin-email-audit-result admin-email-audit-result--${auditResultText(result, 'status') || 'unknown'}`}>
+                    <div>
+                      <strong>{auditResultText(result, 'email') || 'Recipient not recorded'}</strong>
+                      <span>{auditResultText(result, 'messageId') || auditResultText(result, 'error') || 'No provider detail recorded'}</span>
+                    </div>
+                    <StatusBadge tone={auditResultText(result, 'status') === 'sent' ? 'safe' : auditResultText(result, 'status') === 'failed' ? 'danger' : 'neutral'}>
+                      {auditResultText(result, 'status') || 'unknown'}
+                    </StatusBadge>
+                  </article>
+                )) : <EmptyState />}
+              </div>
+            </div>
+
+            <div className="admin-email-confirm__actions">
+              <button className="student-action" onClick={() => setAuditModal(null)} type="button">Close</button>
+              <button
+                className="student-action"
+                disabled={retryFailedEmail.isPending || auditModal.failed <= 0}
+                onClick={() => void retryFailedAttempt(auditModal)}
+                title={auditModal.failed > 0 ? 'Retry only recipients that failed in this attempt.' : 'This send has no failed recipients.'}
+                type="button"
+              >
+                {retryFailedEmail.isPending ? 'Retrying...' : 'Retry Failed Only'}
+              </button>
+              <button className="student-action student-action--primary" onClick={() => useAuditAttemptAsDraft(auditModal)} type="button">Use as Draft</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       {confirmSend && resolvedSummary ? (
         <div className="modal-backdrop admin-email-modal-backdrop" role="presentation">
           <section className="admin-email-confirm" role="dialog" aria-modal="true" aria-label="Confirm email send">
-            <button className="student-modal__close" onClick={() => setConfirmSend(false)} type="button" aria-label="Close">
+            <button className="student-modal__close" disabled={sendAttempt.status === 'sending'} onClick={() => setConfirmSend(false)} type="button" aria-label="Close">
               <X size={28} />
             </button>
             <AlertTriangle size={28} />
-            <h2>Confirm Email Batch</h2>
-            <p>This will send email through Brevo using the active LMS template. Daily limit is capped at 300 mails.</p>
+            <div className="admin-email-confirm__title">
+              <div>
+                <h2>{sendAttempt.status === 'idle' ? 'Confirm Email Batch' : 'Email Batch Result'}</h2>
+                <p>{rehearsalMode ? 'This rehearsal will send real Brevo emails to a capped QA batch and will not mark the Email Marketing plan as sent.' : 'This will send email through Brevo using the active LMS template. Daily limit is capped at 300 mails.'}</p>
+              </div>
+              <StatusBadge tone={sendAttemptBadgeTone(sendAttempt.status)}>
+                {sendAttempt.status === 'idle' ? 'Ready' : sendAttempt.status}
+              </StatusBadge>
+            </div>
             <div className="admin-email-confirm__grid">
               <article><span>Resolved recipients</span><strong>{resolvedSummary.recipients}</strong></article>
               <article><span>Already sent today</span><strong>{resolvedSummary.alreadySentToday}</strong></article>
+              <article><span>Suppressed</span><strong>{resolvedSummary.suppressedRecipients}</strong></article>
               <article><span>This batch</span><strong>{resolvedSummary.willSend}</strong></article>
               <article><span>Remaining today</span><strong>{resolvedSummary.remainingToday}</strong></article>
+              {rehearsalMode ? (
+                <article><span>Mode</span><strong>Rehearsal</strong></article>
+              ) : null}
+              {rehearsalMode ? (
+                <article><span>Original audience</span><strong>{resolvedSummary.rehearsalOriginalAudienceCount ?? resolvedSummary.recipients}</strong></article>
+              ) : null}
+              {sendAttempt.status !== 'idle' ? (
+                <article><span>Remaining after send</span><strong>{sendAttempt.result?.remainingToday ?? '-'}</strong></article>
+              ) : null}
+              {sendAttempt.status !== 'idle' ? (
+                <>
+                  <article><span>Sent</span><strong>{sendAttempt.result?.sent ?? '-'}</strong></article>
+                  <article><span>Failed</span><strong>{sendAttempt.result?.failed ?? '-'}</strong></article>
+                  <article><span>Queue rows</span><strong>{sendAttempt.queueRowsCreated}</strong></article>
+                </>
+              ) : null}
             </div>
+            {sendAttempt.message ? (
+              <div className={`admin-email-confirm__result admin-email-confirm__result--${sendAttemptTone(sendAttempt.status)}`}>
+                {sendAttempt.status === 'sending' ? <RefreshCw size={18} /> : sendAttempt.status === 'sent' ? <CheckCircle size={18} /> : <AlertTriangle size={18} />}
+                <span>{sendAttempt.message}</span>
+              </div>
+            ) : null}
             <div className="admin-email-confirm__actions">
-              <button className="segmented-button" disabled={sendEmail.isPending} onClick={() => setConfirmSend(false)} type="button">Cancel</button>
-              <button className="student-action student-action--primary" disabled={sendEmail.isPending || resolvedSummary.willSend <= 0} onClick={() => void handleConfirmedSend()} type="button">
+              <button className="segmented-button" disabled={sendAttempt.status === 'sending'} onClick={() => setConfirmSend(false)} type="button">
+                {sendAttempt.status === 'idle' ? 'Cancel' : 'Close'}
+              </button>
+              <button className="student-action student-action--primary" disabled={sendAttempt.status === 'sending' || sendAttempt.status === 'sent' || resolvedSummary.willSend <= 0} onClick={() => void handleConfirmedSend()} type="button">
                 <Send size={18} />
-                {sendEmail.isPending ? 'Sending...' : `Send ${resolvedSummary.willSend} Email${resolvedSummary.willSend === 1 ? '' : 's'}`}
+                {sendAttempt.status === 'sending' ? 'Sending...' : sendAttempt.status === 'sent' ? 'Sent' : `${rehearsalMode ? 'Rehearse' : 'Send'} ${resolvedSummary.willSend} Email${resolvedSummary.willSend === 1 ? '' : 's'}`}
               </button>
             </div>
           </section>

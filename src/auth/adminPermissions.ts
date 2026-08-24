@@ -37,7 +37,9 @@ export type AdminPermission =
   | 'admin.admin_users.manage'
   | 'admin.feature_control.manage'
   | 'admin.payments.view'
-  | 'admin.paid_access.view';
+  | 'admin.paid_access.view'
+  | 'admin.ats.view'
+  | 'admin.ats.manage';
 
 const ADMIN_READ_PERMISSIONS: AdminPermission[] = [
   'admin.dashboard.view',
@@ -99,7 +101,9 @@ export const ROLE_PERMISSIONS: Record<AdminRoleKey, AdminPermission[]> = {
     'admin.admin_users.manage',
     'admin.feature_control.manage',
     'admin.payments.view',
-    'admin.paid_access.view'
+    'admin.paid_access.view',
+    'admin.ats.view',
+    'admin.ats.manage'
   ],
   admin: [
     ...ADMIN_READ_PERMISSIONS,
@@ -117,7 +121,9 @@ export const ROLE_PERMISSIONS: Record<AdminRoleKey, AdminPermission[]> = {
     'admin.certificates.issue',
     'admin.announcements.manage',
     'admin.community.manage',
-    'admin.support.manage'
+    'admin.support.manage',
+    'admin.ats.view',
+    'admin.ats.manage'
   ],
   moderator: [
     ...MODERATOR_READ_PERMISSIONS,
@@ -134,6 +140,7 @@ export const MODULE_VIEW_PERMISSIONS: Record<string, AdminPermission> = {
   community: 'admin.community.view',
   dashboard: 'admin.dashboard.view',
   'email-center': 'admin.email.view',
+  'email-marketing': 'admin.email.view',
   enrollments: 'admin.enrollments.view',
   'admin-users': 'admin.admin_users.view',
   'feature-control': 'admin.feature_control.manage',
@@ -141,6 +148,7 @@ export const MODULE_VIEW_PERMISSIONS: Record<string, AdminPermission> = {
   'guest-leads': 'admin.students.view',
   observability: 'admin.observability.view',
   'paid-access': 'admin.paid_access.view',
+  'ats-resume-score': 'admin.ats.view',
   'payment-orders': 'admin.payments.view',
   programs: 'admin.programs.view',
   projects: 'admin.projects.view',
@@ -274,6 +282,12 @@ export const ADMIN_PERMISSION_MODULES: AdminPermissionModule[] = [
     id: 'paid-access',
     label: 'Paid Access',
     permissions: ['admin.paid_access.view']
+  },
+  {
+    description: 'ATS resume scoring analytics, role database, packages, and scoring weights.',
+    id: 'ats-resume-score',
+    label: 'ATS Resume Score',
+    permissions: ['admin.ats.view', 'admin.ats.manage']
   }
 ];
 

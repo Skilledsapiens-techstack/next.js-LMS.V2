@@ -4,7 +4,7 @@ import { apiGet } from '../../lib/supabaseApi';
 import { PaginatedResponse } from './useStudentAnnouncements';
 
 export type StudentPaymentOrderStatus = 'created' | 'paid' | 'failed' | 'cancelled';
-export type StudentPaymentItemType = 'group' | 'workshop' | 'resource';
+export type StudentPaymentItemType = 'group' | 'workshop' | 'resource' | 'ats_package';
 
 export type StudentPaymentOrder = {
   amount: number;

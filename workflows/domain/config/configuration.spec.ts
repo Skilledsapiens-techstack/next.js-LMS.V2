@@ -35,6 +35,11 @@ describe('configuration', () => {
     expect(validateEnvironment({ ...baseEnvironment, ENROLLMENT_ACTIVATION_ENABLED: 'true' }).ENROLLMENT_ACTIVATION_ENABLED).toBe(true);
   });
 
+  it('keeps ATS credit grants disabled unless explicitly enabled', () => {
+    expect(validateEnvironment(baseEnvironment).ATS_CREDIT_GRANTS_ENABLED).toBe(false);
+    expect(validateEnvironment({ ...baseEnvironment, ATS_CREDIT_GRANTS_ENABLED: 'true' }).ATS_CREDIT_GRANTS_ENABLED).toBe(true);
+  });
+
   it('keeps cohort writes disabled unless explicitly enabled', () => {
     expect(validateEnvironment(baseEnvironment).COHORT_WRITES_ENABLED).toBe(false);
     expect(validateEnvironment({ ...baseEnvironment, COHORT_WRITES_ENABLED: 'true' }).COHORT_WRITES_ENABLED).toBe(true);

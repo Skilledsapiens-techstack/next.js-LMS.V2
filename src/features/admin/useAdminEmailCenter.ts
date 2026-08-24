@@ -83,11 +83,21 @@ export type AdminEmailSendPayload = {
   directEmails?: string;
   googleGroupEmail?: string;
   params?: Record<string, unknown>;
+  qaMode?: boolean;
+  rehearsalMode?: boolean;
+  rehearsalEmails?: string;
   recipientFilters?: AdminEmailRecipientFilters;
   sendMode: 'direct' | 'cohort_students' | 'cohort_google_group' | 'all_active_students';
   subject: string;
   templateKey?: string;
   testMode?: boolean;
+};
+
+export type AdminEmailRetryFailedPayload = {
+  action: 'retryAdminStudentCommunicationFailedOnly';
+  batchSize?: number;
+  confirmed: boolean;
+  originalAttemptKey: string;
 };
 
 export type AdminEmailRecipientFilters = {
@@ -116,9 +126,13 @@ export type AdminEmailResolveResult = {
   message: string;
   ok: boolean;
   previewRecipients: AdminEmailRecipientPreview[];
+  rehearsalAllowlist?: string[];
+  rehearsalOriginalAudienceCount?: number;
+  rehearsalRequestedEmails?: string[];
   recipients: number;
   remainingAfterBatch: number;
   remainingToday: number;
+  suppressedRecipients: number;
   templateKey: string;
   usedToday: number;
   willSend: number;
@@ -138,6 +152,7 @@ export type AdminEmailSendResult = {
   remainingToday?: number;
   sent: number;
   status: string;
+  suppressedRecipients?: number;
   templateKey: string;
   usedToday?: number;
   willSend?: number;
@@ -246,6 +261,23 @@ export function useSendAdminEmail() {
         body
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-email-queue'] })
+  });
+}
+
+export function useRetryFailedAdminEmail() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (body: AdminEmailRetryFailedPayload) =>
+      apiInvokeFunction<AdminEmailSendResult, AdminEmailRetryFailedPayload>('transactional-email', {
+        accessToken: accessToken ?? undefined,
+        body
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-email-queue'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-email-send-audit-logs'] });
+    }
   });
 }
 

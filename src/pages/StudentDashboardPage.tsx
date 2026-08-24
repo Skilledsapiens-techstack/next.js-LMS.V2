@@ -574,7 +574,11 @@ export function StudentDashboardPage() {
               {cohortNames.length > 0 ? (
                 <div className="student-profile-card__field student-profile-card__field--wide">
                   <span>Your Tagged Cohort(s) Name</span>
-                  <p>{cohortNames.join(', ')}</p>
+                  <ul className="student-profile-card__list">
+                    {cohortNames.map((cohortName) => (
+                      <li key={cohortName}>{cohortName}</li>
+                    ))}
+                  </ul>
                 </div>
               ) : null}
               {liveProjectRoles.length > 0 ? (

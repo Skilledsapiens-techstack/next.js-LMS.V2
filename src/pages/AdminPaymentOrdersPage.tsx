@@ -7,7 +7,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { AdminPaymentItemType, AdminPaymentOrderStatus, useAdminPaymentOrders } from '../features/admin/useAdminPayments';
 
 const statusOptions: Array<AdminPaymentOrderStatus | 'all'> = ['all', 'created', 'paid', 'failed', 'cancelled'];
-const itemTypeOptions: Array<AdminPaymentItemType | 'all'> = ['all', 'group', 'workshop', 'resource'];
+const itemTypeOptions: Array<AdminPaymentItemType | 'all'> = ['all', 'group', 'workshop', 'resource', 'ats_package'];
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);

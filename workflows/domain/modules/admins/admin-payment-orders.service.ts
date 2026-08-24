@@ -141,8 +141,8 @@ export class AdminPaymentOrdersService {
  }
 
   private isItemType(value: unknown): value is AdminPaymentItemType {
-    return value === 'group' || value === 'workshop' || value === 'resource';
- }
+    return value === 'group' || value === 'workshop' || value === 'resource' || value === 'ats_package';
+  }
 
   private isJsonObject(value: unknown): value is JsonObject {
     return typeof value === 'object' && value !== null && !Array.isArray(value);

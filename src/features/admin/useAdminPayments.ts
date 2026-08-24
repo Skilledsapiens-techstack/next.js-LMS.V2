@@ -4,7 +4,7 @@ import { apiGet } from '../../lib/supabaseApi';
 import { PaginatedResponse } from '../student/useStudentAnnouncements';
 
 export type AdminPaymentOrderStatus = 'created' | 'paid' | 'failed' | 'cancelled';
-export type AdminPaymentItemType = 'group' | 'workshop' | 'resource';
+export type AdminPaymentItemType = 'group' | 'workshop' | 'resource' | 'ats_package';
 export type AdminPaidAccessStatus = 'active' | 'inactive';
 export type AdminPaidAccessItemType = AdminPaymentItemType;
 
