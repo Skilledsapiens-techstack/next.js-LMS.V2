@@ -1,7 +1,7 @@
 import { PaginationQueryDto } from '../../../common/dto/pagination.dto';
 
 export type AdminPaymentOrderStatus = 'created' | 'paid' | 'failed' | 'cancelled';
-export type AdminPaymentItemType = 'group' | 'workshop' | 'resource';
+export type AdminPaymentItemType = 'group' | 'workshop' | 'resource' | 'ats_package';
 
 export class AdminPaymentOrdersQueryDto extends PaginationQueryDto {
   search?: string;

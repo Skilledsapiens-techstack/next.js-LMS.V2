@@ -147,8 +147,8 @@ export class StudentPaymentOrdersService {
  }
 
   private isItemType(value: unknown): value is StudentPaymentItemType {
-    return value === 'group' || value === 'workshop' || value === 'resource';
- }
+    return value === 'group' || value === 'workshop' || value === 'resource' || value === 'ats_package';
+  }
 
   private isJsonObject(value: unknown): value is JsonObject {
     return typeof value === 'object' && value !== null && !Array.isArray(value);

@@ -27,6 +27,11 @@ class MockResourcesQuery {
     return this;
   }
 
+  contains(...args: unknown[]) {
+    this.filters.push({ method: 'contains', args });
+    return this;
+  }
+
   or(...args: unknown[]) {
     this.filters.push({ method: 'or', args });
     return this;
@@ -119,13 +124,14 @@ describe('AdminResourcesService', () => {
     );
   });
 
-  it('applies status, access type, and normalized search filters', async () => {
-    await service.listResources({ page: 1, limit: 10, status: 'active', accessType: 'paid', search: ' Case  PDF ' });
+  it('applies status, access type, program, and normalized search filters', async () => {
+    await service.listResources({ page: 1, limit: 10, status: 'active', accessType: 'paid', programKey: ' MCLP ', search: ' Case  PDF ' });
 
     expect(supabase.admin.lastResourcesQuery?.filters).toEqual(
       expect.arrayContaining([
         { method: 'eq', args: ['status', 'active'] },
         { method: 'eq', args: ['access_type', 'paid'] },
+        { method: 'contains', args: ['program_keys', ['mclp']] },
         {
           method: 'or',
           args: ['title.ilike.%case pdf%,resource_type.ilike.%case pdf%,domain_key.ilike.%case pdf%']

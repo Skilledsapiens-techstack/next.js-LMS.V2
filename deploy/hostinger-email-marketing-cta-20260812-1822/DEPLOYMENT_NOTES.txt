@@ -1,0 +1,20 @@
+Hostinger package: Email Marketing CTA interaction polish
+Generated: 2026-08-12 18:22 IST
+
+Included changes:
+- Added scoped hover states for Email Marketing CTAs.
+- Added scoped press/active states for Email Marketing CTAs.
+- Added keyboard focus-visible states for Email Marketing CTAs.
+- Added disabled states for Email Marketing CTAs.
+- Covered module tab buttons, segmented buttons, primary student-action CTAs, and linked template rows.
+- Includes the already-applied Email Marketing campaign diversity planner logic and seeded template bank support.
+
+Validation:
+- npm run typecheck
+- npx eslint src/pages/AdminEmailMarketingPage.tsx
+- npm run build
+
+Deployment:
+- Upload the contents of this folder to the Hostinger public web root.
+- Keep .htaccess in place for SPA routing.
+- No new Supabase migration is required for this CTA polish.

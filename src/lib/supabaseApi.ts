@@ -72,16 +72,30 @@ const ADMIN_READ_PERMISSIONS_BY_PATH: Record<string, AdminPermission> = {
   '/admins/cohorts': 'admin.cohorts.view',
   '/admins/dashboard': 'admin.dashboard.view',
   '/admins/email-queue': 'admin.email.view',
+  '/admins/email-marketing-campaigns': 'admin.email.view',
+  '/admins/email-marketing-cohort-touch': 'admin.email.view',
+  '/admins/email-marketing-plan-events': 'admin.email.view',
+  '/admins/email-marketing-plans': 'admin.email.view',
+  '/admins/email-provider-events': 'admin.email.view',
+  '/admins/email-suppression-overrides': 'admin.email.view',
   '/admins/email-templates': 'admin.email.view',
   '/admins/enrollment-exceptions': 'admin.enrollments.view',
   '/admins/enrollment-requests': 'admin.enrollments.view',
   '/admins/enrollment-webhook-events': 'admin.enrollments.view',
   '/admins/admin-users': 'admin.admin_users.view',
   '/admins/feature-controls': 'admin.feature_control.manage',
+  '/admins/ats-attempts': 'admin.ats.view',
+  '/admins/ats-packages': 'admin.ats.view',
+  '/admins/ats-role-levels': 'admin.ats.view',
+  '/admins/ats-role-profiles': 'admin.ats.view',
+  '/admins/ats-roles': 'admin.ats.view',
+  '/admins/ats-scoring-versions': 'admin.ats.view',
+  '/admins/ats-student-credits': 'admin.ats.view',
   '/admins/observability': 'admin.observability.view',
   '/admins/paid-access': 'admin.paid_access.view',
   '/admins/payment-orders': 'admin.payments.view',
   '/admins/programs': 'admin.programs.view',
+  '/admins/program-templates': 'admin.programs.view',
   '/admins/student-guidance-content': 'admin.programs.view',
   '/admins/project-roles': 'admin.projects.view',
   '/admins/project-toolkit': 'admin.projects.view',
@@ -417,6 +431,15 @@ const RECORDING_SEQUENCE_WRITE_COLUMNS = new Set([
   'title'
 ]);
 
+const PROGRAM_TEMPLATE_WRITE_COLUMNS = new Set([
+  'chapters',
+  'created_by',
+  'program_key',
+  'source',
+  'status',
+  'updated_by'
+]);
+
 const RECORDING_SECTION_KEYS = new Set(['induction_live_project', 'core_modules', 'placement_mentorship', 'other_workshops']);
 
 const ANNOUNCEMENT_WRITE_COLUMNS = new Set([
@@ -456,6 +479,53 @@ const FEATURE_CONTROL_WRITE_COLUMNS = new Set([
   'updated_by'
 ]);
 
+const ATS_ROLE_WRITE_COLUMNS = new Set([
+  'category',
+  'description',
+  'role_key',
+  'role_name',
+  'sort_order',
+  'status',
+  'updated_by'
+]);
+
+const ATS_ROLE_PROFILE_WRITE_COLUMNS = new Set([
+  'action_verbs',
+  'expectations',
+  'keywords',
+  'preferred_sections',
+  'sample_cv_points',
+  'scoring_weights',
+  'status',
+  'updated_by'
+]);
+
+const ATS_SCORING_VERSION_WRITE_COLUMNS = new Set([
+  'description',
+  'free_scan_weights',
+  'status',
+  'title',
+  'updated_by',
+  'version_key',
+  'weights'
+]);
+
+const ATS_PACKAGE_WRITE_COLUMNS = new Set([
+  'amount',
+  'currency',
+  'description',
+  'includes_advanced_analysis',
+  'includes_jd_match',
+  'includes_report_download',
+  'package_key',
+  'payment_link',
+  'scan_credits',
+  'sort_order',
+  'status',
+  'title',
+  'updated_by'
+]);
+
 const EMAIL_TEMPLATE_WRITE_COLUMNS = new Set([
   'allowed_variables',
   'body',
@@ -471,6 +541,65 @@ const EMAIL_TEMPLATE_WRITE_COLUMNS = new Set([
   'subject',
   'template_key',
   'template_name'
+]);
+
+const EMAIL_MARKETING_CAMPAIGN_WRITE_COLUMNS = new Set([
+  'audience_rules',
+  'campaign_key',
+  'created_by',
+  'default_body',
+  'default_resource_ids',
+  'default_subject',
+  'description',
+  'phase',
+  'rotation_weight',
+  'status',
+  'template_key',
+  'title',
+  'touch_interval_days',
+  'updated_by'
+]);
+
+const EMAIL_MARKETING_PLAN_WRITE_COLUMNS = new Set([
+  'campaign_id',
+  'campaign_phase',
+  'campaign_title',
+  'cohort_ids',
+  'cohort_names',
+  'created_by',
+  'daily_limit',
+  'metadata',
+  'planned_date',
+  'planned_recipient_count',
+  'plan_key',
+  'priority_score',
+  'rationale',
+  'resource_ids',
+  'sent_at',
+  'sent_by',
+  'sent_email_queue_ids',
+  'skip_reason',
+  'skipped_at',
+  'skipped_by',
+  'status',
+  'suggested_batch_size',
+  'suggested_body',
+  'suggested_subject',
+  'updated_by'
+]);
+
+const EMAIL_MARKETING_PLAN_EVENT_WRITE_COLUMNS = new Set([
+  'actor_email',
+  'details',
+  'event_type',
+  'plan_id'
+]);
+
+const EMAIL_SUPPRESSION_OVERRIDE_WRITE_COLUMNS = new Set([
+  'created_by',
+  'reason',
+  'recipient_email',
+  'status'
 ]);
 
 const EMAIL_TEMPLATE_PHASE_KEYS = new Set([
@@ -554,6 +683,42 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
     searchColumns: ['recipient_email', 'recipient_name', 'subject', 'template_key', 'category', 'status'],
     sortColumns: { newest: { column: 'created_at', ascending: false } }
   },
+  '/admins/email-send-audit-logs': {
+    table: 'email_send_audit_logs',
+    filterColumns: { actorEmail: 'actor_email', sendMode: 'send_mode', status: 'status', templateKey: 'template_key' },
+    searchColumns: ['actor_email', 'subject', 'send_mode', 'status', 'template_key', 'failure_message'],
+    sortColumns: { newest: { column: 'created_at', ascending: false } }
+  },
+  '/admins/email-marketing-campaigns': {
+    table: 'email_marketing_campaigns',
+    filterColumns: { phase: 'phase', status: 'status' },
+    searchColumns: ['campaign_key', 'title', 'description', 'phase'],
+    sortColumns: { priority: { column: 'rotation_weight', ascending: false }, updated: { column: 'updated_at', ascending: false } }
+  },
+  '/admins/email-marketing-plan-events': {
+    table: 'email_marketing_plan_events',
+    filterColumns: { eventType: 'event_type', planId: 'plan_id' },
+    searchColumns: ['event_type', 'actor_email'],
+    sortColumns: { newest: { column: 'created_at', ascending: false } }
+  },
+  '/admins/email-marketing-plans': {
+    table: 'email_marketing_daily_plans',
+    filterColumns: { campaignPhase: 'campaign_phase', id: 'id', plannedDate: 'planned_date', status: 'status' },
+    searchColumns: ['plan_key', 'campaign_title', 'campaign_phase', 'rationale'],
+    sortColumns: { newest: { column: 'planned_date', ascending: false }, updated: { column: 'updated_at', ascending: false } }
+  },
+  '/admins/email-provider-events': {
+    table: 'email_provider_events',
+    filterColumns: { emailQueueId: 'email_queue_id', eventType: 'event_type', provider: 'provider', recipientEmail: 'recipient_email' },
+    searchColumns: ['provider_message_id', 'recipient_email', 'subject', 'event_type', 'reason'],
+    sortColumns: { newest: { column: 'occurred_at', ascending: false } }
+  },
+  '/admins/email-suppression-overrides': {
+    table: 'email_suppression_overrides',
+    filterColumns: { recipientEmail: 'recipient_email', status: 'status' },
+    searchColumns: ['recipient_email', 'reason', 'status'],
+    sortColumns: { newest: { column: 'created_at', ascending: false } }
+  },
   '/admins/email-templates': {
     table: 'email_templates',
     filterColumns: { category: 'category', phase: 'phase', status: 'status' },
@@ -564,6 +729,42 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
     table: 'feature_controls',
     searchColumns: ['module_id', 'student_label', 'student_path'],
     sortColumns: { order: { column: 'sort_order', ascending: true } }
+  },
+  '/admins/ats-attempts': {
+    table: 'ats_attempts',
+    filterColumns: { accessType: 'access_type', roleId: 'role_id', scanMode: 'scan_mode' },
+    searchColumns: ['student_email', 'student_name', 'scan_mode', 'access_type'],
+    sortColumns: { newest: { column: 'created_at', ascending: false }, score: { column: 'overall_score', ascending: false } }
+  },
+  '/admins/ats-packages': {
+    table: 'ats_packages',
+    filterColumns: { status: 'status' },
+    searchColumns: ['package_key', 'title', 'description'],
+    sortColumns: { order: { column: 'sort_order', ascending: true }, updated: { column: 'updated_at', ascending: false } }
+  },
+  '/admins/ats-role-levels': {
+    table: 'ats_role_levels',
+    filterColumns: { status: 'status' },
+    searchColumns: ['level_key', 'level_name', 'description'],
+    sortColumns: { order: { column: 'sort_order', ascending: true }, updated: { column: 'updated_at', ascending: false } }
+  },
+  '/admins/ats-role-profiles': {
+    table: 'ats_role_profiles',
+    filterColumns: { levelId: 'level_id', roleId: 'role_id', status: 'status' },
+    searchColumns: ['status'],
+    sortColumns: { updated: { column: 'updated_at', ascending: false } }
+  },
+  '/admins/ats-roles': {
+    table: 'ats_roles',
+    filterColumns: { category: 'category', status: 'status' },
+    searchColumns: ['role_key', 'role_name', 'category', 'description'],
+    sortColumns: { order: { column: 'sort_order', ascending: true }, updated: { column: 'updated_at', ascending: false } }
+  },
+  '/admins/ats-scoring-versions': {
+    table: 'ats_scoring_versions',
+    filterColumns: { status: 'status' },
+    searchColumns: ['version_key', 'title', 'description'],
+    sortColumns: { updated: { column: 'updated_at', ascending: false } }
   },
   '/admins/whatsapp-categories': {
     table: 'whatsapp_message_categories',
@@ -592,6 +793,12 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/paid-access': { table: 'paid_access', searchColumns: ['student_email', 'item_id', 'item_type'] },
   '/admins/payment-orders': { table: 'payment_orders', searchColumns: ['student_email', 'item_id', 'item_type', 'razorpay_order_id'] },
   '/admins/programs': { table: 'programs', filterColumns: { domain: 'domain_label' }, searchColumns: ['program_key', 'name', 'short_name', 'domain_label'] },
+  '/admins/program-templates': {
+    table: 'program_templates',
+    filterColumns: { programKey: 'program_key', status: 'status' },
+    searchColumns: ['program_key', 'source'],
+    sortColumns: { program: { column: 'program_key', ascending: true }, updated: { column: 'updated_at', ascending: false } }
+  },
   '/admins/student-guidance-content': {
     table: 'student_guidance_content',
     filterColumns: { status: 'status' },
@@ -661,6 +868,12 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
     searchColumns: ['module_id', 'student_label', 'student_path'],
     sortColumns: { order: { column: 'sort_order', ascending: true } }
   },
+  '/students/me/ats-attempts': {
+    table: 'ats_attempts',
+    searchColumns: ['scan_mode', 'access_type'],
+    sortColumns: { newest: { column: 'created_at', ascending: false }, score: { column: 'overall_score', ascending: false } },
+    studentOwned: true
+  },
   '/students/me/paid-access': { table: 'paid_access', searchColumns: ['item_id', 'item_type'], studentOwned: true },
   '/students/me/payment-orders': { table: 'payment_orders', searchColumns: ['item_id', 'item_type', 'razorpay_order_id'], studentOwned: true },
   '/students/me/project-submissions': {
@@ -708,6 +921,12 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     normalizeBody: normalizeProgramWriteBody,
     table: 'programs',
     validateBody: validateProgramWriteBody
+  },
+  program_templates: {
+    columns: PROGRAM_TEMPLATE_WRITE_COLUMNS,
+    normalizeBody: normalizeProgramTemplateWriteBody,
+    table: 'program_templates',
+    validateBody: validateProgramTemplateWriteBody
   },
   student_guidance_content: {
     columns: STUDENT_GUIDANCE_CONTENT_WRITE_COLUMNS,
@@ -757,11 +976,51 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     table: 'feature_controls',
     validateBody: validateFeatureControlWriteBody
   },
+  ats_roles: {
+    columns: ATS_ROLE_WRITE_COLUMNS,
+    normalizeBody: normalizeAtsRoleWriteBody,
+    table: 'ats_roles',
+    validateBody: validateAtsRoleWriteBody
+  },
+  ats_role_profiles: {
+    columns: ATS_ROLE_PROFILE_WRITE_COLUMNS,
+    normalizeBody: normalizeAtsRoleProfileWriteBody,
+    table: 'ats_role_profiles',
+    validateBody: validateAtsRoleProfileWriteBody
+  },
+  ats_scoring_versions: {
+    columns: ATS_SCORING_VERSION_WRITE_COLUMNS,
+    normalizeBody: normalizeAtsScoringVersionWriteBody,
+    table: 'ats_scoring_versions',
+    validateBody: validateAtsScoringVersionWriteBody
+  },
+  ats_packages: {
+    columns: ATS_PACKAGE_WRITE_COLUMNS,
+    normalizeBody: normalizeAtsPackageWriteBody,
+    table: 'ats_packages',
+    validateBody: validateAtsPackageWriteBody
+  },
   email_templates: {
     columns: EMAIL_TEMPLATE_WRITE_COLUMNS,
     normalizeBody: normalizeEmailTemplateWriteBody,
     table: 'email_templates',
     validateBody: validateEmailTemplateWriteBody
+  },
+  email_marketing_campaigns: {
+    columns: EMAIL_MARKETING_CAMPAIGN_WRITE_COLUMNS,
+    table: 'email_marketing_campaigns'
+  },
+  email_marketing_daily_plans: {
+    columns: EMAIL_MARKETING_PLAN_WRITE_COLUMNS,
+    table: 'email_marketing_daily_plans'
+  },
+  email_marketing_plan_events: {
+    columns: EMAIL_MARKETING_PLAN_EVENT_WRITE_COLUMNS,
+    table: 'email_marketing_plan_events'
+  },
+  email_suppression_overrides: {
+    columns: EMAIL_SUPPRESSION_OVERRIDE_WRITE_COLUMNS,
+    table: 'email_suppression_overrides'
   },
   whatsapp_groups: {
     columns: WHATSAPP_GROUP_WRITE_COLUMNS,
@@ -811,6 +1070,7 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/admins/dashboard') return getAdminDashboard(context) as Promise<TResponse>;
   if (cleanPath === '/admins/observability') return getAdminObservability(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/student-audit-logs') return getStudentAuditLogs(context, options.query) as Promise<TResponse>;
+  if (cleanPath === '/admins/ats-student-credits') return getAdminAtsStudentCredits(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/certificate-requests') return getLiveProjectCertificateRequests(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/announcements/recipient-count') return getAnnouncementRecipientCount(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/student-roster-snapshots') return getStudentRosterSnapshots(context) as Promise<TResponse>;
@@ -862,6 +1122,7 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/students/me/guidance-content') return getStudentGuidanceContent(context, options.query) as Promise<TResponse>;
 
   if (cleanPath === '/students/me/career-readiness') return getStudentCareerReadinessContent(context, options.query) as Promise<TResponse>;
+  if (cleanPath === '/students/me/ats-resume-score') return getStudentAtsResumeScoreOverview(context) as Promise<TResponse>;
 
   if (cleanPath === '/students/me/project-toolkit') return getStudentProjectToolkit(context, options.query) as Promise<TResponse>;
 
@@ -869,6 +1130,7 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/students/me/resource-domains') return getStudentResourceDomainOptions(context, options.query) as Promise<TResponse>;
 
   if (cleanPath === '/admins/students/college-options') return getAdminStudentCollegeOptions(context) as Promise<TResponse>;
+  if (cleanPath === '/admins/email-marketing-cohort-touch') return getAdminEmailMarketingCohortTouch(context) as Promise<TResponse>;
 
   if (cleanPath === '/admins/students') return getAdminStudentsList(context, options.query) as Promise<TResponse>;
 
@@ -1080,6 +1342,18 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
     ) as Promise<TResponse>;
   }
 
+  const atsPackageUpdate = cleanPath.match(/^\/admins\/ats-packages\/([^/]+)$/);
+  if (atsPackageUpdate) return updateById(context, 'ats_packages', decodeURIComponent(atsPackageUpdate[1]), { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email }, 'updated') as Promise<TResponse>;
+
+  const atsRoleUpdate = cleanPath.match(/^\/admins\/ats-roles\/([^/]+)$/);
+  if (atsRoleUpdate) return updateById(context, 'ats_roles', decodeURIComponent(atsRoleUpdate[1]), { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email }, 'updated') as Promise<TResponse>;
+
+  const atsRoleProfileUpdate = cleanPath.match(/^\/admins\/ats-role-profiles\/([^/]+)$/);
+  if (atsRoleProfileUpdate) return updateById(context, 'ats_role_profiles', decodeURIComponent(atsRoleProfileUpdate[1]), { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email }, 'updated') as Promise<TResponse>;
+
+  const atsScoringVersionUpdate = cleanPath.match(/^\/admins\/ats-scoring-versions\/([^/]+)$/);
+  if (atsScoringVersionUpdate) return updateById(context, 'ats_scoring_versions', decodeURIComponent(atsScoringVersionUpdate[1]), { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email }, 'updated') as Promise<TResponse>;
+
   const emailTemplateArchive = cleanPath.match(/^\/admins\/email-templates\/([^/]+)\/archive$/);
   if (emailTemplateArchive) {
     const templateId = decodeURIComponent(emailTemplateArchive[1]);
@@ -1104,6 +1378,28 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
   const emailTemplateUpdate = cleanPath.match(/^\/admins\/email-templates\/([^/]+)$/);
   if (emailTemplateUpdate) {
     return updateById(context, 'email_templates', decodeURIComponent(emailTemplateUpdate[1]), options.body, 'updated') as Promise<TResponse>;
+  }
+
+  const emailMarketingCampaignUpdate = cleanPath.match(/^\/admins\/email-marketing-campaigns\/([^/]+)$/);
+  if (emailMarketingCampaignUpdate) {
+    return updateById(
+      context,
+      'email_marketing_campaigns',
+      decodeURIComponent(emailMarketingCampaignUpdate[1]),
+      { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email },
+      'updated'
+    ) as Promise<TResponse>;
+  }
+
+  const emailMarketingPlanUpdate = cleanPath.match(/^\/admins\/email-marketing-plans\/([^/]+)$/);
+  if (emailMarketingPlanUpdate) {
+    return updateById(
+      context,
+      'email_marketing_daily_plans',
+      decodeURIComponent(emailMarketingPlanUpdate[1]),
+      { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email },
+      'updated'
+    ) as Promise<TResponse>;
   }
 
   const programStatus = cleanPath.match(/^\/admins\/programs\/([^/]+)\/status$/);
@@ -1225,11 +1521,58 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
     ) as Promise<TResponse>;
   }
   if (cleanPath === '/admins/email-templates') return insertRow(context, 'email_templates', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/email-marketing-campaigns') {
+    return insertRow(
+      context,
+      'email_marketing_campaigns',
+      {
+        ...(isRecord(options.body) ? options.body : {}),
+        createdBy: context.email,
+        updatedBy: context.email
+      },
+      'created'
+    ) as Promise<TResponse>;
+  }
+  if (cleanPath === '/admins/email-marketing-plans') {
+    return insertRow(
+      context,
+      'email_marketing_daily_plans',
+      {
+        ...(isRecord(options.body) ? options.body : {}),
+        createdBy: context.email,
+        updatedBy: context.email
+      },
+      'created'
+    ) as Promise<TResponse>;
+  }
+  if (cleanPath === '/admins/email-marketing-plan-events') {
+    return insertRow(
+      context,
+      'email_marketing_plan_events',
+      {
+        ...(isRecord(options.body) ? options.body : {}),
+        actorEmail: isRecord(options.body) && options.body.actorEmail ? options.body.actorEmail : context.email
+      },
+      'created'
+    ) as Promise<TResponse>;
+  }
+  if (cleanPath === '/admins/email-suppression-overrides') {
+    return insertRow(
+      context,
+      'email_suppression_overrides',
+      {
+        ...(isRecord(options.body) ? options.body : {}),
+        createdBy: context.email
+      },
+      'created'
+    ) as Promise<TResponse>;
+  }
   if (cleanPath === '/admins/whatsapp-groups') return insertRow(context, 'whatsapp_groups', { ...(isRecord(options.body) ? options.body : {}), createdBy: context.email, updatedBy: context.email }, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/whatsapp-categories') return insertRow(context, 'whatsapp_message_categories', { ...(isRecord(options.body) ? options.body : {}), createdBy: context.email, updatedBy: context.email }, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/whatsapp-templates') return insertRow(context, 'whatsapp_message_templates', { ...(isRecord(options.body) ? options.body : {}), createdBy: context.email, updatedBy: context.email }, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/whatsapp-logs') return insertRow(context, 'whatsapp_message_logs', { ...(isRecord(options.body) ? options.body : {}), sentBy: context.email }, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/programs') return insertRow(context, 'programs', options.body, 'created') as Promise<TResponse>;
+  if (cleanPath === '/admins/program-templates') return saveProgramTemplate(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/project-roles') return insertRow(context, 'role_master', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/project-toolkit') return insertRow(context, 'project_toolkit_items', options.body, 'created') as Promise<TResponse>;
   if (cleanPath === '/admins/recording-sequences') return insertRow(context, 'recording_sequence_rules', options.body, 'created') as Promise<TResponse>;
@@ -1243,6 +1586,10 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   const studentRecordingProgress = cleanPath.match(/^\/students\/me\/recordings\/([^/]+)\/progress$/);
   if (studentRecordingProgress) return markStudentRecordingComplete(context, decodeURIComponent(studentRecordingProgress[1])) as Promise<TResponse>;
   if (cleanPath === '/students/me/project-submissions') return submitStudentProjectReport(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/students/me/ats-attempts') return createStudentAtsAttempt(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/students/me/ats-report-downloads') return recordStudentAtsReportDownload(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/students/me/ats-package-orders') return createStudentAtsPackageOrder(context, options.body) as Promise<TResponse>;
+  if (cleanPath === '/admins/ats-student-credits') return updateAdminAtsStudentCredits(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/students/me/support-tickets') return createStudentSupportTicket(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/support-categories') return createSupportCategory(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/support-faqs') return createSupportFaq(context, options.body) as Promise<TResponse>;
@@ -1335,6 +1682,7 @@ function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'pos
 
   if (path === '/admins/cohorts' || path.match(/^\/admins\/cohorts\/[^/]+/)) return 'admin.cohorts.manage';
   if (path === '/admins/programs' || path.match(/^\/admins\/programs\/[^/]+/)) return 'admin.programs.manage';
+  if (path === '/admins/program-templates' || path.match(/^\/admins\/program-templates\/[^/]+/)) return 'admin.programs.manage';
   if (path === '/admins/student-guidance-content' || path.match(/^\/admins\/student-guidance-content\/[^/]+/)) return 'admin.programs.manage';
   if (path === '/admins/career-readiness-content' || path.match(/^\/admins\/career-readiness-content\/[^/]+/)) return 'admin.resources.manage';
   if (
@@ -1355,11 +1703,20 @@ function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'pos
   if (path === '/admins/resources' || path.match(/^\/admins\/resources\/[^/]+/)) return 'admin.resources.manage';
   if (path === '/admins/announcements' || path.match(/^\/admins\/announcements\/[^/]+/)) return 'admin.announcements.manage';
   if (path === '/admins/email-templates' || path.match(/^\/admins\/email-templates\/[^/]+/)) return 'admin.email.manage';
+  if (path === '/admins/email-marketing-campaigns' || path.match(/^\/admins\/email-marketing-campaigns\/[^/]+/)) return 'admin.email.manage';
+  if (path === '/admins/email-marketing-plans' || path.match(/^\/admins\/email-marketing-plans\/[^/]+/)) return 'admin.email.manage';
+  if (path === '/admins/email-marketing-plan-events' || path.match(/^\/admins\/email-marketing-plan-events\/[^/]+/)) return 'admin.email.manage';
+  if (path === '/admins/email-suppression-overrides' || path.match(/^\/admins\/email-suppression-overrides\/[^/]+/)) return 'admin.email.manage';
   if (path === '/admins/whatsapp-groups' || path.match(/^\/admins\/whatsapp-groups\/[^/]+/)) return 'admin.community.manage';
   if (path === '/admins/whatsapp-categories' || path.match(/^\/admins\/whatsapp-categories\/[^/]+/)) return 'admin.community.manage';
   if (path === '/admins/whatsapp-templates' || path.match(/^\/admins\/whatsapp-templates\/[^/]+/)) return 'admin.community.manage';
   if (path === '/admins/whatsapp-logs' || path.match(/^\/admins\/whatsapp-logs\/[^/]+/)) return 'admin.community.manage';
   if (path === '/admins/feature-controls' || path.match(/^\/admins\/feature-controls\/[^/]+/)) return 'admin.feature_control.manage';
+  if (path === '/admins/ats-roles' || path.match(/^\/admins\/ats-roles\/[^/]+/)) return 'admin.ats.manage';
+  if (path === '/admins/ats-role-profiles' || path.match(/^\/admins\/ats-role-profiles\/[^/]+/)) return 'admin.ats.manage';
+  if (path === '/admins/ats-scoring-versions' || path.match(/^\/admins\/ats-scoring-versions\/[^/]+/)) return 'admin.ats.manage';
+  if (path === '/admins/ats-packages' || path.match(/^\/admins\/ats-packages\/[^/]+/)) return 'admin.ats.manage';
+  if (path === '/admins/ats-student-credits') return method === 'post' ? 'admin.ats.manage' : 'admin.ats.view';
   if (path === '/admins/certificate-program-settings' || path === '/admins/certificate-review-items' || path.match(/^\/admins\/certificate-review-items\/[^/]+/) || path === '/admins/certificates/leadership' || path === '/admins/certificates/live-project' || path === '/admins/certificates/live-project/bulk' || path === '/admins/certificates/manual') return 'admin.certificates.issue';
   if (path.match(/^\/admins\/certificates\/[^/]+\/revoke$/)) return 'admin.certificates.issue';
   if (path === '/admins/support-categories' || path === '/admins/support-faqs' || path === '/admins/support-settings/student-contact') return 'admin.support.manage';
@@ -1808,6 +2165,434 @@ async function getStudentCareerReadinessContent(context: Awaited<ReturnType<type
     .filter((item) => !category || (isRecord(item) && String(item.category ?? '') === category))
     .filter((item) => !search || JSON.stringify(item).toLowerCase().includes(search));
   return paginate(filtered, query);
+}
+
+async function getAdminAtsStudentCredits(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query'] = {}) {
+  const page = Math.max(1, Number(query?.page ?? 1));
+  const limit = Math.min(Math.max(1, Number(query?.limit ?? 25)), 100);
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+  const search = String(query?.search ?? '').trim();
+
+  let request = context.supabase
+    .from('students')
+    .select('id,student_id,full_name,email,phone,program_name,cohort_name,college_name,active', { count: 'exact' })
+    .order('full_name', { ascending: true })
+    .range(from, to);
+
+  if (search) {
+    const escaped = search.replace(/[%(),]/g, '');
+    request = request.or(`full_name.ilike.%${escaped}%,email.ilike.%${escaped}%,student_id.ilike.%${escaped}%,phone.ilike.%${escaped}%,college_name.ilike.%${escaped}%,program_name.ilike.%${escaped}%,cohort_name.ilike.%${escaped}%`);
+  }
+
+  const { count, data: students, error } = await request;
+  if (error) throw new ApiClientError(error.message, 503);
+
+  const rows = students ?? [];
+  const emails = uniqueStrings(rows.map((student) => normalizeEmail(student.email)).filter(Boolean));
+  const studentIds = uniqueStrings(rows.map((student) => String(student.id ?? '')).filter(Boolean));
+
+  const [attempts, grants, limits] = await Promise.all([
+    emails.length
+      ? context.supabase.from('ats_attempts').select('id,student_email,scan_mode,access_type,report_downloaded').in('student_email', emails).limit(10000)
+      : { data: [], error: null },
+    emails.length
+      ? context.supabase.from('ats_student_credit_grants').select('id,student_email,source,purchased_scans,remaining_scans,granted_at,notes').in('student_email', emails).limit(10000)
+      : { data: [], error: null },
+    studentIds.length
+      ? context.supabase.from('ats_student_scan_limits').select('*').in('student_id', studentIds).limit(500)
+      : { data: [], error: null }
+  ]);
+
+  const firstError = [attempts, grants, limits].find((result) => result.error)?.error;
+  if (firstError) throw new ApiClientError(firstError.message, 503);
+
+  const attemptsByEmail = new Map<string, Record<string, unknown>[]>();
+  (attempts.data ?? []).forEach((attempt) => {
+    const email = normalizeEmail(attempt.student_email);
+    if (!email) return;
+    attemptsByEmail.set(email, [...(attemptsByEmail.get(email) ?? []), attempt]);
+  });
+
+  const grantsByEmail = new Map<string, Record<string, unknown>[]>();
+  (grants.data ?? []).forEach((grant) => {
+    const email = normalizeEmail(grant.student_email);
+    if (!email) return;
+    grantsByEmail.set(email, [...(grantsByEmail.get(email) ?? []), grant]);
+  });
+
+  const limitsByStudentId = new Map((limits.data ?? []).map((limit) => [String(limit.student_id ?? ''), limit]));
+
+  const items = rows.map((student) => {
+    const email = normalizeEmail(student.email);
+    const studentAttempts = attemptsByEmail.get(email) ?? [];
+    const studentGrants = grantsByEmail.get(email) ?? [];
+    const scanLimit = limitsByStudentId.get(String(student.id ?? ''));
+    const freeAttemptsLimit = Number(scanLimit?.free_attempts_limit ?? 2);
+    const freeAttemptsUsed = studentAttempts.filter((attempt) => attempt.access_type === 'free' && attempt.scan_mode === 'basic').length;
+    const paidCreditsGranted = studentGrants.reduce((sum, grant) => sum + Number(grant.purchased_scans ?? 0), 0);
+    const paidCreditsRemaining = studentGrants.reduce((sum, grant) => sum + Number(grant.remaining_scans ?? 0), 0);
+    const adminCreditsGranted = studentGrants.filter((grant) => String(grant.source ?? '') === 'admin').reduce((sum, grant) => sum + Number(grant.purchased_scans ?? 0), 0);
+    const purchasedCreditsGranted = studentGrants.filter((grant) => String(grant.source ?? '') === 'payment').reduce((sum, grant) => sum + Number(grant.purchased_scans ?? 0), 0);
+    const paidScansUsed = studentAttempts.filter((attempt) => attempt.access_type === 'paid' && attempt.scan_mode === 'advanced').length;
+    return camelize({
+      ...student,
+      admin_credits_granted: adminCreditsGranted,
+      free_attempts_limit: freeAttemptsLimit,
+      free_attempts_remaining: Math.max(0, freeAttemptsLimit - freeAttemptsUsed),
+      free_attempts_used: freeAttemptsUsed,
+      latest_limit_note: scanLimit?.notes ?? '',
+      paid_credits_granted: paidCreditsGranted,
+      paid_credits_remaining: paidCreditsRemaining,
+      paid_scans_used: paidScansUsed,
+      purchased_credits_granted: purchasedCreditsGranted,
+      total_scans: studentAttempts.length
+    });
+  });
+
+  return createPaginatedResponse(items, count ?? rows.length, page, limit);
+}
+
+async function updateAdminAtsStudentCredits(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  const payload = isRecord(body) ? body : {};
+  const rawStudentIds = Array.isArray(payload.studentIds) ? payload.studentIds : Array.isArray(payload.student_ids) ? payload.student_ids : [];
+  const studentIds = uniqueStrings(rawStudentIds).slice(0, 100);
+  const rawFreeLimit = payload.freeAttemptsLimit ?? payload.free_attempts_limit;
+  const shouldUpdateFreeLimit = rawFreeLimit !== undefined && rawFreeLimit !== null && rawFreeLimit !== '';
+  const parsedFreeAttemptsLimit = Number(rawFreeLimit);
+  const rawGrant = payload.advancedCreditsToGrant ?? payload.advanced_credits_to_grant ?? payload.paidCreditsToGrant ?? payload.paid_credits_to_grant;
+  const advancedCreditsToGrant = rawGrant === undefined || rawGrant === null || rawGrant === '' ? 0 : Number(rawGrant);
+  const notes = String(payload.notes ?? payload.reason ?? '').trim().slice(0, 500);
+
+  if (studentIds.length === 0) throw new ApiClientError('Select at least one student.', 400);
+  if (shouldUpdateFreeLimit && (!Number.isInteger(parsedFreeAttemptsLimit) || parsedFreeAttemptsLimit < 0 || parsedFreeAttemptsLimit > 500)) {
+    throw new ApiClientError('Free basic scan limit must be a whole number from 0 to 500.', 400);
+  }
+  if (!Number.isInteger(advancedCreditsToGrant) || advancedCreditsToGrant < 0 || advancedCreditsToGrant > 500) {
+    throw new ApiClientError('Advanced credits must be a whole number from 0 to 500.', 400);
+  }
+  if (!shouldUpdateFreeLimit && advancedCreditsToGrant === 0) {
+    throw new ApiClientError('Set a free scan limit or enter advanced credits to grant.', 400);
+  }
+
+  const { data: students, error: studentError } = await context.supabase
+    .from('students')
+    .select('id,email,full_name,student_id')
+    .in('id', studentIds);
+  if (studentError) throw new ApiClientError(studentError.message, 503);
+  const studentRows = students ?? [];
+  if (studentRows.length === 0) throw new ApiClientError('Selected students were not found.', 404);
+
+  const now = new Date().toISOString();
+  if (shouldUpdateFreeLimit) {
+    const limitRows = studentRows.map((student) => ({
+      free_attempts_limit: parsedFreeAttemptsLimit,
+      notes: notes || null,
+      student_email: normalizeEmail(student.email),
+      student_id: student.id,
+      updated_at: now,
+      updated_by: context.email
+    }));
+    const { error } = await context.supabase
+      .from('ats_student_scan_limits')
+      .upsert(limitRows, { onConflict: 'student_id' });
+    if (error) throw new ApiClientError(error.message, 503);
+  }
+
+  let insertedGrantCount = 0;
+  if (advancedCreditsToGrant > 0) {
+    const grantRows = studentRows.map((student) => ({
+      notes: notes || `Admin grant by ${context.email}`,
+      purchased_scans: advancedCreditsToGrant,
+      remaining_scans: advancedCreditsToGrant,
+      source: 'admin',
+      student_email: normalizeEmail(student.email),
+      student_id: student.id
+    }));
+    const { data: insertedGrants, error } = await context.supabase
+      .from('ats_student_credit_grants')
+      .insert(grantRows)
+      .select('id,student_id,student_email,purchased_scans');
+    if (error) throw new ApiClientError(error.message, 503);
+    insertedGrantCount = insertedGrants?.length ?? 0;
+
+    const eventRows = (insertedGrants ?? []).map((grant) => ({
+      event_type: 'credit_granted',
+      metadata: {
+        credits: advancedCreditsToGrant,
+        granted_by: context.email,
+        notes
+      },
+      student_email: grant.student_email,
+      student_id: grant.student_id
+    }));
+    if (eventRows.length > 0) {
+      const { error: eventError } = await context.supabase.from('ats_usage_events').insert(eventRows);
+      if (eventError) throw new ApiClientError(eventError.message, 503);
+    }
+  }
+
+  return {
+    advancedCreditsGranted: insertedGrantCount * advancedCreditsToGrant,
+    freeAttemptsLimit: shouldUpdateFreeLimit ? parsedFreeAttemptsLimit : null,
+    message: `Updated ATS access for ${studentRows.length} student${studentRows.length === 1 ? '' : 's'}.`,
+    studentsUpdated: studentRows.length
+  };
+}
+
+async function getStudentAtsResumeScoreOverview(context: Awaited<ReturnType<typeof createContext>>) {
+  const student = await getStudentProfile(context);
+  const [roles, levels, profiles, scoringVersions, packages, attempts, credits, scanLimit] = await Promise.all([
+    context.supabase.from('ats_roles').select('*').eq('status', 'active').order('sort_order', { ascending: true }).order('role_name', { ascending: true }).limit(500),
+    context.supabase.from('ats_role_levels').select('*').eq('status', 'active').order('sort_order', { ascending: true }).limit(20),
+    context.supabase.from('ats_role_profiles').select('*').eq('status', 'active').limit(1000),
+    context.supabase.from('ats_scoring_versions').select('*').eq('status', 'active').order('updated_at', { ascending: false }).limit(5),
+    context.supabase.from('ats_packages').select('*').eq('status', 'active').order('sort_order', { ascending: true }).limit(20),
+    context.supabase.from('ats_attempts').select('*').eq('student_email', context.email).order('created_at', { ascending: false }).limit(20),
+    context.supabase.from('ats_student_credit_grants').select('*').eq('student_email', context.email).gt('remaining_scans', 0).order('granted_at', { ascending: true }).limit(20),
+    context.supabase.from('ats_student_scan_limits').select('*').eq('student_email', context.email).maybeSingle()
+  ]);
+
+  const firstError = [roles, levels, profiles, scoringVersions, packages, attempts, credits, scanLimit].find((result) => result.error)?.error;
+  if (firstError) throw new ApiClientError(firstError.message, 503);
+
+  const attemptRows = attempts.data ?? [];
+  const freeAttemptsUsed = attemptRows.filter((attempt) => attempt.access_type === 'free' && attempt.scan_mode === 'basic').length;
+  const freeAttemptsLimit = Number(scanLimit.data?.free_attempts_limit ?? 2);
+  const paidCreditsRemaining = (credits.data ?? []).reduce((sum, grant) => sum + Number(grant.remaining_scans ?? 0), 0);
+
+  return camelize({
+    attempts: attemptRows,
+    credits: credits.data ?? [],
+    free_attempts_limit: freeAttemptsLimit,
+    free_attempts_remaining: Math.max(0, freeAttemptsLimit - freeAttemptsUsed),
+    free_attempts_used: freeAttemptsUsed,
+    packages: packages.data ?? [],
+    paid_credits_remaining: paidCreditsRemaining,
+    role_levels: levels.data ?? [],
+    role_profiles: profiles.data ?? [],
+    roles: roles.data ?? [],
+    scoring_version: scoringVersions.data?.[0] ?? null,
+    student
+  });
+}
+
+async function createStudentAtsAttempt(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  const payload = isRecord(body) ? body : {};
+  const student = await getStudentProfile(context);
+  const scanMode = String(payload.scanMode ?? payload.scan_mode ?? 'basic').trim();
+  const accessType = String(payload.accessType ?? payload.access_type ?? 'free').trim();
+  const overallScore = Number(payload.overallScore ?? payload.overall_score);
+  const breakdown = isRecord(payload.breakdown) ? payload.breakdown : null;
+  const rawImprovementSummary = payload.improvementSummary ?? payload.improvement_summary;
+  const improvementSummary: Record<string, unknown> = isRecord(rawImprovementSummary) ? rawImprovementSummary : {};
+  const roleId = String(payload.roleId ?? payload.role_id ?? '').trim() || null;
+  const levelId = String(payload.levelId ?? payload.level_id ?? '').trim() || null;
+  const jdMatchUsed = Boolean(payload.jdMatchUsed ?? payload.jd_match_used ?? false);
+  const rawJdMatchScore = payload.jdMatchScore ?? payload.jd_match_score;
+  const jdMatchScore = rawJdMatchScore === undefined || rawJdMatchScore === null || rawJdMatchScore === '' ? null : Number(rawJdMatchScore);
+
+  if (!Number.isInteger(overallScore) || overallScore < 0 || overallScore > 100) {
+    throw new ApiClientError('ATS overall score must be between 0 and 100.', 400);
+  }
+  if (!breakdown) throw new ApiClientError('ATS score breakdown is required.', 400);
+  if (jdMatchScore !== null && (!Number.isInteger(jdMatchScore) || jdMatchScore < 0 || jdMatchScore > 100)) {
+    throw new ApiClientError('ATS JD match score must be between 0 and 100.', 400);
+  }
+
+  const studentRecord = isRecord(student) ? student : {};
+  const studentName = String(studentRecord.fullName ?? studentRecord.full_name ?? '').trim() || null;
+  const studentId = String(studentRecord.id ?? '').trim() || null;
+
+  if (scanMode === 'advanced' && accessType === 'paid') {
+    if (!roleId || !levelId) throw new ApiClientError('Target role and level are required for advanced ATS analysis.', 400);
+
+    const { data: scoringVersion, error: scoringError } = await context.supabase
+      .from('ats_scoring_versions')
+      .select('id')
+      .eq('status', 'active')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (scoringError) throw new ApiClientError(scoringError.message, 503);
+
+    const data = await callRpc(context, 'consume_ats_paid_scan', {
+      p_breakdown: breakdown,
+      p_improvement_summary: improvementSummary,
+      p_jd_match_score: jdMatchScore,
+      p_jd_match_used: jdMatchUsed,
+      p_level_id: levelId,
+      p_overall_score: overallScore,
+      p_role_id: roleId,
+      p_scoring_version_id: scoringVersion?.id ?? null,
+      p_student_email: context.email,
+      p_student_id: studentId,
+      p_student_name: studentName
+    });
+    return data;
+  }
+
+  if (scanMode !== 'basic' || accessType !== 'free') {
+    throw new ApiClientError('This ATS scan type is not available yet.', 400);
+  }
+
+  const { count, error: countError } = await context.supabase
+    .from('ats_attempts')
+    .select('id', { count: 'exact', head: true })
+    .eq('student_email', context.email)
+    .eq('scan_mode', 'basic')
+    .eq('access_type', 'free');
+  if (countError) throw new ApiClientError(countError.message, 503);
+  const { data: scanLimit, error: scanLimitError } = await context.supabase
+    .from('ats_student_scan_limits')
+    .select('free_attempts_limit')
+    .eq('student_email', context.email)
+    .maybeSingle();
+  if (scanLimitError) throw new ApiClientError(scanLimitError.message, 503);
+  const freeAttemptsLimit = Number(scanLimit?.free_attempts_limit ?? 2);
+  if ((count ?? 0) >= freeAttemptsLimit) {
+    throw new ApiClientError(`Your ${freeAttemptsLimit} free ATS Resume Score scan${freeAttemptsLimit === 1 ? ' is' : 's are'} already used. Buy a paid scan package to continue.`, 403);
+  }
+
+  const { data: scoringVersion, error: scoringError } = await context.supabase
+    .from('ats_scoring_versions')
+    .select('id')
+    .eq('status', 'active')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (scoringError) throw new ApiClientError(scoringError.message, 503);
+
+  const insertPayload = {
+    access_type: 'free',
+    breakdown,
+    improvement_summary: improvementSummary,
+    jd_match_used: false,
+    overall_score: overallScore,
+    scan_mode: 'basic',
+    scoring_version_id: scoringVersion?.id ?? null,
+    student_email: context.email,
+    student_id: studentId,
+    student_name: studentName
+  };
+
+  const { data, error } = await context.supabase.from('ats_attempts').insert(insertPayload).select('*').single();
+  if (error) throw new ApiClientError(error.message, 503);
+
+  void context.supabase.from('ats_usage_events').insert({
+    attempt_id: data.id,
+    event_type: 'basic_scan_created',
+    metadata: { overall_score: overallScore },
+    student_email: context.email,
+    student_id: studentId
+  });
+
+  return camelize(data);
+}
+
+async function recordStudentAtsReportDownload(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  const payload = isRecord(body) ? body : {};
+  const attemptId = String(payload.attemptId ?? payload.attempt_id ?? '').trim();
+  if (!attemptId) throw new ApiClientError('ATS attempt id is required to record report download.', 400);
+  return callRpc(context, 'record_ats_report_download', { p_attempt_id: attemptId });
+}
+
+function atsCheckoutUrl(paymentLink: unknown, params: { orderId: string; packageKey: string; studentEmail: string }) {
+  const rawLink = String(paymentLink ?? '').trim();
+  if (!rawLink) return null;
+  try {
+    const url = new URL(rawLink);
+    url.searchParams.set('lms_order_id', params.orderId);
+    url.searchParams.set('package_key', params.packageKey);
+    url.searchParams.set('student_email', params.studentEmail);
+    return url.toString();
+  } catch {
+    return rawLink;
+  }
+}
+
+async function createStudentAtsPackageOrder(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  const payload = isRecord(body) ? body : {};
+  const packageId = String(payload.packageId ?? payload.package_id ?? '').trim();
+  if (!packageId) throw new ApiClientError('ATS package id is required.', 400);
+
+  const student = await getStudentProfile(context);
+  const studentRecord = isRecord(student) ? student : {};
+  const studentName = String(studentRecord.fullName ?? studentRecord.full_name ?? '').trim();
+
+  const { data: atsPackage, error: packageError } = await context.supabase
+    .from('ats_packages')
+    .select('id,package_key,title,amount,currency,payment_link,scan_credits,status')
+    .eq('id', packageId)
+    .eq('status', 'active')
+    .maybeSingle();
+  if (packageError) throw new ApiClientError(packageError.message, 503);
+  if (!atsPackage) throw new ApiClientError('ATS package is not available.', 404);
+
+  const { data: existingOrder, error: existingError } = await context.supabase
+    .from('payment_orders')
+    .select('id,order_id,student_email,item_type,item_id,item_title,amount,currency,status,razorpay_order_id,razorpay_payment_id,receipt,created_at,updated_at')
+    .eq('student_email', context.email)
+    .eq('item_type', 'ats_package')
+    .eq('item_id', atsPackage.package_key)
+    .eq('status', 'created')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (existingError) throw new ApiClientError(existingError.message, 503);
+  if (existingOrder) {
+    return camelize(
+      enrichRow({
+        ...existingOrder,
+        payment_link: atsCheckoutUrl(atsPackage.payment_link, {
+          orderId: String(existingOrder.order_id ?? ''),
+          packageKey: String(atsPackage.package_key ?? ''),
+          studentEmail: context.email
+        })
+      })
+    );
+  }
+
+  const now = new Date();
+  const orderId = `ATS-${now.getTime()}`;
+  const insertPayload = {
+    amount: Number(atsPackage.amount ?? 0),
+    currency: String(atsPackage.currency ?? 'INR'),
+    item_id: atsPackage.package_key,
+    item_title: atsPackage.title,
+    item_type: 'ats_package',
+    order_id: orderId,
+    receipt: `ats_${now.getTime()}`,
+    status: 'created',
+    student_email: context.email
+  };
+
+  const { data, error } = await context.supabase.from('payment_orders').insert(insertPayload).select('*').single();
+  if (error) throw new ApiClientError(error.message, 503);
+
+  void context.supabase.from('ats_usage_events').insert({
+    event_type: 'payment_started',
+    metadata: {
+      amount: insertPayload.amount,
+      currency: insertPayload.currency,
+      order_id: orderId,
+      package_id: atsPackage.id,
+      package_key: atsPackage.package_key,
+      scan_credits: Number(atsPackage.scan_credits ?? 0)
+    },
+    student_email: context.email,
+    student_id: typeof studentRecord.id === 'string' ? studentRecord.id : null
+  });
+
+  return camelize({
+    ...data,
+    payment_link: atsCheckoutUrl(atsPackage.payment_link, {
+      orderId,
+      packageKey: String(atsPackage.package_key ?? ''),
+      studentEmail: context.email
+    }),
+    student_name: studentName || null
+  });
 }
 
 async function enrichStudentCohortProgramNames(context: Awaited<ReturnType<typeof createContext>>, items: unknown[]) {
@@ -3017,6 +3802,50 @@ async function getTableList(context: Awaited<ReturnType<typeof createContext>>, 
   if (error) throw new ApiClientError(error.message, 503);
 
   return createPaginatedResponse((data ?? []).map(enrichRow).map(camelize), count ?? 0, page, limit);
+}
+
+async function getAdminEmailMarketingCohortTouch(context: Awaited<ReturnType<typeof createContext>>) {
+  const { data, error } = await context.supabase
+    .from('email_marketing_daily_plans')
+    .select('id, planned_date, campaign_title, campaign_phase, cohort_names, planned_recipient_count, status, sent_at, updated_at')
+    .in('status', ['reviewed', 'sent'])
+    .order('planned_date', { ascending: false })
+    .limit(500);
+
+  if (error) throw new ApiClientError(error.message, 503);
+
+  const touchedByCohort = new Map<string, Record<string, unknown>>();
+
+  (data ?? []).forEach((plan) => {
+    const cohortNames = Array.isArray(plan.cohort_names) ? plan.cohort_names : [];
+    cohortNames.forEach((name) => {
+      const cohortName = String(name ?? '').trim();
+      if (!cohortName) return;
+      const touchedAt = String(plan.sent_at || plan.planned_date || plan.updated_at || '').trim();
+      const existing = touchedByCohort.get(cohortName);
+      const existingTime = existing ? new Date(String(existing.last_touched_at ?? '')).getTime() : Number.NaN;
+      const currentTime = new Date(touchedAt).getTime();
+      if (existing && Number.isFinite(existingTime) && Number.isFinite(currentTime) && existingTime >= currentTime) return;
+      touchedByCohort.set(cohortName, {
+        campaign_phase: plan.campaign_phase,
+        campaign_title: plan.campaign_title,
+        last_plan_id: plan.id,
+        last_touched_at: touchedAt,
+        last_touch_status: plan.status,
+        planned_recipient_count: plan.planned_recipient_count
+      });
+    });
+  });
+
+  const items = Array.from(touchedByCohort.entries()).map(([cohortName, item]) => {
+    const camelized = camelize({ cohort_name: cohortName, ...item });
+    return isRecord(camelized) ? camelized : { cohortName };
+  });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    items: items.sort((first, second) => String(first.cohortName ?? '').localeCompare(String(second.cohortName ?? '')))
+  };
 }
 
 async function getAdminProjectSubmissionsList(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
@@ -5395,6 +6224,27 @@ async function insertRow(context: Awaited<ReturnType<typeof createContext>>, tab
   return endpoint.table === 'students' ? (await enrichAdminStudents(context, [data]))[0] : camelize(enrichRow(data));
 }
 
+async function saveProgramTemplate(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
+  const endpoint = getWriteEndpoint('program_templates');
+  const payload = prepareWritePayload(endpoint, {
+    ...(isRecord(body) ? body : {}),
+    updatedBy: context.email
+  }, true);
+  const upsertPayload = {
+    ...payload,
+    created_by: payload.created_by ?? context.email,
+    updated_at: new Date().toISOString()
+  };
+  const { data, error } = await context.supabase
+    .from('program_templates')
+    .upsert(upsertPayload, { onConflict: 'program_key' })
+    .select('*')
+    .single();
+  if (error) throw mutationError(error, endpoint.table);
+  await writeAuditLog(context, endpoint.table, 'saved', data, upsertPayload);
+  return camelize(enrichRow(data));
+}
+
 async function importStudents(context: Awaited<ReturnType<typeof createContext>>, body: unknown) {
   if (!isRecord(body) || !Array.isArray(body.students)) {
     throw new ApiClientError('Student import payload must include a students list.', 400);
@@ -5820,7 +6670,7 @@ async function processQueuedStudentEmail(context: Awaited<ReturnType<typeof crea
   }
 }
 
-async function callRpc(context: Awaited<ReturnType<typeof createContext>>, functionName: string, params?: Record<string, boolean | string | string[] | Record<string, unknown> | null>) {
+async function callRpc(context: Awaited<ReturnType<typeof createContext>>, functionName: string, params?: Record<string, boolean | number | string | string[] | Record<string, unknown> | null>) {
   const { data, error } = await context.supabase.rpc(functionName, params);
   if (error) throw new ApiClientError(error.message, 503);
   return camelize(data);
@@ -6802,6 +7652,27 @@ function normalizeRecordingSequenceWriteBody(payload: Record<string, unknown>) {
   };
 }
 
+function normalizeProgramTemplateWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  const normalizeOptionalText = (key: string) => {
+    if (!has(key)) return undefined;
+    const value = payload[key];
+    if (value === null) return null;
+    const text = String(value ?? '').trim();
+    return text || null;
+  };
+
+  return {
+    ...payload,
+    chapters: has('chapters') && Array.isArray(payload.chapters) ? payload.chapters : payload.chapters,
+    created_by: normalizeOptionalText('created_by'),
+    program_key: has('program_key') && typeof payload.program_key === 'string' ? payload.program_key.trim().toLowerCase() : payload.program_key,
+    source: has('source') && typeof payload.source === 'string' ? payload.source.trim().toLowerCase() : payload.source,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    updated_by: normalizeOptionalText('updated_by')
+  };
+}
+
 function normalizeAnnouncementWriteBody(payload: Record<string, unknown>) {
   const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
   const normalizeOptionalText = (key: string) => {
@@ -6872,6 +7743,116 @@ function normalizeFeatureControlWriteBody(payload: Record<string, unknown>) {
     upcoming_message: normalizeOptionalText('upcoming_message'),
     settings: has('settings') && payload.settings && typeof payload.settings === 'object' && !Array.isArray(payload.settings) ? payload.settings : payload.settings,
     updated_by: normalizeOptionalText('updated_by')
+  };
+}
+
+function normalizeTextList(value: unknown) {
+  return uniqueStrings(
+    asStringArray(value)
+      .flatMap((item) => item.split(/[\n,]+/))
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function normalizeJsonObject(value: unknown) {
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return {};
+    try {
+      const parsed = JSON.parse(text);
+      return isRecord(parsed) ? parsed : value;
+    } catch {
+      return value;
+    }
+  }
+  return isRecord(value) ? value : value;
+}
+
+function normalizeSampleCvPoints(value: unknown) {
+  const parseCandidate = typeof value === 'string' ? (() => {
+    const text = value.trim();
+    if (!text) return [];
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return value;
+    }
+  })() : value;
+
+  if (!Array.isArray(parseCandidate)) return parseCandidate;
+  return parseCandidate
+    .filter((item): item is Record<string, unknown> => isRecord(item))
+    .map((item) => ({
+      actionVerb: String(item.actionVerb ?? item.action_verb ?? '').trim(),
+      keywords: uniqueStrings(asStringArray(item.keywords).flatMap((keyword) => keyword.split(/[\n,]+/)).map((keyword) => keyword.trim()).filter(Boolean)),
+      metric: String(item.metric ?? '').trim(),
+      point: String(item.point ?? '').trim()
+    }))
+    .filter((item) => item.point.length > 0)
+    .slice(0, 30);
+}
+
+function normalizeAtsRoleWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  return {
+    ...payload,
+    category: has('category') ? String(payload.category ?? '').trim() : payload.category,
+    description: has('description') ? String(payload.description ?? '').trim() || null : payload.description,
+    role_key: has('role_key') ? slugifyKey(String(payload.role_key ?? '')) : payload.role_key,
+    role_name: has('role_name') ? String(payload.role_name ?? '').trim() : payload.role_name,
+    sort_order: has('sort_order') && payload.sort_order !== '' ? Number(payload.sort_order) : payload.sort_order,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    updated_by: has('updated_by') ? String(payload.updated_by ?? '').trim() || null : payload.updated_by
+  };
+}
+
+function normalizeAtsRoleProfileWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  return {
+    ...payload,
+    action_verbs: has('action_verbs') ? normalizeTextList(payload.action_verbs) : payload.action_verbs,
+    expectations: has('expectations') ? normalizeJsonObject(payload.expectations) : payload.expectations,
+    keywords: has('keywords') ? normalizeTextList(payload.keywords) : payload.keywords,
+    preferred_sections: has('preferred_sections') ? normalizeTextList(payload.preferred_sections) : payload.preferred_sections,
+    sample_cv_points: has('sample_cv_points') ? normalizeSampleCvPoints(payload.sample_cv_points) : payload.sample_cv_points,
+    scoring_weights: has('scoring_weights') ? normalizeJsonObject(payload.scoring_weights) : payload.scoring_weights,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    updated_by: has('updated_by') ? String(payload.updated_by ?? '').trim() || null : payload.updated_by
+  };
+}
+
+function normalizeAtsScoringVersionWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  return {
+    ...payload,
+    description: has('description') ? String(payload.description ?? '').trim() || null : payload.description,
+    free_scan_weights: has('free_scan_weights') ? normalizeJsonObject(payload.free_scan_weights) : payload.free_scan_weights,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    title: has('title') ? String(payload.title ?? '').trim() : payload.title,
+    updated_by: has('updated_by') ? String(payload.updated_by ?? '').trim() || null : payload.updated_by,
+    version_key: has('version_key') ? slugifyKey(String(payload.version_key ?? '')) : payload.version_key,
+    weights: has('weights') ? normalizeJsonObject(payload.weights) : payload.weights
+  };
+}
+
+function normalizeAtsPackageWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  return {
+    ...payload,
+    amount: has('amount') && payload.amount !== '' ? Number(payload.amount) : payload.amount,
+    currency: has('currency') ? String(payload.currency ?? 'INR').trim().toUpperCase() || 'INR' : payload.currency,
+    description: has('description') ? String(payload.description ?? '').trim() || null : payload.description,
+    includes_advanced_analysis: has('includes_advanced_analysis') ? payload.includes_advanced_analysis === true : payload.includes_advanced_analysis,
+    includes_jd_match: has('includes_jd_match') ? payload.includes_jd_match === true : payload.includes_jd_match,
+    includes_report_download: has('includes_report_download') ? payload.includes_report_download === true : payload.includes_report_download,
+    package_key: has('package_key') ? slugifyKey(String(payload.package_key ?? '')) : payload.package_key,
+    payment_link: has('payment_link') ? String(payload.payment_link ?? '').trim() || null : payload.payment_link,
+    scan_credits: has('scan_credits') && payload.scan_credits !== '' ? Number(payload.scan_credits) : payload.scan_credits,
+    sort_order: has('sort_order') && payload.sort_order !== '' ? Number(payload.sort_order) : payload.sort_order,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    title: has('title') ? String(payload.title ?? '').trim() : payload.title,
+    updated_by: has('updated_by') ? String(payload.updated_by ?? '').trim() || null : payload.updated_by
   };
 }
 
@@ -7148,6 +8129,42 @@ function validateRecordingSequenceWriteBody(payload: Record<string, unknown>, in
   if (aliases !== undefined && !Array.isArray(aliases)) throw new ApiClientError('Sequence aliases must be a list.', 400);
 }
 
+function validateProgramTemplateWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const programKey = typeof payload.program_key === 'string' ? payload.program_key.trim() : '';
+  const source = typeof payload.source === 'string' ? payload.source.trim() : undefined;
+  const status = typeof payload.status === 'string' ? payload.status.trim() : undefined;
+  const chapters = payload.chapters;
+
+  if (inserting && !programKey) throw new ApiClientError('Program is required for templates.', 400);
+  if ('program_key' in payload && (!programKey || !/^[a-z0-9_]+$/.test(programKey))) throw new ApiClientError('Program key is invalid.', 400);
+  if (source && !['sequence_manager', 'admin_template'].includes(source)) throw new ApiClientError('Program template source is invalid.', 400);
+  if (status && !['draft', 'active', 'inactive'].includes(status)) throw new ApiClientError('Program template status is invalid.', 400);
+  if (chapters !== undefined && !Array.isArray(chapters)) throw new ApiClientError('Program template chapters must be a list.', 400);
+  if (Array.isArray(chapters) && chapters.length > 20) throw new ApiClientError('Program templates can include up to 20 chapters.', 400);
+
+  if (!Array.isArray(chapters)) return;
+
+  chapters.forEach((chapter, chapterIndex) => {
+    if (!isRecord(chapter)) throw new ApiClientError(`Chapter ${chapterIndex + 1} is invalid.`, 400);
+    const title = typeof chapter.title === 'string' ? chapter.title.trim() : '';
+    const items = chapter.items;
+    if (!title) throw new ApiClientError(`Chapter ${chapterIndex + 1} needs a title.`, 400);
+    if (!Array.isArray(items)) throw new ApiClientError(`Chapter ${chapterIndex + 1} modules must be a list.`, 400);
+    if (items.length > 200) throw new ApiClientError(`Chapter ${chapterIndex + 1} can include up to 200 modules.`, 400);
+    items.forEach((item, itemIndex) => {
+      if (!isRecord(item)) throw new ApiClientError(`Module ${itemIndex + 1} in chapter ${chapterIndex + 1} is invalid.`, 400);
+      const topicTitle = typeof item.topic_title === 'string' ? item.topic_title.trim() : '';
+      if (!topicTitle) throw new ApiClientError(`Module ${itemIndex + 1} in chapter ${chapterIndex + 1} needs a title.`, 400);
+      if (item.resource_ids !== undefined && !Array.isArray(item.resource_ids)) {
+        throw new ApiClientError(`Module ${itemIndex + 1} resources must be a list.`, 400);
+      }
+      if (item.match_aliases !== undefined && !Array.isArray(item.match_aliases)) {
+        throw new ApiClientError(`Module ${itemIndex + 1} match options must be a list.`, 400);
+      }
+    });
+  });
+}
+
 function validateAnnouncementWriteBody(payload: Record<string, unknown>, inserting: boolean) {
   const title = typeof payload.title === 'string' ? payload.title.trim() : '';
   const message = typeof payload.message === 'string' ? payload.message.trim() : '';
@@ -7204,6 +8221,73 @@ function validateFeatureControlWriteBody(payload: Record<string, unknown>, inser
   if (settings !== undefined && settings !== null && (typeof settings !== 'object' || Array.isArray(settings))) {
     throw new ApiClientError('Feature settings must be a valid object.', 400);
   }
+}
+
+function validateAtsStatus(status: unknown, allowed: string[], label: string) {
+  if (status !== undefined && (typeof status !== 'string' || !allowed.includes(status))) {
+    throw new ApiClientError(`${label} status is invalid.`, 400);
+  }
+}
+
+function validateJsonObjectField(value: unknown, label: string) {
+  if (value !== undefined && (value === null || typeof value !== 'object' || Array.isArray(value))) {
+    throw new ApiClientError(`${label} must be a valid JSON object.`, 400);
+  }
+}
+
+function validateAtsRoleWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const key = typeof payload.role_key === 'string' ? payload.role_key.trim() : '';
+  const name = typeof payload.role_name === 'string' ? payload.role_name.trim() : '';
+  const category = typeof payload.category === 'string' ? payload.category.trim() : '';
+  const sortOrder = payload.sort_order;
+  if (inserting && !key) throw new ApiClientError('ATS role key is required.', 400);
+  if (inserting && !name) throw new ApiClientError('ATS role name is required.', 400);
+  if (inserting && !category) throw new ApiClientError('ATS role category is required.', 400);
+  if (key && !/^[a-z0-9_]+$/.test(key)) throw new ApiClientError('ATS role key is invalid.', 400);
+  if (sortOrder !== undefined && !Number.isFinite(Number(sortOrder))) throw new ApiClientError('ATS role sort order is invalid.', 400);
+  validateAtsStatus(payload.status, ['active', 'inactive'], 'ATS role');
+}
+
+function validateAtsRoleProfileWriteBody(payload: Record<string, unknown>) {
+  if (payload.keywords !== undefined && !Array.isArray(payload.keywords)) throw new ApiClientError('ATS role keywords must be a list.', 400);
+  if (payload.action_verbs !== undefined && !Array.isArray(payload.action_verbs)) throw new ApiClientError('ATS role action verbs must be a list.', 400);
+  if (payload.preferred_sections !== undefined && !Array.isArray(payload.preferred_sections)) throw new ApiClientError('ATS preferred sections must be a list.', 400);
+  if (payload.sample_cv_points !== undefined) {
+    if (!Array.isArray(payload.sample_cv_points)) throw new ApiClientError('ATS sample CV points must be a list.', 400);
+    payload.sample_cv_points.forEach((item) => {
+      if (!isRecord(item) || typeof item.point !== 'string' || !item.point.trim()) throw new ApiClientError('Each ATS sample CV point needs point text.', 400);
+      if (item.keywords !== undefined && !Array.isArray(item.keywords)) throw new ApiClientError('ATS sample CV point keywords must be a list.', 400);
+    });
+  }
+  validateJsonObjectField(payload.expectations, 'ATS role expectations');
+  validateJsonObjectField(payload.scoring_weights, 'ATS role scoring weights');
+  validateAtsStatus(payload.status, ['active', 'inactive'], 'ATS role profile');
+}
+
+function validateAtsScoringVersionWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const key = typeof payload.version_key === 'string' ? payload.version_key.trim() : '';
+  const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+  if (inserting && !key) throw new ApiClientError('ATS scoring version key is required.', 400);
+  if (inserting && !title) throw new ApiClientError('ATS scoring title is required.', 400);
+  if (key && !/^[a-z0-9_]+$/.test(key)) throw new ApiClientError('ATS scoring version key is invalid.', 400);
+  validateJsonObjectField(payload.weights, 'ATS scoring weights');
+  validateJsonObjectField(payload.free_scan_weights, 'ATS free scan weights');
+  validateAtsStatus(payload.status, ['active', 'inactive', 'draft'], 'ATS scoring version');
+}
+
+function validateAtsPackageWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const key = typeof payload.package_key === 'string' ? payload.package_key.trim() : '';
+  const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+  const amount = payload.amount;
+  const paymentLink = typeof payload.payment_link === 'string' ? payload.payment_link.trim() : '';
+  const scanCredits = payload.scan_credits;
+  if (inserting && !key) throw new ApiClientError('ATS package key is required.', 400);
+  if (inserting && !title) throw new ApiClientError('ATS package title is required.', 400);
+  if (key && !/^[a-z0-9_]+$/.test(key)) throw new ApiClientError('ATS package key is invalid.', 400);
+  if (amount !== undefined && (!Number.isFinite(Number(amount)) || Number(amount) < 0)) throw new ApiClientError('ATS package amount must be zero or more.', 400);
+  if (paymentLink && !isHttpUrl(paymentLink)) throw new ApiClientError('ATS package payment link must start with http:// or https://.', 400);
+  if (scanCredits !== undefined && (!Number.isInteger(Number(scanCredits)) || Number(scanCredits) <= 0)) throw new ApiClientError('ATS package scan credits must be a positive whole number.', 400);
+  validateAtsStatus(payload.status, ['active', 'inactive', 'draft'], 'ATS package');
 }
 
 function validateEmailTemplateWriteBody(payload: Record<string, unknown>, inserting: boolean) {

@@ -71,6 +71,21 @@ class MockPaymentOrderQuery {
     return this;
   }
 
+  limit(...args: unknown[]) {
+    this.filters.push({ method: 'limit', args });
+    return this;
+  }
+
+  insert(...args: unknown[]) {
+    this.filters.push({ method: 'insert', args });
+    return this;
+  }
+
+  upsert(...args: unknown[]) {
+    this.filters.push({ method: 'upsert', args });
+    return this;
+  }
+
   select(...args: unknown[]) {
     this.filters.push({ method: 'select', args });
     return this;
@@ -86,11 +101,15 @@ class MockSupabaseAdmin {
   persistResult: PersistResult = { data: { event_id: 'evt_123', status: 'received' }, error: null };
   webhookStatusResult: PersistResult = { data: { event_id: 'evt_123', status: 'processed' }, error: null };
   paymentOrderResult: PersistResult = { data: { id: 'order-row-1', status: 'paid' }, error: null };
+  paymentOrderResults?: PersistResult[];
+  tableResults = new Map<string, PersistResult>();
+  tableQueries: Array<{ query: MockPaymentOrderQuery; tableName: string }> = [];
   lastQuery?: MockWebhookEventQuery;
   lastWebhookPersistQuery?: MockWebhookEventQuery;
   lastWebhookStatusQuery?: MockWebhookEventQuery;
   lastPaymentOrderQuery?: MockPaymentOrderQuery;
   private webhookEventCallCount = 0;
+  private paymentOrderCallCount = 0;
 
   from(tableName: string) {
     if (tableName === 'enrollment_webhook_events') {
@@ -105,11 +124,15 @@ class MockSupabaseAdmin {
     }
 
     if (tableName === 'payment_orders') {
-      this.lastPaymentOrderQuery = new MockPaymentOrderQuery(this.paymentOrderResult);
+      const result = this.paymentOrderResults?.[this.paymentOrderCallCount] ?? this.paymentOrderResult;
+      this.paymentOrderCallCount += 1;
+      this.lastPaymentOrderQuery = new MockPaymentOrderQuery(result);
       return this.lastPaymentOrderQuery;
     }
 
-    throw new Error(`Unexpected table: ${tableName}`);
+    const query = new MockPaymentOrderQuery(this.tableResults.get(tableName) ?? { data: null, error: null });
+    this.tableQueries.push({ tableName, query });
+    return query;
   }
 }
 
@@ -407,6 +430,86 @@ describe('RazorpayWebhookService', () => {
         { method: 'maybeSingle', args: [] }
       ])
     );
+  });
+
+  it('grants ATS scan credits for newly paid ATS package orders when enabled', async () => {
+    const secret = 'webhook-secret';
+    const payload = {
+      event: 'payment.captured',
+      payload: {
+        payment: {
+          entity: {
+            id: 'pay_ats_123',
+            order_id: 'order_ats_123',
+            amount: 19900,
+            notes: { student_email: 'student@example.com' }
+          }
+        }
+      }
+    };
+    const rawBody = Buffer.from(JSON.stringify(payload));
+    const signature = createHmac('sha256', secret).update(rawBody).digest('hex');
+    const supabase = new MockSupabase();
+    supabase.admin.paymentOrderResults = [
+      { data: { id: 'payment-order-row', status: 'paid', razorpay_order_id: 'order_ats_123', razorpay_payment_id: 'pay_ats_123' }, error: null },
+      {
+        data: {
+          id: 'payment-order-row',
+          item_id: 'ats_single_scan',
+          item_type: 'ats_package',
+          order_id: 'PO-ATS-1',
+          razorpay_order_id: 'order_ats_123',
+          razorpay_payment_id: 'pay_ats_123',
+          status: 'paid',
+          student_email: 'student@example.com'
+        },
+        error: null
+      }
+    ];
+    supabase.admin.tableResults.set('ats_packages', { data: { id: 'pkg-1', package_key: 'ats_single_scan', scan_credits: 1, status: 'active' }, error: null });
+    supabase.admin.tableResults.set('students', { data: { id: 'student-1', email: 'student@example.com' }, error: null });
+    supabase.admin.tableResults.set('ats_student_credit_grants', { data: { id: 'grant-1', student_email: 'student@example.com', purchased_scans: 1, remaining_scans: 1 }, error: null });
+    const service = new RazorpayWebhookService(
+      new MockConfigService({
+        ATS_CREDIT_GRANTS_ENABLED: true,
+        RAZORPAY_WEBHOOK_SECRET: secret,
+        RAZORPAY_WEBHOOK_PERSISTENCE_ENABLED: true,
+        RAZORPAY_PAYMENT_ORDER_TRANSITIONS_ENABLED: true
+      }) as never,
+      supabase as never
+    );
+
+    await expect(service.verifyParseAndMaybePersist(rawBody, signature, payload)).resolves.toMatchObject({
+      atsCreditGrantExecution: {
+        enabled: true,
+        attempted: true,
+        status: 'granted',
+        studentEmail: 'student@example.com',
+        packageKey: 'ats_single_scan',
+        scanCredits: 1
+      }
+    });
+    const creditGrantQuery = supabase.admin.tableQueries.find((entry) => entry.tableName === 'ats_student_credit_grants')?.query;
+    expect(creditGrantQuery?.filters).toEqual(
+      expect.arrayContaining([
+        {
+          method: 'upsert',
+          args: [
+            expect.objectContaining({
+              package_id: 'pkg-1',
+              purchased_scans: 1,
+              remaining_scans: 1,
+              source: 'payment',
+              source_payment_order_id: 'payment-order-row',
+              student_email: 'student@example.com',
+              student_id: 'student-1'
+            }),
+            { onConflict: 'source_payment_order_id', ignoreDuplicates: true }
+          ]
+        }
+      ])
+    );
+    expect(supabase.admin.tableQueries.some((entry) => entry.tableName === 'ats_usage_events')).toBe(true);
   });
 
   it('records failed webhook-event status when payment order updates fail', async () => {

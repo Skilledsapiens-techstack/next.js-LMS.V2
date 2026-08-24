@@ -17,6 +17,9 @@ const portalUrlFallback =
 const DAILY_EMAIL_LIMIT = 300;
 const DEFAULT_BATCH_SIZE = 50;
 const MAX_BATCH_SIZE = 100;
+const REHEARSAL_BATCH_SIZE = 5;
+const DEFAULT_REHEARSAL_ALLOWLIST = 'saurabhvaslas955@gmail.com,skilledsapiens@gmail.com';
+const rehearsalAllowlist = splitEmails(Deno.env.get('EMAIL_REHEARSAL_ALLOWLIST') || DEFAULT_REHEARSAL_ALLOWLIST);
 const AUTH_EMAIL_COOLDOWN_MS = 60_000;
 const EMAIL_SERVICE_FEATURE_ID = 'email-service';
 const EMAIL_SERVICE_DISABLED_MESSAGE = 'Email delivery is temporarily disabled from Feature Control. Re-enable Email Delivery before sending emails.';
@@ -74,6 +77,49 @@ function uniqueText(values: unknown[]) {
     items.push(item);
   });
   return items;
+}
+
+function emailRecipientFromSnapshot(value: unknown): EmailRecipient | null {
+  const item = asRecord(value);
+  const email = normalizeEmail(item.email);
+  if (!email) return null;
+  return {
+    email,
+    name: text(item.name, email),
+    relatedId: text(item.relatedId || item.related_id, email),
+    relatedType: text(item.relatedType || item.related_type, 'email'),
+    vars: asRecord(item.vars),
+  };
+}
+
+function emailRecipientSnapshot(recipients: EmailRecipient[]) {
+  return recipients.map((recipient) => ({
+    email: recipient.email,
+    name: recipient.name,
+    relatedId: recipient.relatedId,
+    relatedType: recipient.relatedType,
+    vars: recipient.vars,
+  }));
+}
+
+function emailSendPayloadSnapshot(payload: JsonRecord) {
+  return {
+    batchSize: payload.batchSize || payload.batch_size || null,
+    body: text(payload.body),
+    category: text(payload.category),
+    cohortNames: stringList(payload.cohortNames || payload.cohort_names),
+    directEmails: text(payload.directEmails || payload.direct_emails),
+    googleGroupEmail: text(payload.googleGroupEmail || payload.google_group_email),
+    params: asRecord(payload.params),
+    recipientFilters: asRecord(payload.recipientFilters || payload.recipient_filters),
+    rehearsalEmails: text(payload.rehearsalEmails || payload.rehearsal_emails),
+    sendMode: text(payload.sendMode || payload.send_mode, 'direct'),
+    subject: text(payload.subject),
+    templateKey: text(payload.templateKey || payload.template_key),
+    testMode: payload.testMode === true || payload.test_mode === true,
+    qaMode: payload.qaMode === true || payload.qa_mode === true,
+    rehearsalMode: payload.rehearsalMode === true || payload.rehearsal_mode === true,
+  };
 }
 
 function chunks<T>(values: T[], size: number) {
@@ -660,6 +706,38 @@ function splitEmails(value: unknown) {
     .filter((entry) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(entry))));
 }
 
+function rehearsalRecipients(requestedEmails: string[], baseRecipients: EmailRecipient[], params: JsonRecord) {
+  const allowlist = new Set(rehearsalAllowlist);
+  const requestedAllowlist = requestedEmails.length ? requestedEmails.filter((email) => allowlist.has(email)) : rehearsalAllowlist;
+  const emails = Array.from(new Set(requestedAllowlist)).slice(0, REHEARSAL_BATCH_SIZE);
+  if (emails.length === 0) {
+    throw new Error('Rehearsal mode has no allowed QA recipients. Set EMAIL_REHEARSAL_ALLOWLIST or choose an allowed QA email.');
+  }
+  const sample = baseRecipients[0];
+  return emails.map((email) => ({
+    email,
+    name: 'QA Recipient',
+    relatedId: `rehearsal:${email}`,
+    relatedType: 'rehearsal_qa',
+    vars: {
+      ...params,
+      cohort: text(params.cohort || params.cohorts || sample?.vars?.cohort, 'QA rehearsal cohort'),
+      cohorts: text(params.cohorts || params.cohort || sample?.vars?.cohorts, 'QA rehearsal cohort'),
+      email,
+      first_name: 'QA',
+      full_name: 'QA Recipient',
+      name: 'QA Recipient',
+      portal_url: portalUrlFallback,
+      program: text(params.program, 'QA rehearsal'),
+      programs: text(params.programs || params.program, 'QA rehearsal'),
+      rehearsal_original_recipient: sample ? 'sample audience recipient' : '',
+      student_email: email,
+      student_id: 'QA-REHEARSAL',
+      student_name: 'QA Recipient',
+    },
+  }));
+}
+
 function stringList(value: unknown) {
   if (Array.isArray(value)) return Array.from(new Set(value.map((entry) => text(entry)).filter(Boolean)));
   return String(value || '').split(',').map((entry) => entry.trim()).filter(Boolean);
@@ -832,26 +910,82 @@ async function sentCountToday() {
   const { count, error } = await admin
     .from('email_queue')
     .select('id', { count: 'exact', head: true })
-    .eq('status', 'sent')
+    .not('sent_at', 'is', null)
     .gte('sent_at', bounds.start)
     .lt('sent_at', bounds.end);
   if (error) throw new Error(error.message);
   return count || 0;
 }
 
-async function sentEmailsToday(templateKey: string, category: string) {
+async function sentEmailsToday(templateKey: string, category: string, subjectSource = '') {
   const bounds = istDayBounds();
-  const { data, error } = await admin
+  let query = admin
     .from('email_queue')
     .select('recipient_email')
-    .eq('status', 'sent')
     .eq('template_key', templateKey)
     .eq('category', category)
+    .not('sent_at', 'is', null)
     .gte('sent_at', bounds.start)
     .lt('sent_at', bounds.end)
     .limit(5000);
+  if (templateKey === 'custom_blank' && subjectSource) {
+    query = query.eq('subject', subjectSource);
+  }
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return new Set((data || []).map((row) => normalizeEmail(row.recipient_email)).filter(Boolean));
+}
+
+async function suppressedRecipientEmails(emails: string[]) {
+  const uniqueEmails = Array.from(new Set(emails.map(normalizeEmail).filter(Boolean)));
+  if (!uniqueEmails.length) return new Set<string>();
+
+  const { data: eventRows, error } = await admin
+    .from('email_provider_events')
+    .select('recipient_email,event_type,occurred_at')
+    .in('recipient_email', uniqueEmails)
+    .in('event_type', ['hard_bounce', 'soft_bounce', 'bounced', 'blocked', 'invalid_email', 'error', 'spam', 'unsubscribed'])
+    .limit(10000);
+
+  if (error) {
+    if (String(error.message || '').includes('email_provider_events')) return new Set<string>();
+    throw new Error(error.message);
+  }
+
+  const { data: overrideRows, error: overrideError } = await admin
+    .from('email_suppression_overrides')
+    .select('recipient_email,status,created_at')
+    .in('recipient_email', uniqueEmails)
+    .limit(10000);
+
+  if (overrideError) {
+    if (!String(overrideError.message || '').includes('email_suppression_overrides')) throw new Error(overrideError.message);
+  }
+
+  const latestProviderSuppression = new Map<string, number>();
+  (eventRows || []).forEach((row) => {
+    const email = normalizeEmail(row.recipient_email);
+    const occurredAt = new Date(text(row.occurred_at)).getTime();
+    if (!email || !Number.isFinite(occurredAt)) return;
+    latestProviderSuppression.set(email, Math.max(latestProviderSuppression.get(email) ?? 0, occurredAt));
+  });
+
+  const latestOverride = new Map<string, { status: string; time: number }>();
+  (overrideRows || []).forEach((row) => {
+    const email = normalizeEmail(row.recipient_email);
+    const createdAt = new Date(text(row.created_at)).getTime();
+    if (!email || !Number.isFinite(createdAt)) return;
+    const existing = latestOverride.get(email);
+    if (!existing || createdAt > existing.time) latestOverride.set(email, { status: text(row.status), time: createdAt });
+  });
+
+  return new Set(uniqueEmails.filter((email) => {
+    const providerSuppressedAt = latestProviderSuppression.get(email) ?? 0;
+    const override = latestOverride.get(email);
+    if (override?.status === 'suppressed') return true;
+    if (override?.status === 'cleared' && override.time >= providerSuppressedAt) return false;
+    return providerSuppressedAt > 0;
+  }));
 }
 
 async function resolveAdminStudentCommunication(payload: JsonRecord) {
@@ -867,7 +1001,9 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
   const templateUsedKey = text(template?.template_key, templateKey || 'custom_blank');
   const category = text(template?.category || template?.phase || payload.category, 'general');
   const testMode = payload.testMode === true || payload.test_mode === true;
-  const tags = Array.from(new Set(['lms', 'email-center', category, ...(testMode ? ['test'] : []), ...stringList(template?.default_tags)]));
+  const qaMode = payload.qaMode === true || payload.qa_mode === true;
+  const rehearsalMode = payload.rehearsalMode === true || payload.rehearsal_mode === true;
+  const tags = Array.from(new Set(['lms', 'email-center', category, ...(testMode ? ['test'] : []), ...(qaMode ? ['qa'] : []), ...(rehearsalMode ? ['rehearsal'] : []), ...stringList(template?.default_tags)]));
 
   if (!subjectSource) throw new Error('Email subject is required.');
   if (!bodySource) throw new Error('Email body is required.');
@@ -933,14 +1069,23 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
 
   const recipientLimit = sendMode === 'all_active_students' ? 10000 : 1000;
   recipients = Array.from(new Map(recipients.map((recipient) => [recipient.email, recipient])).values()).slice(0, recipientLimit);
+  const originalAudienceCount = recipients.length;
+  const originalAudiencePreview = recipients.slice(0, 5).map((recipient) => recipient.email);
+  const requestedRehearsalEmails = splitEmails(payload.rehearsalEmails || payload.rehearsal_emails);
+
+  if (rehearsalMode) {
+    recipients = rehearsalRecipients(requestedRehearsalEmails, recipients, params);
+  }
 
   let alreadySentEmails: Set<string>;
+  let suppressedEmails: Set<string>;
   try {
-    alreadySentEmails = testMode ? new Set<string>() : await sentEmailsToday(templateUsedKey, category);
+    alreadySentEmails = testMode || rehearsalMode ? new Set<string>() : await sentEmailsToday(templateUsedKey, category, subjectSource);
+    suppressedEmails = testMode ? new Set<string>() : await suppressedRecipientEmails(recipients.map((recipient) => recipient.email));
   } catch (error) {
-    throw new Error(`Sent-today lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Recipient safety lookup failed: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const deliverableRecipients = recipients.filter((recipient) => !alreadySentEmails.has(recipient.email));
+  const deliverableRecipients = recipients.filter((recipient) => !alreadySentEmails.has(recipient.email) && !suppressedEmails.has(recipient.email));
   let usedToday: number;
   try {
     usedToday = await sentCountToday();
@@ -948,7 +1093,7 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
     throw new Error(`Daily usage lookup failed: ${error instanceof Error ? error.message : String(error)}`);
   }
   const remainingToday = Math.max(0, DAILY_EMAIL_LIMIT - usedToday);
-  const batchSize = clampBatchSize(payload.batchSize || payload.batch_size);
+  const batchSize = rehearsalMode ? Math.min(REHEARSAL_BATCH_SIZE, clampBatchSize(payload.batchSize || payload.batch_size)) : clampBatchSize(payload.batchSize || payload.batch_size);
   const willSend = Math.min(deliverableRecipients.length, batchSize, remainingToday);
   const remainingAfterBatch = Math.max(0, deliverableRecipients.length - willSend);
 
@@ -970,9 +1115,16 @@ async function resolveAdminStudentCommunication(payload: JsonRecord) {
     bodySource,
     tags,
     testMode,
+    qaMode,
+    rehearsalMode,
+    rehearsalAllowlist: rehearsalAllowlist,
+    rehearsalOriginalAudienceCount: originalAudienceCount,
+    rehearsalOriginalAudiencePreview: originalAudiencePreview,
+    rehearsalRequestedEmails: requestedRehearsalEmails,
     templateKey: templateUsedKey,
     usedToday,
     alreadySentToday: alreadySentEmails.size,
+    suppressedRecipients: suppressedEmails.size,
     willSend,
   };
 }
@@ -991,40 +1143,50 @@ async function handleAdminStudentCommunicationPreview(payload: JsonRecord) {
       name: recipient.name,
       relatedType: recipient.relatedType,
     })),
+    rehearsalAllowlist: resolved.rehearsalAllowlist,
+    rehearsalOriginalAudienceCount: resolved.rehearsalOriginalAudienceCount,
+    rehearsalRequestedEmails: resolved.rehearsalRequestedEmails,
     recipients: resolved.recipients.length,
     remainingAfterBatch: resolved.remainingAfterBatch,
     remainingToday: resolved.remainingToday,
+    suppressedRecipients: resolved.suppressedRecipients,
     templateKey: resolved.templateKey,
     usedToday: resolved.usedToday,
     willSend: resolved.willSend,
   };
 }
 
-async function handleAdminStudentCommunication(payload: JsonRecord, actor: JsonRecord) {
-  const confirmed = payload.confirmed === true;
-  if (!confirmed) throw new Error('Review the recipient summary and confirm before sending.');
-  const resolved = await resolveAdminStudentCommunication(payload);
-  const recipients = resolved.deliverableRecipients.slice(0, resolved.willSend);
-  if (resolved.remainingToday <= 0) throw new Error('Daily email limit reached. Try again tomorrow.');
-  if (recipients.length === 0) throw new Error('No recipients are available for this batch.');
-
+async function deliverAdminEmailRecipients(options: {
+  actor: JsonRecord;
+  attemptKey: string;
+  bodySource: string;
+  category: string;
+  recipients: EmailRecipient[];
+  relatedAuditDetails?: JsonRecord;
+  remainingAfterBatch: number;
+  remainingToday: number;
+  subjectSource: string;
+  tags: string[];
+  templateKey: string;
+}) {
   const results: JsonRecord[] = [];
   let sent = 0;
   let failed = 0;
+  let queueRowsCreated = 0;
 
-  for (const recipient of recipients) {
-    const subject = fillVars(resolved.subjectSource, recipient.vars);
-    const renderedBody = fillVars(resolved.bodySource, recipient.vars, { html: looksLikeHtml(resolved.bodySource) });
+  for (const recipient of options.recipients) {
+    const subject = fillVars(options.subjectSource, recipient.vars);
+    const renderedBody = fillVars(options.bodySource, recipient.vars, { html: looksLikeHtml(options.bodySource) });
     const htmlContent = adminEmailBodyToHtml(renderedBody);
     const textContent = htmlToPlainText(htmlContent) || renderedBody;
     try {
-      const delivery = await sendBrevo(recipient.email, recipient.name, subject, htmlContent, textContent, resolved.tags);
+      const delivery = await sendBrevo(recipient.email, recipient.name, subject, htmlContent, textContent, options.tags);
       sent += 1;
       results.push({ email: recipient.email, status: 'sent', messageId: delivery.messageId || '' });
-      await logEmailQueue({
+      if (await logEmailQueue({
         email_key: crypto.randomUUID(),
-        template_key: resolved.templateKey,
-        category: resolved.category,
+        template_key: options.templateKey,
+        category: options.category,
         status: 'sent',
         provider: 'brevo',
         provider_message_id: delivery.messageId || null,
@@ -1032,80 +1194,196 @@ async function handleAdminStudentCommunication(payload: JsonRecord, actor: JsonR
         recipient_name: recipient.name,
         subject,
         params: recipient.vars,
-        tags: resolved.tags,
+        tags: options.tags,
         related_entity_type: recipient.relatedType,
         related_entity_id: recipient.relatedId,
         scheduled_at: new Date().toISOString(),
         sent_at: new Date().toISOString(),
         failure_message: null,
-        created_by: text(actor.email),
-      });
+        created_by: text(options.actor.email),
+      })) {
+        queueRowsCreated += 1;
+      }
     } catch (error) {
       failed += 1;
       const message = error instanceof Error ? error.message : String(error);
       results.push({ email: recipient.email, status: 'failed', error: message.slice(0, 500) });
-      await logEmailQueue({
+      if (await logEmailQueue({
         email_key: crypto.randomUUID(),
-        template_key: resolved.templateKey,
-        category: resolved.category,
+        template_key: options.templateKey,
+        category: options.category,
         status: 'failed',
         provider: 'brevo',
         recipient_email: recipient.email,
         recipient_name: recipient.name,
         subject,
         params: recipient.vars,
-        tags: resolved.tags,
+        tags: options.tags,
         related_entity_type: recipient.relatedType,
         related_entity_id: recipient.relatedId,
         scheduled_at: new Date().toISOString(),
         failure_message: message.slice(0, 500),
-        created_by: text(actor.email),
-      });
+        created_by: text(options.actor.email),
+      })) {
+        queueRowsCreated += 1;
+      }
     }
   }
 
   await admin.from('audit_logs').insert({
     action: 'admin_email_center_sent',
-    actor_email: text(actor.email),
+    actor_email: text(options.actor.email),
     actor_role: 'admin',
     details: {
-      alreadySentToday: resolved.alreadySentToday,
-      batchSize: resolved.batchSize,
-      category: resolved.category,
-      dailyLimit: resolved.dailyLimit,
+      attemptKey: options.attemptKey,
+      category: options.category,
       failed,
-      remainingAfterBatch: resolved.remainingAfterBatch,
-      remainingToday: resolved.remainingToday,
-      recipientFilters: resolved.recipientFilters,
-      recipients: resolved.recipients.length,
-      sendMode: resolved.sendMode,
+      queueRowsCreated,
+      remainingAfterBatch: options.remainingAfterBatch,
+      remainingToday: options.remainingToday,
       sent,
-      templateKey: resolved.templateKey,
-      usedToday: resolved.usedToday,
+      templateKey: options.templateKey,
+      ...(options.relatedAuditDetails || {}),
     },
-    entity_id: resolved.templateKey,
+    entity_id: options.templateKey,
     entity_type: 'email_center',
     status: failed > 0 ? 'partial' : 'success',
   });
 
-  return {
-    ok: failed === 0,
-    alreadySentToday: resolved.alreadySentToday,
-    batchSize: resolved.batchSize,
-    dailyLimit: resolved.dailyLimit,
-    deliverableRecipients: resolved.deliverableRecipients.length,
-    failed,
-    message: `Email sent to ${sent} recipient${sent === 1 ? '' : 's'}${failed ? `, ${failed} failed` : ''}.${resolved.remainingAfterBatch ? ` ${resolved.remainingAfterBatch} recipients remain for later batches.` : ''}`,
-    recipients: resolved.recipients.length,
-    remainingAfterBatch: Math.max(0, resolved.deliverableRecipients.length - sent - failed),
-    remainingToday: Math.max(0, resolved.remainingToday - sent),
-    results,
-    sent,
-    status: failed ? 'partial' : 'sent',
-    templateKey: resolved.templateKey,
-    usedToday: resolved.usedToday,
-    willSend: resolved.willSend,
-  };
+  return { failed, queueRowsCreated, results, sent };
+}
+
+async function handleAdminStudentCommunication(payload: JsonRecord, actor: JsonRecord) {
+  const confirmed = payload.confirmed === true;
+  if (!confirmed) throw new Error('Review the recipient summary and confirm before sending.');
+  const attemptKey = crypto.randomUUID();
+  await createEmailSendAuditLog({
+    action: 'sendAdminStudentCommunication',
+    actor_email: text(actor.email),
+    actor_user_id: text(actor.auth_user_id) || null,
+    attempt_key: attemptKey,
+    batch_size: Number(payload.batchSize || DEFAULT_BATCH_SIZE),
+    cohort_names: Array.isArray(payload.cohortNames) ? payload.cohortNames.map(text).filter(Boolean) : [],
+    metadata: {
+      confirmed,
+      qaMode: payload.qaMode === true || payload.qa_mode === true,
+      rehearsalMode: payload.rehearsalMode === true || payload.rehearsal_mode === true,
+      source: 'transactional-email',
+    },
+    provider: 'brevo',
+    original_payload: emailSendPayloadSnapshot(payload),
+    recipient_filters: asRecord(payload.recipientFilters),
+    send_mode: text(payload.sendMode, 'direct'),
+    status: 'started',
+    subject: text(payload.subject),
+    template_key: text(payload.templateKey),
+  });
+
+  try {
+    const resolved = await resolveAdminStudentCommunication(payload);
+    const recipients = resolved.deliverableRecipients.slice(0, resolved.willSend);
+    await updateEmailSendAuditLog(attemptKey, {
+      batch_size: resolved.batchSize,
+      body_snapshot: resolved.bodySource,
+      category: resolved.category,
+      cohort_names: Array.isArray(payload.cohortNames) ? payload.cohortNames.map(text).filter(Boolean) : [],
+      daily_limit: resolved.dailyLimit,
+      metadata: {
+        confirmed,
+        qaMode: resolved.qaMode,
+        rehearsalMode: resolved.rehearsalMode,
+        rehearsalOriginalAudienceCount: resolved.rehearsalOriginalAudienceCount,
+        rehearsalOriginalAudiencePreview: resolved.rehearsalOriginalAudiencePreview,
+        rehearsalRequestedEmails: resolved.rehearsalRequestedEmails,
+        source: 'transactional-email',
+      },
+      original_payload: emailSendPayloadSnapshot({ ...payload, body: resolved.bodySource, subject: resolved.subjectSource }),
+      recipient_filters: resolved.recipientFilters,
+      recipient_snapshot: emailRecipientSnapshot(recipients),
+      recipients: resolved.recipients.length,
+      remaining_after_batch: resolved.remainingAfterBatch,
+      remaining_today: resolved.remainingToday,
+      resolved_recipients: resolved.deliverableRecipients.length,
+      send_mode: resolved.sendMode,
+      subject: text(resolved.subjectSource),
+      subject_snapshot: resolved.subjectSource,
+      suppressed_recipients: resolved.suppressedRecipients,
+      template_key: resolved.templateKey,
+      used_today: resolved.usedToday,
+      will_send: resolved.willSend,
+    });
+
+    if (resolved.remainingToday <= 0) throw new Error('Daily email limit reached. Try again tomorrow.');
+    if (recipients.length === 0) throw new Error('No recipients are available for this batch.');
+
+    const { failed, queueRowsCreated, results, sent } = await deliverAdminEmailRecipients({
+      actor,
+      attemptKey,
+      bodySource: resolved.bodySource,
+      category: resolved.category,
+      recipients,
+      relatedAuditDetails: {
+        alreadySentToday: resolved.alreadySentToday,
+        batchSize: resolved.batchSize,
+        dailyLimit: resolved.dailyLimit,
+        recipientFilters: resolved.recipientFilters,
+        recipients: resolved.recipients.length,
+        rehearsalMode: resolved.rehearsalMode,
+        rehearsalOriginalAudienceCount: resolved.rehearsalOriginalAudienceCount,
+        rehearsalOriginalAudiencePreview: resolved.rehearsalOriginalAudiencePreview,
+        rehearsalRequestedEmails: resolved.rehearsalRequestedEmails,
+        sendMode: resolved.sendMode,
+        suppressedRecipients: resolved.suppressedRecipients,
+        usedToday: resolved.usedToday,
+      },
+      remainingAfterBatch: resolved.remainingAfterBatch,
+      remainingToday: resolved.remainingToday,
+      subjectSource: resolved.subjectSource,
+      tags: resolved.tags,
+      templateKey: resolved.templateKey,
+    });
+
+    const response = {
+      ok: failed === 0,
+      alreadySentToday: resolved.alreadySentToday,
+      batchSize: resolved.batchSize,
+      dailyLimit: resolved.dailyLimit,
+      deliverableRecipients: resolved.deliverableRecipients.length,
+      failed,
+      message: `Email sent to ${sent} recipient${sent === 1 ? '' : 's'}${failed ? `, ${failed} failed` : ''}.${resolved.remainingAfterBatch ? ` ${resolved.remainingAfterBatch} recipients remain for later batches.` : ''}`,
+      recipients: resolved.recipients.length,
+      remainingAfterBatch: Math.max(0, resolved.deliverableRecipients.length - sent - failed),
+      remainingToday: Math.max(0, resolved.remainingToday - sent),
+      results,
+      sent,
+      status: failed ? 'partial' : 'sent',
+      suppressedRecipients: resolved.suppressedRecipients,
+      templateKey: resolved.templateKey,
+      usedToday: resolved.usedToday,
+      willSend: resolved.willSend,
+    };
+
+    await updateEmailSendAuditLog(attemptKey, {
+      completed_at: new Date().toISOString(),
+      failed,
+      queue_rows_created: queueRowsCreated,
+      remaining_after_batch: response.remainingAfterBatch,
+      remaining_today: response.remainingToday,
+      results,
+      sent,
+      status: failed ? 'partial' : 'sent',
+    });
+
+    return response;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await updateEmailSendAuditLog(attemptKey, {
+      completed_at: new Date().toISOString(),
+      failure_message: message.slice(0, 1000),
+      status: 'failed',
+    });
+    throw error;
+  }
 }
 
 async function sendBrevo(toEmail: string, toName: string, subject: string, htmlContent: string, textContent: string, tags: string[]): Promise<JsonRecord> {
@@ -1135,9 +1413,188 @@ async function sendBrevo(toEmail: string, toName: string, subject: string, htmlC
 
 async function logEmailQueue(payload: JsonRecord) {
   try {
-    await admin.from('email_queue').insert(payload);
-  } catch (_err) {
-    // Email delivery should not fail only because queue logging has a stricter schema.
+    const { error } = await admin.from('email_queue').insert(payload);
+    if (error) {
+      console.warn('Email queue insert failed', error.message);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.warn('Email queue insert failed', error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+async function createEmailSendAuditLog(payload: JsonRecord) {
+  try {
+    const { error } = await admin.from('email_send_audit_logs').insert(payload);
+    if (error) console.warn('Email send audit insert failed', error.message);
+  } catch (error) {
+    console.warn('Email send audit insert failed', error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function updateEmailSendAuditLog(attemptKey: string, payload: JsonRecord) {
+  if (!attemptKey) return;
+  try {
+    const { error } = await admin
+      .from('email_send_audit_logs')
+      .update(payload)
+      .eq('attempt_key', attemptKey);
+    if (error) console.warn('Email send audit update failed', error.message);
+  } catch (error) {
+    console.warn('Email send audit update failed', error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function handleRetryAdminStudentCommunicationFailedOnly(payload: JsonRecord, actor: JsonRecord) {
+  const confirmed = payload.confirmed === true;
+  if (!confirmed) throw new Error('Review the failed-recipient retry and confirm before sending.');
+  const originalAttemptKey = text(payload.originalAttemptKey || payload.original_attempt_key || payload.attemptKey || payload.attempt_key);
+  if (!originalAttemptKey) throw new Error('Original send attempt key is required.');
+
+  const { data: originalAttempt, error } = await admin
+    .from('email_send_audit_logs')
+    .select('*')
+    .eq('attempt_key', originalAttemptKey)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!originalAttempt) throw new Error('Original send attempt was not found.');
+
+  const bodySource = text(originalAttempt.body_snapshot);
+  const subjectSource = text(originalAttempt.subject_snapshot || originalAttempt.subject);
+  const recipientSnapshot = Array.isArray(originalAttempt.recipient_snapshot) ? originalAttempt.recipient_snapshot : [];
+  if (!bodySource || !subjectSource || recipientSnapshot.length === 0) {
+    throw new Error('This send attempt does not have retry-safe snapshots. Use as Draft instead.');
+  }
+
+  const failedEmails = new Set(
+    (Array.isArray(originalAttempt.results) ? originalAttempt.results : [])
+      .map(asRecord)
+      .filter((result) => text(result.status).toLowerCase() === 'failed')
+      .map((result) => normalizeEmail(result.email))
+      .filter(Boolean)
+  );
+  if (failedEmails.size === 0) throw new Error('No failed recipients are available to retry.');
+
+  let recipients = recipientSnapshot
+    .map(emailRecipientFromSnapshot)
+    .filter((recipient): recipient is EmailRecipient => Boolean(recipient) && failedEmails.has(recipient.email));
+  if (recipients.length === 0) throw new Error('Failed recipient snapshots could not be resolved.');
+
+  const category = text(originalAttempt.category, 'general');
+  const templateKey = text(originalAttempt.template_key, 'custom_blank');
+  const alreadySentEmails = await sentEmailsToday(templateKey, category, subjectSource);
+  const suppressedEmails = await suppressedRecipientEmails(recipients.map((recipient) => recipient.email));
+  recipients = recipients.filter((recipient) => !alreadySentEmails.has(recipient.email) && !suppressedEmails.has(recipient.email));
+
+  const usedToday = await sentCountToday();
+  const remainingToday = Math.max(0, DAILY_EMAIL_LIMIT - usedToday);
+  const batchSize = clampBatchSize(payload.batchSize || payload.batch_size || recipients.length);
+  const willSend = Math.min(recipients.length, batchSize, remainingToday);
+  const retryRecipients = recipients.slice(0, willSend);
+  const remainingAfterBatch = Math.max(0, recipients.length - willSend);
+
+  const attemptKey = crypto.randomUUID();
+  await createEmailSendAuditLog({
+    action: 'retryAdminStudentCommunicationFailedOnly',
+    actor_email: text(actor.email),
+    actor_user_id: text(actor.auth_user_id) || null,
+    attempt_key: attemptKey,
+    batch_size: batchSize,
+    body_snapshot: bodySource,
+    category,
+    cohort_names: Array.isArray(originalAttempt.cohort_names) ? originalAttempt.cohort_names.map(text).filter(Boolean) : [],
+    daily_limit: DAILY_EMAIL_LIMIT,
+    metadata: {
+      source: 'transactional-email',
+      retryMode: 'failed_only',
+    },
+    original_payload: {
+      originalAttemptKey,
+      retryMode: 'failed_only',
+    },
+    provider: 'brevo',
+    recipient_filters: asRecord(originalAttempt.recipient_filters),
+    recipient_snapshot: emailRecipientSnapshot(retryRecipients),
+    recipients: recipientSnapshot.length,
+    remaining_after_batch: remainingAfterBatch,
+    remaining_today: remainingToday,
+    resolved_recipients: recipients.length,
+    retry_of_attempt_key: originalAttemptKey,
+    send_mode: text(originalAttempt.send_mode, 'direct'),
+    status: 'started',
+    subject: subjectSource,
+    subject_snapshot: subjectSource,
+    suppressed_recipients: suppressedEmails.size,
+    template_key: templateKey,
+    used_today: usedToday,
+    will_send: willSend,
+  });
+
+  try {
+    if (remainingToday <= 0) throw new Error('Daily email limit reached. Try again tomorrow.');
+    if (retryRecipients.length === 0) throw new Error('No failed recipients are currently deliverable for retry.');
+
+    const tags = Array.from(new Set(['lms', 'email-center', category, 'retry', 'failed-only']));
+    const { failed, queueRowsCreated, results, sent } = await deliverAdminEmailRecipients({
+      actor,
+      attemptKey,
+      bodySource,
+      category,
+      recipients: retryRecipients,
+      relatedAuditDetails: {
+        originalAttemptKey,
+        retryMode: 'failed_only',
+        suppressedRecipients: suppressedEmails.size,
+        usedToday,
+      },
+      remainingAfterBatch,
+      remainingToday,
+      subjectSource,
+      tags,
+      templateKey,
+    });
+
+    const response = {
+      ok: failed === 0,
+      batchSize,
+      dailyLimit: DAILY_EMAIL_LIMIT,
+      failed,
+      message: `Retried ${retryRecipients.length} failed recipient${retryRecipients.length === 1 ? '' : 's'}. Sent ${sent}${failed ? `, ${failed} failed` : ''}.`,
+      originalAttemptKey,
+      recipients: recipientSnapshot.length,
+      remainingAfterBatch: Math.max(0, recipients.length - sent - failed),
+      remainingToday: Math.max(0, remainingToday - sent),
+      results,
+      sent,
+      status: failed ? 'partial' : 'sent',
+      suppressedRecipients: suppressedEmails.size,
+      templateKey,
+      usedToday,
+      willSend,
+    };
+
+    await updateEmailSendAuditLog(attemptKey, {
+      completed_at: new Date().toISOString(),
+      failed,
+      queue_rows_created: queueRowsCreated,
+      remaining_after_batch: response.remainingAfterBatch,
+      remaining_today: response.remainingToday,
+      results,
+      sent,
+      status: failed ? 'partial' : 'sent',
+    });
+
+    return response;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await updateEmailSendAuditLog(attemptKey, {
+      completed_at: new Date().toISOString(),
+      failure_message: message.slice(0, 1000),
+      status: 'failed',
+    });
+    throw error;
   }
 }
 
@@ -1439,6 +1896,11 @@ Deno.serve(async (req) => {
       const actor = await assertAdminCaller(req, 'admin.email.manage');
       await assertEmailServiceEnabled();
       return json(200, await handleAdminStudentCommunication(payload, actor));
+    }
+    if (action === 'retryAdminStudentCommunicationFailedOnly') {
+      const actor = await assertAdminCaller(req, 'admin.email.manage');
+      await assertEmailServiceEnabled();
+      return json(200, await handleRetryAdminStudentCommunicationFailedOnly(payload, actor));
     }
     if (action === 'processQueuedStudentEmail') {
       const actor = await assertAdminCaller(req, 'admin.students.invite');

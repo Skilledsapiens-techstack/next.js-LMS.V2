@@ -1,5 +1,5 @@
-import { Ban, BookOpen, Bold, Eye, Italic, Layers3, Link as LinkIcon, List, Pencil, Plus, RefreshCw, Save, Search, ShieldCheck, Underline, X } from 'lucide-react';
-import type { FormEvent, MouseEvent as ReactMouseEvent } from 'react';
+import { Ban, BookOpen, Bold, ChevronDown, ChevronUp, Eye, Italic, Layers3, Link as LinkIcon, List, Pencil, Plus, RefreshCw, Save, Search, ShieldCheck, Trash2, Underline, Video, X } from 'lucide-react';
+import type { FormEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { DataColumn, DataPanel } from '../components/DataPanel';
@@ -7,6 +7,16 @@ import { EmptyState, ErrorState, LoadingState } from '../components/ScreenStates
 import { PageHeader } from '../components/PageHeader';
 import { ProjectRichText } from '../components/ProjectRichText';
 import { StatusBadge } from '../components/StatusBadge';
+import {
+  AdminRecordingSection,
+  AdminRecordingSequenceRule,
+  useAdminRecordingResourceLinks,
+  useAdminRecordingResourceSummary,
+  useAdminRecordingSequenceRules
+} from '../features/admin/useAdminRecordingCandidates';
+import type { AdminWorkshop } from '../features/admin/useAdminWorkshops';
+import { useAdminWorkshops } from '../features/admin/useAdminWorkshops';
+import { AdminResource, useAdminResources } from '../features/admin/useAdminResources';
 import {
   AdminProgram,
   AdminProgramCtaButton,
@@ -24,6 +34,9 @@ import {
   useUpdateAdminProgram,
   useUpdateAdminProgramStatus
 } from '../features/admin/useAdminPrograms';
+import { loadSavedWorkshopTopicRecords, uniqueTitles } from '../lib/workshopTopics';
+import type { WorkshopTopicRecord } from '../lib/workshopTopics';
+import { useAdminProgramTemplates, useSaveAdminProgramTemplate } from '../features/admin/useAdminProgramTemplates';
 
 const statusOptions: Array<AdminProgramStatus | 'all'> = ['all', 'active', 'inactive'];
 
@@ -69,6 +82,42 @@ type PendingStatusChange = {
   program: AdminProgram;
 };
 
+type ProgramTemplateItem = {
+  id: string;
+  matchAliases?: string[];
+  resourceIds: string[];
+  topicTitle: string;
+};
+
+type ProgramTemplateResourceManager = {
+  recordingIds: string[];
+  resourceIds: string[];
+  title: string;
+};
+
+type ProgramTemplateChapter = {
+  id: string;
+  items: ProgramTemplateItem[];
+  title: string;
+};
+
+type ProgramTemplateFlow = {
+  chapters: ProgramTemplateChapter[];
+  programKey: string;
+  updatedAt?: string;
+};
+
+type ProgramAccordionKey = 'guidance' | 'records' | 'template';
+
+type ProgramAccordionSectionProps = {
+  activeSection: ProgramAccordionKey | null;
+  children: ReactNode;
+  eyebrow: string;
+  sectionKey: ProgramAccordionKey;
+  setActiveSection: (section: ProgramAccordionKey | null) => void;
+  title: string;
+};
+
 const programTemplates: ProgramTemplate[] = [
   { domainLabel: 'Consulting', name: 'Management Consulting Leadership Program', programKey: 'mclp', shortName: 'MCLP' },
   { domainLabel: 'Sales & Marketing', name: 'Sales & Marketing Leadership Program', programKey: 'smlp', shortName: 'SMLP' },
@@ -84,6 +133,168 @@ const programTemplates: ProgramTemplate[] = [
   { domainLabel: 'PEVC Projects', name: 'Live Projects - PEVC Track', programKey: 'live_pevc', shortName: 'PEVC Projects' },
   { domainLabel: 'Placement', name: 'Placement Mentorship Program', programKey: 'placement', shortName: 'Placement' }
 ];
+
+function ProgramAccordionSection({ activeSection, children, eyebrow, sectionKey, setActiveSection, title }: ProgramAccordionSectionProps) {
+  const isOpen = activeSection === sectionKey;
+  return (
+    <section className={isOpen ? 'program-accordion program-accordion--open' : 'program-accordion'}>
+      <button
+        aria-expanded={isOpen}
+        className="program-accordion__trigger"
+        onClick={() => setActiveSection(isOpen ? null : sectionKey)}
+        type="button"
+      >
+        <span>
+          <small>{eyebrow}</small>
+          <strong>{title}</strong>
+        </span>
+        {isOpen ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+      </button>
+      {isOpen ? <div className="program-accordion__body">{children}</div> : null}
+    </section>
+  );
+}
+
+const programTemplateBuilderStorageKey = 'admin-program-template-builder-v1';
+const programTemplateChapterLabels: Record<AdminRecordingSection, string> = {
+  core_modules: 'Core Modules',
+  induction_live_project: 'Induction & Live Project Overview',
+  other_workshops: 'Other Workshops',
+  placement_mentorship: 'Placement Mentorship'
+};
+const programTemplateChapterOrder: AdminRecordingSection[] = ['induction_live_project', 'core_modules', 'placement_mentorship', 'other_workshops'];
+
+function createTemplateId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function emptyProgramTemplateFlow(programKey: string): ProgramTemplateFlow {
+  return {
+    chapters: [
+      { id: createTemplateId('chapter'), items: [], title: 'Induction & Live Project Overview' },
+      { id: createTemplateId('chapter'), items: [], title: 'Core Modules' },
+      { id: createTemplateId('chapter'), items: [], title: 'Placement Mentorship' }
+    ],
+    programKey
+  };
+}
+
+function normalizeTemplateFlow(flow: ProgramTemplateFlow): ProgramTemplateFlow {
+  return {
+    chapters: flow.chapters.map((chapter) => ({
+      id: chapter.id || createTemplateId('chapter'),
+      items: chapter.items.map((item) => ({
+        id: item.id || createTemplateId('module'),
+        matchAliases: uniqueTitles(item.matchAliases ?? []).filter((title) => title.trim()),
+        resourceIds: uniqueTitles(item.resourceIds ?? []),
+        topicTitle: item.topicTitle ?? ''
+      })),
+      title: chapter.title || 'Untitled chapter'
+    })),
+    programKey: flow.programKey,
+    updatedAt: flow.updatedAt
+  };
+}
+
+function loadProgramTemplateFlows(): Record<string, ProgramTemplateFlow> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(programTemplateBuilderStorageKey) ?? '{}') as Record<string, ProgramTemplateFlow>;
+    return Object.fromEntries(Object.entries(parsed).map(([programKey, flow]) => [programKey, normalizeTemplateFlow({ ...flow, programKey })]));
+  } catch {
+    return {};
+  }
+}
+
+function saveProgramTemplateFlows(flows: Record<string, ProgramTemplateFlow>) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(programTemplateBuilderStorageKey, JSON.stringify(flows));
+}
+
+function normalizeTopicLookupKey(title: string) {
+  return title.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function topicKeysMatch(left: string, right: string) {
+  const leftKey = normalizeTopicLookupKey(left);
+  const rightKey = normalizeTopicLookupKey(right);
+  if (!leftKey || !rightKey) return false;
+  return leftKey === rightKey || leftKey.includes(rightKey) || rightKey.includes(leftKey);
+}
+
+function topicResourceIds(topicRecords: WorkshopTopicRecord[], title: string) {
+  const key = normalizeTopicLookupKey(title);
+  if (!key) return [];
+  return uniqueTitles(topicRecords.filter((topic) => topicKeysMatch(topic.title, title)).flatMap((topic) => topic.resourceIds ?? []));
+}
+
+function moduleMatchTitles(item: ProgramTemplateItem) {
+  return uniqueTitles([item.topicTitle, ...(item.matchAliases ?? [])].map((title) => title.trim()).filter(Boolean));
+}
+
+function moduleResourceIds(item: ProgramTemplateItem, topicRecords: WorkshopTopicRecord[]) {
+  return uniqueTitles([...(item.resourceIds ?? []), ...moduleMatchTitles(item).flatMap((title) => topicResourceIds(topicRecords, title))]);
+}
+
+function resourceCountForTopicTitle(title: string, resourceCountByTopicKey: Map<string, number>) {
+  let count = 0;
+  resourceCountByTopicKey.forEach((resourceCount, topicKey) => {
+    if (topicKeysMatch(title, topicKey)) {
+      count = Math.max(count, resourceCount);
+    }
+  });
+  return count;
+}
+
+function moduleResourceCount(item: ProgramTemplateItem, topicRecords: WorkshopTopicRecord[], resourceCountByTopicKey: Map<string, number>) {
+  return Math.max(moduleResourceIds(item, topicRecords).length, ...moduleMatchTitles(item).map((title) => resourceCountForTopicTitle(title, resourceCountByTopicKey)), 0);
+}
+
+function resourceSummary(resource: AdminResource) {
+  return [resource.resourceMode, resource.resourceType, resource.programKeys?.slice(0, 2).join(', '), resource.cohortNames?.slice(0, 2).join(', ')]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function buildFlowFromSequenceRules(programKey: string, rules: AdminRecordingSequenceRule[], topicRecords: WorkshopTopicRecord[]) {
+  const normalizedProgramKey = programKey.trim().toLowerCase();
+  const relevantRules = rules
+    .filter((rule) => rule.status === 'active' && rule.programKey.trim().toLowerCase() === normalizedProgramKey)
+    .sort((first, second) => {
+      const firstSectionIndex = programTemplateChapterOrder.indexOf(first.recordingSection);
+      const secondSectionIndex = programTemplateChapterOrder.indexOf(second.recordingSection);
+      if (firstSectionIndex !== secondSectionIndex) return firstSectionIndex - secondSectionIndex;
+      if (first.sequenceNumber !== second.sequenceNumber) return first.sequenceNumber - second.sequenceNumber;
+      return first.title.localeCompare(second.title);
+    });
+
+  const chapters = new Map<AdminRecordingSection, ProgramTemplateItem[]>();
+  relevantRules.forEach((rule) => {
+    const section = rule.recordingSection ?? 'other_workshops';
+    const matchAliases = uniqueTitles(rule.matchAliases ?? []).filter((title) => title.trim() && !topicKeysMatch(title, rule.title));
+    chapters.set(section, [
+      ...(chapters.get(section) ?? []),
+      {
+        id: rule.id,
+        matchAliases,
+        resourceIds: uniqueTitles([rule.title, ...matchAliases].flatMap((title) => topicResourceIds(topicRecords, title))),
+        topicTitle: rule.title
+      }
+    ]);
+  });
+
+  return {
+    chapters: programTemplateChapterOrder
+      .map((section) => ({
+        id: `${normalizedProgramKey}-${section}`,
+        items: chapters.get(section) ?? [],
+        title: programTemplateChapterLabels[section]
+      }))
+      .filter((chapter) => chapter.items.length > 0 || chapter.title !== 'Other Workshops'),
+    programKey,
+    updatedAt: new Date().toISOString()
+  } satisfies ProgramTemplateFlow;
+}
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);
@@ -985,6 +1196,639 @@ function ProgramGuidanceSection({ onNotice }: { onNotice: (message: string) => v
   );
 }
 
+function ProgramTemplateBuilder({ programs, onNotice }: { onNotice: (message: string) => void; programs: AdminProgram[] }) {
+  const activePrograms = useMemo(() => programs.filter((program) => program.status === 'active'), [programs]);
+  const selectablePrograms = activePrograms.length > 0 ? activePrograms : programs;
+  const [selectedProgramKey, setSelectedProgramKey] = useState(() => selectablePrograms[0]?.programKey ?? '');
+  const [topicRecords, setTopicRecords] = useState<WorkshopTopicRecord[]>(() => loadSavedWorkshopTopicRecords());
+  const [flows, setFlows] = useState<Record<string, ProgramTemplateFlow>>(() => loadProgramTemplateFlows());
+  const [resourceManager, setResourceManager] = useState<ProgramTemplateResourceManager | null>(null);
+  const templatesQuery = useAdminProgramTemplates({ limit: 500, page: 1, status: 'all' });
+  const saveProgramTemplateMutation = useSaveAdminProgramTemplate();
+  const sequenceRulesQuery = useAdminRecordingSequenceRules({ limit: 1000, page: 1, status: 'active' });
+  const workshopsQuery = useAdminWorkshops({ limit: 500, page: 1, status: 'all' });
+  const selectedProgram = selectablePrograms.find((program) => program.programKey === selectedProgramKey) ?? selectablePrograms[0];
+  const resourcesQuery = useAdminResources({ limit: 500, page: 1, status: 'active' });
+  const resourceManagerLinksQuery = useAdminRecordingResourceLinks(resourceManager?.recordingIds[0]);
+  const resources = resourcesQuery.data?.items ?? [];
+  const activeSequenceRules = sequenceRulesQuery.data?.items ?? [];
+  const selectedSequenceFlow = useMemo(
+    () => (selectedProgram ? buildFlowFromSequenceRules(selectedProgram.programKey, activeSequenceRules, topicRecords) : null),
+    [activeSequenceRules, selectedProgram, topicRecords]
+  );
+  const savedTemplateKeys = useMemo(() => new Set((templatesQuery.data?.items ?? []).map((template) => template.programKey)), [templatesQuery.data?.items]);
+  const hasSavedTemplate = Boolean(selectedProgram && (savedTemplateKeys.has(selectedProgram.programKey) || flows[selectedProgram.programKey]));
+  const selectedFlow = selectedProgram ? flows[selectedProgram.programKey] ?? selectedSequenceFlow ?? emptyProgramTemplateFlow(selectedProgram.programKey) : null;
+  const selectedSequenceRuleCount = selectedSequenceFlow?.chapters.reduce((count, chapter) => count + chapter.items.length, 0) ?? 0;
+  const templateSource = hasSavedTemplate ? 'Saved template' : selectedSequenceRuleCount > 0 ? 'Current sequence' : 'Empty setup';
+  const topicTitles = useMemo(
+    () => uniqueTitles([...(topicRecords.map((topic) => topic.title)), ...((selectedSequenceFlow?.chapters ?? []).flatMap((chapter) => chapter.items.map((item) => item.topicTitle)))]).sort((first, second) => first.localeCompare(second)),
+    [selectedSequenceFlow, topicRecords]
+  );
+  const workshopTitleOptions = useMemo(
+    () => uniqueTitles([...(workshopsQuery.data?.items ?? []).map((workshop) => workshop.title), ...topicTitles].filter((title) => title.trim())).sort((first, second) => first.localeCompare(second)),
+    [topicTitles, workshopsQuery.data?.items]
+  );
+  const completedWorkshopsByTopic = useMemo(() => {
+    const map = new Map<string, AdminWorkshop[]>();
+    (workshopsQuery.data?.items ?? [])
+      .filter((item) => item.status === 'Completed' && item.sessionType !== 'doubt_session')
+      .forEach((item) => {
+        const key = normalizeTopicLookupKey(item.title);
+        if (!key) return;
+        const rows = map.get(key) ?? [];
+        rows.push(item);
+        map.set(key, rows);
+      });
+    return map;
+  }, [workshopsQuery.data?.items]);
+  const templateRecordingIds = useMemo(() => {
+    const topicTitlesForTemplate = (selectedFlow?.chapters ?? []).flatMap((chapter) => chapter.items.flatMap(moduleMatchTitles));
+    const ids = new Set<string>();
+    completedWorkshopsByTopic.forEach((items, completedTopicKey) => {
+      if (topicTitlesForTemplate.some((topicTitle) => topicKeysMatch(topicTitle, completedTopicKey))) {
+        items.forEach((item) => ids.add(item.id));
+      }
+    });
+    return Array.from(ids);
+  }, [completedWorkshopsByTopic, selectedFlow]);
+  const resourceSummaryQuery = useAdminRecordingResourceSummary(templateRecordingIds);
+  const recordingResourceCountById = useMemo(() => {
+    const map = new Map<string, number>();
+    resourceSummaryQuery.data?.items.forEach((item) => map.set(item.recordingId, item.resourceCount));
+    return map;
+  }, [resourceSummaryQuery.data?.items]);
+  const resourceCountByTopicKey = useMemo(() => {
+    const map = new Map<string, number>();
+    completedWorkshopsByTopic.forEach((items, key) => {
+      const counts = items.map((item) => recordingResourceCountById.get(item.id) ?? 0);
+      map.set(key, Math.max(0, ...counts));
+    });
+    return map;
+  }, [completedWorkshopsByTopic, recordingResourceCountById]);
+  const metrics = useMemo(() => {
+    const chapters = selectedFlow?.chapters ?? [];
+    const modules = chapters.reduce((count, chapter) => count + chapter.items.length, 0);
+    const resources = chapters.reduce(
+      (count, chapter) =>
+        count +
+        chapter.items.reduce(
+          (resourceCount, item) => resourceCount + moduleResourceCount(item, topicRecords, resourceCountByTopicKey),
+          0
+      ),
+      0
+    );
+    return { chapters: chapters.length, modules, resources };
+  }, [resourceCountByTopicKey, selectedFlow, topicRecords]);
+
+  useEffect(() => {
+    if (selectedProgramKey || selectablePrograms.length === 0) return;
+    setSelectedProgramKey(selectablePrograms[0].programKey);
+  }, [selectablePrograms, selectedProgramKey]);
+
+  useEffect(() => {
+    const templates = templatesQuery.data?.items;
+    if (!templates) return;
+    setFlows((current) => {
+      const nextFlows = { ...current };
+      templates.forEach((template) => {
+        nextFlows[template.programKey] = normalizeTemplateFlow({
+          chapters: template.chapters ?? [],
+          programKey: template.programKey,
+          updatedAt: template.updatedAt
+        });
+      });
+      saveProgramTemplateFlows(nextFlows);
+      return nextFlows;
+    });
+  }, [templatesQuery.data?.items]);
+
+  function updateSelectedFlow(updater: (flow: ProgramTemplateFlow) => ProgramTemplateFlow) {
+    if (!selectedProgram) return;
+    setFlows((current) => {
+      const currentFlow = current[selectedProgram.programKey] ?? selectedSequenceFlow ?? emptyProgramTemplateFlow(selectedProgram.programKey);
+      return {
+        ...current,
+        [selectedProgram.programKey]: updater(currentFlow)
+      };
+    });
+  }
+
+  function moveChapter(chapterId: string, direction: -1 | 1) {
+    updateSelectedFlow((flow) => {
+      const index = flow.chapters.findIndex((chapter) => chapter.id === chapterId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= flow.chapters.length) return flow;
+      const chapters = [...flow.chapters];
+      const [chapter] = chapters.splice(index, 1);
+      chapters.splice(nextIndex, 0, chapter);
+      return { ...flow, chapters };
+    });
+  }
+
+  function moveModule(chapterId: string, itemId: string, direction: -1 | 1) {
+    updateSelectedFlow((flow) => ({
+      ...flow,
+      chapters: flow.chapters.map((chapter) => {
+        if (chapter.id !== chapterId) return chapter;
+        const index = chapter.items.findIndex((item) => item.id === itemId);
+        const nextIndex = index + direction;
+        if (index < 0 || nextIndex < 0 || nextIndex >= chapter.items.length) return chapter;
+        const items = [...chapter.items];
+        const [item] = items.splice(index, 1);
+        items.splice(nextIndex, 0, item);
+        return { ...chapter, items };
+      })
+    }));
+  }
+
+  function removeModule(chapterId: string, itemId: string) {
+    updateSelectedFlow((flow) => ({
+      ...flow,
+      chapters: flow.chapters.map((chapter) =>
+        chapter.id === chapterId
+          ? {
+              ...chapter,
+              items: chapter.items.filter((item) => item.id !== itemId)
+            }
+          : chapter
+      )
+    }));
+  }
+
+  function updateModuleTitle(chapterId: string, itemId: string, topicTitle: string) {
+    updateSelectedFlow((flow) => ({
+      ...flow,
+      chapters: flow.chapters.map((chapter) =>
+        chapter.id === chapterId
+          ? {
+              ...chapter,
+              items: chapter.items.map((item) =>
+                item.id === itemId
+                  ? {
+                      ...item,
+                      matchAliases: uniqueTitles(item.matchAliases ?? []).filter((title) => !topicKeysMatch(title, topicTitle)),
+                      resourceIds: uniqueTitles(topicResourceIds(topicRecords, topicTitle)),
+                      topicTitle
+                    }
+                  : item
+              )
+            }
+          : chapter
+      )
+    }));
+  }
+
+  function addModuleMatchAlias(chapterId: string, itemId: string, title: string) {
+    const cleanTitle = title.trim();
+    if (!cleanTitle) return;
+    updateSelectedFlow((flow) => ({
+      ...flow,
+      chapters: flow.chapters.map((chapter) =>
+        chapter.id === chapterId
+          ? {
+              ...chapter,
+              items: chapter.items.map((item) => {
+                if (item.id !== itemId) return item;
+                if (topicKeysMatch(item.topicTitle, cleanTitle) || moduleMatchTitles(item).some((candidate) => topicKeysMatch(candidate, cleanTitle))) return item;
+                return {
+                  ...item,
+                  matchAliases: uniqueTitles([...(item.matchAliases ?? []), cleanTitle]),
+                  resourceIds: uniqueTitles([...moduleResourceIds(item, topicRecords), ...topicResourceIds(topicRecords, cleanTitle)])
+                };
+              })
+            }
+          : chapter
+      )
+    }));
+  }
+
+  function removeModuleMatchAlias(chapterId: string, itemId: string, title: string) {
+    updateSelectedFlow((flow) => ({
+      ...flow,
+      chapters: flow.chapters.map((chapter) =>
+        chapter.id === chapterId
+          ? {
+              ...chapter,
+              items: chapter.items.map((item) =>
+                item.id === itemId
+                  ? {
+                      ...item,
+                      matchAliases: uniqueTitles(item.matchAliases ?? []).filter((candidate) => !topicKeysMatch(candidate, title))
+                    }
+                  : item
+              )
+            }
+          : chapter
+      )
+    }));
+  }
+
+  function matchingCompletedRecordingIds(title: string) {
+    const ids = new Set<string>();
+    completedWorkshopsByTopic.forEach((items, topicKey) => {
+      if (!topicKeysMatch(title, topicKey)) return;
+      items.forEach((item) => ids.add(item.id));
+    });
+    return Array.from(ids);
+  }
+
+  function syncProgramResources() {
+    updateSelectedFlow((flow) => ({
+      ...flow,
+      chapters: flow.chapters.map((chapter) => ({
+        ...chapter,
+        items: chapter.items.map((item) => ({
+          ...item,
+          resourceIds: uniqueTitles(moduleMatchTitles(item).flatMap((title) => topicResourceIds(topicRecords, title)))
+        }))
+      }))
+    }));
+    onNotice('Tagged resources refreshed for this program template.');
+  }
+
+  function openResourceManager(item: ProgramTemplateItem) {
+    const title = item.topicTitle.trim();
+    setResourceManager({
+      resourceIds: moduleResourceIds(item, topicRecords),
+      recordingIds: uniqueTitles(moduleMatchTitles(item).flatMap(matchingCompletedRecordingIds)),
+      title: title || 'Untitled module'
+    });
+  }
+
+  function closeResourceManager() {
+    setResourceManager(null);
+  }
+
+  function materializeTemplateFlow(flow: ProgramTemplateFlow): ProgramTemplateFlow {
+    return normalizeTemplateFlow({
+      ...flow,
+      chapters: flow.chapters.map((chapter) => ({
+        ...chapter,
+        items: chapter.items
+          .filter((item) => item.topicTitle.trim())
+          .map((item) => ({
+            ...item,
+            matchAliases: uniqueTitles(item.matchAliases ?? []).filter((title) => title.trim() && !topicKeysMatch(title, item.topicTitle)),
+            resourceIds: uniqueTitles([...(item.resourceIds ?? []), ...moduleMatchTitles(item).flatMap((title) => topicResourceIds(topicRecords, title))])
+          }))
+      })),
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  async function persistTemplateFlow(flow: ProgramTemplateFlow, source: 'admin_template' | 'sequence_manager', notice: string) {
+    if (!selectedProgram) return;
+    const nextFlow = materializeTemplateFlow(flow);
+    try {
+      const savedTemplate = await saveProgramTemplateMutation.mutateAsync({
+        chapters: nextFlow.chapters,
+        programKey: nextFlow.programKey,
+        source,
+        status: 'draft'
+      });
+      const savedFlow = normalizeTemplateFlow({
+        chapters: savedTemplate.chapters ?? nextFlow.chapters,
+        programKey: savedTemplate.programKey,
+        updatedAt: savedTemplate.updatedAt ?? nextFlow.updatedAt
+      });
+      const nextFlows = {
+        ...flows,
+        [selectedProgram.programKey]: savedFlow
+      };
+      setFlows(nextFlows);
+      saveProgramTemplateFlows(nextFlows);
+      onNotice(notice);
+    } catch {
+      onNotice('Program template could not be saved. Please try again.');
+    }
+  }
+
+  function saveTemplate() {
+    if (!selectedFlow || !selectedProgram) return;
+    void persistTemplateFlow(selectedFlow, 'admin_template', `${selectedProgram.name} template saved.`);
+  }
+
+  function syncCurrentSequenceTemplate() {
+    if (!selectedProgram || !selectedSequenceFlow) return;
+    setFlows((current) => ({
+      ...current,
+      [selectedProgram.programKey]: selectedSequenceFlow
+    }));
+    void persistTemplateFlow(selectedSequenceFlow, 'sequence_manager', `${selectedProgram.name} template synced from current sequence rules.`);
+  }
+
+  function refreshTopics() {
+    setTopicRecords(loadSavedWorkshopTopicRecords());
+    onNotice('Meeting topics refreshed for the template builder.');
+  }
+
+  function renderResourceManager() {
+    if (!resourceManager) return null;
+    const linkedResourceIds = resourceManager.resourceIds.length > 0 ? resourceManager.resourceIds : resourceManagerLinksQuery.data?.resourceIds ?? [];
+    const linkedResourceSet = new Set(linkedResourceIds);
+    const isLoading = resourcesQuery.isLoading || (resourceManager.resourceIds.length === 0 && resourceManagerLinksQuery.isLoading);
+    const linkedResources = resources
+      .filter((resource) => linkedResourceSet.has(resource.id))
+      .sort((left, right) => linkedResourceIds.indexOf(left.id) - linkedResourceIds.indexOf(right.id));
+
+    return (
+      <div className="admin-recording-resource-modal" role="dialog" aria-modal="true" aria-label="View module resources">
+        <div className="admin-recording-resource-modal__panel">
+          <div className="admin-recording-resource-modal__header">
+            <div>
+              <span className="section-eyebrow">RELATED RESOURCES</span>
+              <h2>{resourceManager.title}</h2>
+              {resourceManager.recordingIds.length > 0 ? (
+                <p>
+                  Linked Resource Library items from this topic. This matches {resourceManager.recordingIds.length} completed recording{resourceManager.recordingIds.length === 1 ? '' : 's'} with this title.
+                </p>
+              ) : (
+                <p>Linked Resource Library items saved for this topic. Matching completed recordings can use this setup once they are published.</p>
+              )}
+            </div>
+            <button className="admin-recording-action" onClick={closeResourceManager} type="button">
+              Close
+            </button>
+          </div>
+          {resourcesQuery.isError || resourceManagerLinksQuery.isError ? <div className="workshop-error-note">Related resources could not be loaded right now.</div> : null}
+          {isLoading ? (
+            <LoadingState />
+          ) : (
+            <div className="admin-recording-resource-picker">
+              {linkedResources.length > 0 ? (
+                linkedResources.map((resource) => (
+                  <label className="admin-recording-resource-option" key={resource.id}>
+                    <input checked readOnly disabled type="checkbox" />
+                    <span>
+                      <strong>{resource.title}</strong>
+                      <small>{resourceSummary(resource) || 'Resource Library item'}</small>
+                    </span>
+                    {resource.url ? (
+                      <a href={resource.url} onClick={(event) => event.stopPropagation()} rel="noreferrer" target="_blank">
+                        Preview
+                      </a>
+                    ) : null}
+                  </label>
+                ))
+              ) : (
+                <p className="admin-recording-resource-empty">No related resources are linked for this module.</p>
+              )}
+            </div>
+          )}
+          <div className="admin-recording-resource-modal__actions">
+            <span>{linkedResourceIds.length} linked resource{linkedResourceIds.length === 1 ? '' : 's'}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (programs.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="program-template-builder">
+      <header className="program-template-builder__header">
+        <div>
+          <span className="program-modal-eyebrow">Template setup</span>
+          <h2>Program Template Builder</h2>
+          <p>Create a reusable chapter and module flow for each program. Phase 2 mirrors current Sequence Manager data here without changing student visibility.</p>
+        </div>
+        <div className="program-template-builder__actions">
+          <button className="segmented-button" onClick={refreshTopics} type="button">
+            <RefreshCw size={15} />
+            Refresh topics
+          </button>
+          <button className="segmented-button" onClick={syncProgramResources} type="button">
+            <RefreshCw size={15} />
+            Refresh tagged resources
+          </button>
+          <button className="segmented-button segmented-button--gold" disabled={saveProgramTemplateMutation.isPending} onClick={saveTemplate} type="button">
+            <Save size={15} />
+            {saveProgramTemplateMutation.isPending ? 'Saving...' : 'Save template'}
+          </button>
+        </div>
+      </header>
+
+      {templatesQuery.isError ? <div className="workshop-error-note">Saved program templates could not be loaded. Current sequence mapping is still available.</div> : null}
+
+      <div className="program-template-toolbar">
+        <label>
+          <span>Program</span>
+          <select value={selectedProgram?.programKey ?? ''} onChange={(event) => setSelectedProgramKey(event.target.value)}>
+            {selectablePrograms.map((program) => (
+              <option key={program.id} value={program.programKey}>
+                {program.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="program-template-toolbar__stats" aria-label="Selected program template summary">
+          <StatusBadge>{`${metrics.chapters} chapters`}</StatusBadge>
+          <StatusBadge>{`${metrics.modules} modules`}</StatusBadge>
+          <StatusBadge>{`${metrics.resources} resources`}</StatusBadge>
+          <StatusBadge>{templateSource}</StatusBadge>
+        </div>
+        <button
+          className="segmented-button"
+          disabled={!selectedProgram || sequenceRulesQuery.isLoading || saveProgramTemplateMutation.isPending || selectedSequenceRuleCount === 0}
+          onClick={syncCurrentSequenceTemplate}
+          type="button"
+        >
+          <List size={15} />
+          {sequenceRulesQuery.isLoading ? 'Loading sequence...' : `Use current sequence (${selectedSequenceRuleCount})`}
+        </button>
+      </div>
+
+      {selectedFlow ? (
+        <div className="program-template-chapters">
+          {selectedFlow.chapters.map((chapter, chapterIndex) => (
+            <article className="program-template-chapter" key={chapter.id}>
+              <header className="program-template-chapter__header">
+                <label>
+                  <span>Chapter {chapterIndex + 1}</span>
+                  <input
+                    value={chapter.title}
+                    onChange={(event) =>
+                      updateSelectedFlow((flow) => ({
+                        ...flow,
+                        chapters: flow.chapters.map((candidate) => (candidate.id === chapter.id ? { ...candidate, title: event.target.value } : candidate))
+                      }))
+                    }
+                  />
+                </label>
+                <div className="program-template-chapter__actions">
+                  <button className="icon-button" disabled={chapterIndex === 0} onClick={() => moveChapter(chapter.id, -1)} title="Move chapter up" type="button">
+                    <ChevronUp size={16} />
+                  </button>
+                  <button className="icon-button" disabled={chapterIndex === selectedFlow.chapters.length - 1} onClick={() => moveChapter(chapter.id, 1)} title="Move chapter down" type="button">
+                    <ChevronDown size={16} />
+                  </button>
+                  <button
+                    className="segmented-button"
+                    onClick={() =>
+                      updateSelectedFlow((flow) => ({
+                        ...flow,
+                        chapters: flow.chapters.map((candidate) =>
+                          candidate.id === chapter.id
+                            ? {
+                                ...candidate,
+                                items: [
+                                  ...candidate.items,
+                                  {
+                                    id: createTemplateId('module'),
+                                    resourceIds: [],
+                                    topicTitle: ''
+                                  }
+                                ]
+                              }
+                            : candidate
+                        )
+                      }))
+                    }
+                    type="button"
+                  >
+                    <Plus size={15} />
+                    Module
+                  </button>
+                  <button
+                    className="icon-button icon-button--danger"
+                    disabled={selectedFlow.chapters.length <= 1}
+                    onClick={() =>
+                      updateSelectedFlow((flow) => ({
+                        ...flow,
+                        chapters: flow.chapters.filter((candidate) => candidate.id !== chapter.id)
+                      }))
+                    }
+                    title="Remove chapter"
+                    type="button"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </header>
+
+              <div className="program-template-module-list">
+                {chapter.items.length === 0 ? (
+                  <div className="program-template-empty">No modules added yet.</div>
+                ) : (
+                  chapter.items.map((item, itemIndex) => {
+                    const linkedResourceCount = moduleResourceCount(item, topicRecords, resourceCountByTopicKey);
+                    const matchTitles = moduleMatchTitles(item);
+                    const aliasOptions = workshopTitleOptions.filter((title) => !matchTitles.some((candidate) => topicKeysMatch(candidate, title)));
+                    return (
+                      <div className="program-template-module-row" key={item.id || `${chapter.id}-${itemIndex}-${item.topicTitle}`}>
+                        <Video size={16} />
+                        <div className="program-template-row-reorder" aria-label={`Move ${item.topicTitle || 'module'}`}>
+                          <button className="icon-button" disabled={itemIndex === 0} onClick={() => moveModule(chapter.id, item.id, -1)} title="Move module up" type="button">
+                            <ChevronUp size={15} />
+                          </button>
+                          <button className="icon-button" disabled={itemIndex === chapter.items.length - 1} onClick={() => moveModule(chapter.id, item.id, 1)} title="Move module down" type="button">
+                            <ChevronDown size={15} />
+                          </button>
+                        </div>
+                        <div className="program-template-module-row__title">
+                          {item.topicTitle.trim() ? (
+                            <strong>{item.topicTitle}</strong>
+                          ) : (
+                            <select
+                              aria-label="Select workshop title"
+                              className="program-template-module-select"
+                              disabled={workshopTitleOptions.length === 0}
+                              onChange={(event) => updateModuleTitle(chapter.id, item.id, event.target.value)}
+                              value=""
+                            >
+                              <option value="">Select workshop title</option>
+                              {workshopTitleOptions.map((title) => (
+                                <option key={title} value={title}>
+                                  {title}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          <span>{linkedResourceCount > 0 ? `${linkedResourceCount} linked resource${linkedResourceCount === 1 ? '' : 's'}` : 'No resources linked'}</span>
+                          {item.topicTitle.trim() ? (
+                            <div className="program-template-match-options">
+                              <div className="program-template-match-options__chips" aria-label="Workshop title match options">
+                                <span className="program-template-match-chip">Option 1: {item.topicTitle}</span>
+                                {(item.matchAliases ?? []).map((title, aliasIndex) => (
+                                  <span className="program-template-match-chip" key={title}>
+                                    Option {aliasIndex + 2}: {title}
+                                    <button onClick={() => removeModuleMatchAlias(chapter.id, item.id, title)} title={`Remove ${title}`} type="button">
+                                      <X size={12} />
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                              <select
+                                aria-label={`Add match option for ${item.topicTitle}`}
+                                className="program-template-module-select"
+                                disabled={aliasOptions.length === 0}
+                                onChange={(event) => {
+                                  addModuleMatchAlias(chapter.id, item.id, event.target.value);
+                                  event.currentTarget.value = '';
+                                }}
+                                value=""
+                              >
+                                <option value="">Add match option</option>
+                                {aliasOptions.map((title) => (
+                                  <option key={title} value={title}>
+                                    {title}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ) : null}
+                        </div>
+                        <span className="program-template-count">{`${linkedResourceCount} Resources`}</span>
+                        <button
+                          className="segmented-button"
+                          disabled={!item.topicTitle.trim()}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openResourceManager(item);
+                          }}
+                          type="button"
+                        >
+                          <BookOpen size={14} />
+                          Resources
+                        </button>
+                        <button className="icon-button icon-button--danger" onClick={() => removeModule(chapter.id, item.id)} title="Remove module" type="button">
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </article>
+          ))}
+          <button
+            className="segmented-button"
+            onClick={() =>
+              updateSelectedFlow((flow) => ({
+                ...flow,
+                chapters: [...flow.chapters, { id: createTemplateId('chapter'), items: [], title: 'New Chapter' }]
+              }))
+            }
+            type="button"
+          >
+            <Plus size={15} />
+            Add chapter
+          </button>
+        </div>
+      ) : (
+        <EmptyState />
+      )}
+
+      {renderResourceManager()}
+    </section>
+  );
+}
+
 export function AdminProgramsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const page = asPositiveInteger(searchParams.get('page'), 1);
@@ -996,6 +1840,7 @@ export function AdminProgramsPage() {
   const [pendingStatusChange, setPendingStatusChange] = useState<PendingStatusChange | null>(null);
   const [searchDraft, setSearchDraft] = useState(search);
   const [notice, setNotice] = useState('');
+  const [activeSection, setActiveSection] = useState<ProgramAccordionKey | null>(null);
   const programsQuery = useAdminPrograms({ domain, page, search, status });
   const catalogQuery = useAdminPrograms({ limit: 500, page: 1, status: 'all' });
   const impactTarget = pendingStatusChange?.program ?? detailsProgram;
@@ -1141,68 +1986,76 @@ export function AdminProgramsPage() {
         </article>
       </div>
 
-      <ProgramGuidanceSection onNotice={setNotice} />
+      <ProgramAccordionSection activeSection={activeSection} eyebrow="Student clarity" sectionKey="guidance" setActiveSection={setActiveSection} title="Leadership program guidance">
+        <ProgramGuidanceSection onNotice={setNotice} />
+      </ProgramAccordionSection>
 
-      <section className="filter-bar admin-program-filter-bar" aria-label="Program admin filters">
-        <form className="filter-search filter-search--form admin-program-search" onSubmit={(event) => event.preventDefault()}>
-          <Search size={18} />
-          <label className="sr-only" htmlFor="admin-program-search">
-            Search programs
-          </label>
-          <input id="admin-program-search" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Search programs..." type="search" />
-        </form>
-        <select aria-label="Filter by domain" className="admin-program-domain-select" value={domain || 'all'} onChange={(event) => updateParams({ domain: event.target.value === 'all' ? '' : event.target.value, page: 1 })}>
-          <option value="all">All Domains</option>
-          {domainOptions.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-        <div className="segmented-control admin-program-status-control" role="group" aria-label="Program status">
-          {statusOptions.map((option) => (
-            <button className={option === status ? 'segmented-button segmented-button--active' : 'segmented-button'} key={option} onClick={() => updateParams({ page: 1, status: option })} type="button">
-              {option}
-            </button>
-          ))}
-        </div>
-        <button className="segmented-button segmented-button--gold" onClick={() => setProgramModal({ mode: 'add' })} type="button">
-          <Plus size={16} />
-          Program
-        </button>
-        <button className="segmented-button" disabled={programsQuery.isFetching} onClick={() => void programsQuery.refetch()} type="button">
-          <RefreshCw size={16} />
-          {programsQuery.isFetching ? 'Refreshing...' : 'Refresh'}
-        </button>
-      </section>
+      <ProgramAccordionSection activeSection={activeSection} eyebrow="Program records" sectionKey="records" setActiveSection={setActiveSection} title="Program master records and operational status">
+        <section className="filter-bar admin-program-filter-bar" aria-label="Program admin filters">
+          <form className="filter-search filter-search--form admin-program-search" onSubmit={(event) => event.preventDefault()}>
+            <Search size={18} />
+            <label className="sr-only" htmlFor="admin-program-search">
+              Search programs
+            </label>
+            <input id="admin-program-search" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Search programs..." type="search" />
+          </form>
+          <select aria-label="Filter by domain" className="admin-program-domain-select" value={domain || 'all'} onChange={(event) => updateParams({ domain: event.target.value === 'all' ? '' : event.target.value, page: 1 })}>
+            <option value="all">All Domains</option>
+            {domainOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          <div className="segmented-control admin-program-status-control" role="group" aria-label="Program status">
+            {statusOptions.map((option) => (
+              <button className={option === status ? 'segmented-button segmented-button--active' : 'segmented-button'} key={option} onClick={() => updateParams({ page: 1, status: option })} type="button">
+                {option}
+              </button>
+            ))}
+          </div>
+          <button className="segmented-button segmented-button--gold" onClick={() => setProgramModal({ mode: 'add' })} type="button">
+            <Plus size={16} />
+            Program
+          </button>
+          <button className="segmented-button" disabled={programsQuery.isFetching} onClick={() => void programsQuery.refetch()} type="button">
+            <RefreshCw size={16} />
+            {programsQuery.isFetching ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </section>
 
-      {data && data.items.length > 0 ? (
-        <div className="admin-program-table-panel">
-          <DataPanel columns={columns} description="Program master records and operational status." items={data.items} title="Program records" />
-        </div>
-      ) : (
-        <EmptyState />
-      )}
-
-      <nav className="pagination-bar" aria-label="Admin program pagination">
-        {data?.hasPreviousPage ? (
-          <Link className="pagination-link" to={buildPageLink(page - 1, search, status, domain)}>
-            Previous page
-          </Link>
+        {data && data.items.length > 0 ? (
+          <div className="admin-program-table-panel">
+            <DataPanel columns={columns} description="Program master records and operational status." items={data.items} title="Program records" />
+          </div>
         ) : (
-          <span className="pagination-link pagination-link--disabled">Previous page</span>
+          <EmptyState />
         )}
-        <span>
-          Page {page} of {totalPages} · {total} matching
-        </span>
-        {data?.hasNextPage ? (
-          <Link className="pagination-link" to={buildPageLink(page + 1, search, status, domain)}>
-            Next page
-          </Link>
-        ) : (
-          <span className="pagination-link pagination-link--disabled">Next page</span>
-        )}
-      </nav>
+
+        <nav className="pagination-bar" aria-label="Admin program pagination">
+          {data?.hasPreviousPage ? (
+            <Link className="pagination-link" to={buildPageLink(page - 1, search, status, domain)}>
+              Previous page
+            </Link>
+          ) : (
+            <span className="pagination-link pagination-link--disabled">Previous page</span>
+          )}
+          <span>
+            Page {page} of {totalPages} · {total} matching
+          </span>
+          {data?.hasNextPage ? (
+            <Link className="pagination-link" to={buildPageLink(page + 1, search, status, domain)}>
+              Next page
+            </Link>
+          ) : (
+            <span className="pagination-link pagination-link--disabled">Next page</span>
+          )}
+        </nav>
+      </ProgramAccordionSection>
+
+      <ProgramAccordionSection activeSection={activeSection} eyebrow="Template setup" sectionKey="template" setActiveSection={setActiveSection} title="Program Template Builder">
+        <ProgramTemplateBuilder programs={catalogItems} onNotice={setNotice} />
+      </ProgramAccordionSection>
 
       {programModal ? <ProgramModal existingPrograms={catalogItems} mode={programModal.mode} onClose={() => setProgramModal(null)} onSaved={setNotice} program={programModal.program} /> : null}
       {detailsProgram ? (

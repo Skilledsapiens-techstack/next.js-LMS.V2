@@ -29,7 +29,7 @@ type AdminProfile = {
 };
 
 const studentSections: NavSection[] = [
-  { title: 'Main', moduleIds: ['dashboard', 'cohorts', 'recordings', 'schedule', 'doubt-sessions', 'resources', 'career-readiness'] },
+  { title: 'Main', moduleIds: ['dashboard', 'cohorts', 'recordings', 'schedule', 'doubt-sessions', 'resources', 'career-readiness', 'ats-resume-score'] },
   { title: 'My Progress', moduleIds: ['projects', 'project-submissions', 'certificates'] },
   { title: 'Community', moduleIds: ['community'] },
   { title: 'Help', moduleIds: ['announcements', 'support', 'email-center'] },
@@ -37,10 +37,10 @@ const studentSections: NavSection[] = [
 ];
 
 const adminSections: NavSection[] = [
-  { title: 'Main', moduleIds: ['dashboard', 'recording-candidates', 'workshops', 'resources', 'career-readiness'] },
+  { title: 'Main', moduleIds: ['dashboard', 'recording-candidates', 'workshops', 'resources', 'career-readiness', 'ats-resume-score'] },
   { title: 'Administration', moduleIds: ['students', 'cohorts', 'programs', 'projects', 'project-submissions', 'certificates', 'enrollments', 'admin-users', 'feature-control'] },
-  { title: 'Community', moduleIds: ['community', 'whatsapp-groups'] },
-  { title: 'Help', moduleIds: ['announcements', 'support', 'email-center', 'observability'] },
+  { title: 'Community', moduleIds: ['community', 'whatsapp-groups', 'email-marketing', 'email-center'] },
+  { title: 'Help', moduleIds: ['announcements', 'support', 'observability'] },
   { title: 'Payments', moduleIds: ['payment-orders', 'paid-access'] }
 ];
 

@@ -59,13 +59,15 @@ export class RazorpayWebhookService {
         status: 'disabled',
         eventId: accepted.persistencePlan?.eventId,
         message: 'Persistence is disabled. No Supabase write was attempted.'
-     };
+      };
       const paymentOrderTransitionExecution = await this.executePaymentOrderTransition(accepted, persistenceExecution);
+      const atsCreditGrantExecution = await this.executeAtsCreditGrant(accepted, paymentOrderTransitionExecution);
 
       return {
         ...accepted,
         persistenceExecution,
         paymentOrderTransitionExecution,
+        atsCreditGrantExecution,
         webhookEventStatusExecution: {
           enabled: false,
           attempted: false,
@@ -83,16 +85,19 @@ export class RazorpayWebhookService {
 
     const persistenceExecution = await this.persistWebhookEvent(accepted, this.asJsonObject(parsedBody));
     const paymentOrderTransitionExecution = await this.executePaymentOrderTransition(accepted, persistenceExecution);
+    const atsCreditGrantExecution = await this.executeAtsCreditGrant(accepted, paymentOrderTransitionExecution);
     const withExecutions = {
       ...accepted,
       persistenceExecution,
-      paymentOrderTransitionExecution
+      paymentOrderTransitionExecution,
+      atsCreditGrantExecution
    };
 
     return {
       ...withExecutions,
       persistenceExecution,
       paymentOrderTransitionExecution,
+      atsCreditGrantExecution,
       webhookEventStatusExecution: await this.recordWebhookEventStatus(accepted, persistenceExecution, paymentOrderTransitionExecution),
       activationTriggerDecision: decideEnrollmentActivationTrigger(withExecutions)
    };
@@ -222,6 +227,214 @@ export class RazorpayWebhookService {
       paymentId: transition.lookup.paymentId,
       message: data ? 'Payment order transition applied.' : 'No payment order matched the allowed transition state.'
    };
+ }
+
+  private async executeAtsCreditGrant(
+    event: RazorpayWebhookAcceptedDto,
+    paymentOrderTransitionExecution: NonNullable<RazorpayWebhookAcceptedDto['paymentOrderTransitionExecution']>
+  ): Promise<NonNullable<RazorpayWebhookAcceptedDto['atsCreditGrantExecution']>> {
+    const orderId = paymentOrderTransitionExecution.orderId ?? event.orderId;
+    const paymentId = paymentOrderTransitionExecution.paymentId ?? event.paymentId;
+
+    if (!this.config.get<boolean>('ATS_CREDIT_GRANTS_ENABLED')) {
+      return {
+        enabled: false,
+        attempted: false,
+        status: 'disabled',
+        orderId,
+        paymentId,
+        message: 'ATS credit grants are disabled. No Supabase write was attempted.'
+     };
+   }
+
+    if (paymentOrderTransitionExecution.status !== 'updated') {
+      return {
+        enabled: true,
+        attempted: false,
+        status: 'skipped',
+        orderId,
+        paymentId,
+        message: 'ATS credit grant skipped because the payment order was not newly marked paid.'
+     };
+   }
+
+    const order = await this.loadPaidAtsPackageOrder(orderId, paymentId);
+    if (!order) {
+      return {
+        enabled: true,
+        attempted: false,
+        status: 'skipped',
+        orderId,
+        paymentId,
+        message: 'No paid ATS package order matched this webhook.'
+     };
+   }
+
+    const atsPackage = await this.loadAtsPackage(order.item_id);
+    if (!atsPackage) {
+      return {
+        enabled: true,
+        attempted: true,
+        status: 'failed',
+        orderId,
+        paymentId,
+        studentEmail: order.student_email,
+        packageKey: order.item_id,
+        message: 'Paid ATS package was not found or is inactive.'
+     };
+   }
+
+    const student = await this.loadStudentForAtsGrant(order.student_email);
+    const grantRow = {
+      student_id: student?.id ?? null,
+      student_email: order.student_email.trim().toLowerCase(),
+      package_id: atsPackage.id,
+      source: 'payment',
+      source_payment_order_id: order.id,
+      source_payment_id: order.razorpay_payment_id ?? paymentId ?? null,
+      purchased_scans: atsPackage.scan_credits,
+      remaining_scans: atsPackage.scan_credits,
+      notes: `Granted from paid ATS package order ${order.order_id ?? order.razorpay_order_id ?? order.id}`
+   };
+
+    const { data, error } = await this.supabase.admin
+      .from('ats_student_credit_grants')
+      .upsert(grantRow, { onConflict: 'source_payment_order_id', ignoreDuplicates: true })
+      .select('id,student_email,purchased_scans,remaining_scans')
+      .maybeSingle();
+
+    if (error) {
+      return {
+        enabled: true,
+        attempted: true,
+        status: 'failed',
+        orderId,
+        paymentId,
+        studentEmail: order.student_email,
+        packageKey: atsPackage.package_key,
+        scanCredits: atsPackage.scan_credits,
+        message: error.message
+     };
+   }
+
+    if (data) {
+      await this.supabase.admin.from('ats_usage_events').insert({
+        student_id: student?.id ?? null,
+        student_email: order.student_email.trim().toLowerCase(),
+        event_type: 'credit_granted',
+        metadata: {
+          package_id: atsPackage.id,
+          package_key: atsPackage.package_key,
+          payment_order_id: order.id,
+          payment_id: order.razorpay_payment_id ?? paymentId ?? null,
+          scan_credits: atsPackage.scan_credits
+       }
+     });
+   }
+
+    return {
+      enabled: true,
+      attempted: true,
+      status: data ? 'granted' : 'duplicate',
+      orderId,
+      paymentId,
+      studentEmail: order.student_email,
+      packageKey: atsPackage.package_key,
+      scanCredits: atsPackage.scan_credits,
+      message: data ? 'ATS scan credits granted.' : 'ATS scan credits were already granted for this payment order.'
+  };
+ }
+
+  private async loadPaidAtsPackageOrder(orderId: string | undefined, paymentId: string | undefined): Promise<
+    | {
+        id: string;
+        order_id: string | null;
+        razorpay_order_id: string | null;
+        razorpay_payment_id: string | null;
+        student_email: string;
+        item_id: string;
+      }
+    | undefined
+  > {
+    let request = this.supabase.admin
+      .from('payment_orders')
+      .select(['id', 'order_id', 'razorpay_order_id', 'razorpay_payment_id', 'student_email', 'item_type', 'item_id', 'status'].join(','))
+      .eq('status', 'paid')
+      .eq('item_type', 'ats_package')
+      .limit(1);
+
+    if (orderId && paymentId) {
+      request = request.or(`order_id.eq.${orderId},razorpay_order_id.eq.${orderId},razorpay_payment_id.eq.${paymentId}`);
+   } else if (orderId) {
+      request = request.or(`order_id.eq.${orderId},razorpay_order_id.eq.${orderId}`);
+   } else if (paymentId) {
+      request = request.eq('razorpay_payment_id', paymentId);
+   } else {
+      return undefined;
+   }
+
+    const { data, error } = await request.maybeSingle();
+    if (error) return undefined;
+    const row = this.asJsonObject(data);
+    if (typeof row.id !== 'string' || typeof row.student_email !== 'string' || typeof row.item_id !== 'string') return undefined;
+
+    return {
+      id: row.id,
+      order_id: typeof row.order_id === 'string' ? row.order_id : null,
+      razorpay_order_id: typeof row.razorpay_order_id === 'string' ? row.razorpay_order_id : null,
+      razorpay_payment_id: typeof row.razorpay_payment_id === 'string' ? row.razorpay_payment_id : null,
+      student_email: row.student_email,
+      item_id: row.item_id
+   };
+ }
+
+  private async loadAtsPackage(itemId: string): Promise<{ id: string; package_key: string; scan_credits: number } | undefined> {
+    const byKey = await this.supabase.admin
+      .from('ats_packages')
+      .select('id,package_key,scan_credits,status')
+      .eq('package_key', itemId)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle();
+    if (byKey.data && this.asJsonObject(byKey.data) && typeof byKey.data.id === 'string' && typeof byKey.data.package_key === 'string') {
+      const scanCredits = Number(byKey.data.scan_credits);
+      if (Number.isInteger(scanCredits) && scanCredits > 0) return { id: byKey.data.id, package_key: byKey.data.package_key, scan_credits: scanCredits };
+   }
+
+    if (!this.isUuid(itemId)) return undefined;
+
+    const byId = await this.supabase.admin
+      .from('ats_packages')
+      .select('id,package_key,scan_credits,status')
+      .eq('id', itemId)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle();
+    if (byId.data && this.asJsonObject(byId.data) && typeof byId.data.id === 'string' && typeof byId.data.package_key === 'string') {
+      const scanCredits = Number(byId.data.scan_credits);
+      if (Number.isInteger(scanCredits) && scanCredits > 0) return { id: byId.data.id, package_key: byId.data.package_key, scan_credits: scanCredits };
+   }
+
+    return undefined;
+ }
+
+  private async loadStudentForAtsGrant(studentEmail: string): Promise<{ id: string } | undefined> {
+    const email = studentEmail.trim().toLowerCase();
+    if (!email) return undefined;
+
+    const { data } = await this.supabase.admin
+      .from('students')
+      .select('id,email')
+      .eq('email', email)
+      .limit(1)
+      .maybeSingle();
+
+    const row = this.asJsonObject(data);
+    return typeof row.id === 'string' ? { id: row.id } : undefined;
+ }
+
+  private isUuid(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
  }
 
   private async recordWebhookEventStatus(

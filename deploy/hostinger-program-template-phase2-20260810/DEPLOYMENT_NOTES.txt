@@ -1,0 +1,26 @@
+Hostinger deployment package
+Package: hostinger-program-template-phase2-20260810
+Build date: 2026-08-10
+Source: npm run build / dist output
+
+Includes:
+- Program Template Builder Phase 2 persistence.
+- Supabase program_templates admin API integration.
+- Program template mapping from existing Sequence Manager rows.
+- Related resource counts/view-only related resource modal refinements.
+- Row-level delete bin icon for template modules.
+- + Module now creates a blank row with a workshop-title dropdown.
+- Each module can store multiple workshop-title match options, shown as Option 1, Option 2, Option 3, etc.
+
+Database:
+- Supabase migration 20260810140315_program_templates.sql was pushed to the linked remote project.
+- Remote verification query returned 14 seeded program_templates rows.
+- No additional database migration is required for match options because they are stored inside the existing program_templates.chapters JSON.
+
+Validation:
+- npm run typecheck passed.
+- npm run build passed after the latest match-options UI change.
+
+Deployment:
+- Upload the extracted contents of this folder to the Hostinger site root/public_html.
+- Keep the included .htaccess file for SPA route refresh support and asset cache headers.

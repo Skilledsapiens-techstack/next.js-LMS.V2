@@ -1,0 +1,22 @@
+Hostinger deployment package
+Package: hostinger-program-template-phase2-20260810
+Build date: 2026-08-10
+Source: npm run build / dist output
+
+Includes:
+- Program Template Builder Phase 2 persistence.
+- Supabase program_templates admin API integration.
+- Program template mapping from existing Sequence Manager rows.
+- Related resource counts/view-only related resource modal refinements from the current working build.
+
+Database:
+- Supabase migration 20260810140315_program_templates.sql was pushed to the linked remote project.
+- Remote verification query returned 14 seeded program_templates rows.
+
+Validation:
+- npm run build passed.
+- npm run workflow:test -- workflows/domain/modules/admins/admin-resources.service.spec.ts passed before packaging.
+
+Deployment:
+- Upload the extracted contents of this folder to the Hostinger site root/public_html.
+- Keep the included .htaccess file for SPA route refresh support and asset cache headers.

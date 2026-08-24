@@ -1,7 +1,7 @@
 import { PaginationQueryDto } from '../../../common/dto/pagination.dto';
 
 export type StudentPaymentOrderStatus = 'created' | 'paid' | 'failed' | 'cancelled';
-export type StudentPaymentItemType = 'group' | 'workshop' | 'resource';
+export type StudentPaymentItemType = 'group' | 'workshop' | 'resource' | 'ats_package';
 
 export class StudentPaymentOrdersQueryDto extends PaginationQueryDto {
   search?: string;

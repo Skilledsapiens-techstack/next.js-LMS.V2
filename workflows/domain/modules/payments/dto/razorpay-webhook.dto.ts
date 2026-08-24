@@ -53,6 +53,17 @@ export class RazorpayWebhookAcceptedDto {
     paymentId?: string;
     message?: string;
   };
+  atsCreditGrantExecution?: {
+    enabled: boolean;
+    attempted: boolean;
+    status: 'disabled' | 'granted' | 'duplicate' | 'skipped' | 'failed';
+    orderId?: string;
+    paymentId?: string;
+    studentEmail?: string;
+    packageKey?: string;
+    scanCredits?: number;
+    message?: string;
+  };
   webhookEventStatusExecution?: {
     enabled: boolean;
     attempted: boolean;

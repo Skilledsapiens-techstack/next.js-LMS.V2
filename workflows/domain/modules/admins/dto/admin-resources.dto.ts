@@ -7,6 +7,7 @@ export class AdminResourcesQueryDto extends PaginationQueryDto {
   search?: string;
   status: AdminResourceStatus | 'all' = 'all';
   accessType: AdminResourceAccessType | 'all' = 'all';
+  programKey?: string;
 }
 
 export class AdminResourceListItemDto {

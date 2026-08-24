@@ -1,0 +1,25 @@
+Hostinger deployment package: Email Marketing community navigation release
+
+Package: hostinger-email-community-20260812-0245
+Created: 12 Aug 2026
+
+Changes included:
+- Moved Admin Email Marketing from Help to Community navigation section.
+- Moved Admin Email Centre from Help to Community navigation section.
+- Normalized Email Marketing daily workflow card body text to regular weight under headings.
+- Includes the latest Email Marketing planner improvements currently in the production build.
+
+Validation completed:
+- npm run typecheck
+- npx eslint src/layouts/AppShell.tsx src/pages/AdminEmailMarketingPage.tsx
+- npm run build
+
+Deployment steps:
+1. Upload hostinger-email-community-20260812-0245.zip to Hostinger File Manager.
+2. Extract the contents directly inside public_html.
+3. Confirm .htaccess is present after extraction for SPA route fallback.
+4. Hard refresh the admin portal and verify Email Marketing and Email Centre appear under Community.
+
+Notes:
+- This is a frontend Hostinger package.
+- No new Supabase migration is included in this package.

@@ -67,6 +67,11 @@ export class AdminResourcesService {
       request = request.eq('access_type', query.accessType);
    }
 
+    const programKey = query.programKey?.trim().toLowerCase();
+    if (programKey) {
+      request = request.contains('program_keys', [programKey]);
+   }
+
     if (search) {
       const escapedSearch = escapePostgrestPattern(search);
       request = request.or(`title.ilike.%${escapedSearch}%,resource_type.ilike.%${escapedSearch}%,domain_key.ilike.%${escapedSearch}%`);

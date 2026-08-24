@@ -1,0 +1,5 @@
+Hostinger deployment package
+Build date: 2026-08-10
+Source: npm run build / dist output
+Includes latest Meeting Topics Manage Resources and topic metadata updates.
+Upload the extracted contents of this folder to the Hostinger site root/public_html.

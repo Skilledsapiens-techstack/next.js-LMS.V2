@@ -7,7 +7,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { AdminPaidAccessItemType, AdminPaidAccessStatus, useAdminPaidAccess } from '../features/admin/useAdminPayments';
 
 const statusOptions: Array<AdminPaidAccessStatus | 'all'> = ['all', 'active', 'inactive'];
-const itemTypeOptions: Array<AdminPaidAccessItemType | 'all'> = ['all', 'group', 'workshop', 'resource'];
+const itemTypeOptions: Array<AdminPaidAccessItemType | 'all'> = ['all', 'group', 'workshop', 'resource', 'ats_package'];
 
 function asPositiveInteger(value: string | null, defaultValue: number) {
   const parsed = Number(value);

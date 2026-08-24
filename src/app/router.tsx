@@ -10,6 +10,7 @@ import { adminNavItems, guestNavItems, studentNavItems } from './routeConfig';
 const AdminDashboardPage = lazy(() => import('../pages/AdminDashboardPage').then((module) => ({ default: module.AdminDashboardPage })));
 const AdminAnnouncementsPage = lazy(() => import('../pages/AdminAnnouncementsPage').then((module) => ({ default: module.AdminAnnouncementsPage })));
 const AdminCareerReadinessPage = lazy(() => import('../pages/AdminCareerReadinessPage').then((module) => ({ default: module.AdminCareerReadinessPage })));
+const AdminAtsResumeScorePage = lazy(() => import('../pages/AdminAtsResumeScorePage').then((module) => ({ default: module.AdminAtsResumeScorePage })));
 const AdminStudentsPage = lazy(() => import('../pages/AdminStudentsPage').then((module) => ({ default: module.AdminStudentsPage })));
 const AdminGuestLeadsPage = lazy(() => import('../pages/AdminGuestLeadsPage').then((module) => ({ default: module.AdminGuestLeadsPage })));
 const AdminStudentPreviewPage = lazy(() => import('../pages/AdminStudentPreviewPage').then((module) => ({ default: module.AdminStudentPreviewPage })));
@@ -43,6 +44,7 @@ const AdminSupportDetailPage = lazy(() => import('../pages/AdminSupportDetailPag
 const AdminFeatureControlPage = lazy(() => import('../pages/AdminFeatureControlPage').then((module) => ({ default: module.AdminFeatureControlPage })));
 const AdminUsersPage = lazy(() => import('../pages/AdminUsersPage').then((module) => ({ default: module.AdminUsersPage })));
 const AdminEmailCenterPage = lazy(() => import('../pages/AdminEmailCenterPage').then((module) => ({ default: module.AdminEmailCenterPage })));
+const AdminEmailMarketingPage = lazy(() => import('../pages/AdminEmailMarketingPage').then((module) => ({ default: module.AdminEmailMarketingPage })));
 const AdminObservabilityPage = lazy(() => import('../pages/AdminObservabilityPage').then((module) => ({ default: module.AdminObservabilityPage })));
 const AdminWhatsAppGroupsPage = lazy(() => import('../pages/AdminWhatsAppGroupsPage').then((module) => ({ default: module.AdminWhatsAppGroupsPage })));
 const LoginPage = lazy(() => import('../pages/LoginPage').then((module) => ({ default: module.LoginPage })));
@@ -51,6 +53,7 @@ const GuestAccessPage = lazy(() => import('../pages/GuestAccessPage').then((modu
 const ModulePlaceholderPage = lazy(() => import('../pages/ModulePlaceholderPage').then((module) => ({ default: module.ModulePlaceholderPage })));
 const StudentAnnouncementsPage = lazy(() => import('../pages/StudentAnnouncementsPage').then((module) => ({ default: module.StudentAnnouncementsPage })));
 const StudentCareerReadinessPage = lazy(() => import('../pages/StudentCareerReadinessPage').then((module) => ({ default: module.StudentCareerReadinessPage })));
+const StudentAtsResumeScorePage = lazy(() => import('../pages/StudentAtsResumeScorePage').then((module) => ({ default: module.StudentAtsResumeScorePage })));
 const StudentDashboardPage = lazy(() => import('../pages/StudentDashboardPage').then((module) => ({ default: module.StudentDashboardPage })));
 const StudentDoubtSessionsPage = lazy(() => import('../pages/StudentDoubtSessionsPage').then((module) => ({ default: module.StudentDoubtSessionsPage })));
 const StudentCertificatesPage = lazy(() => import('../pages/StudentCertificatesPage').then((module) => ({ default: module.StudentCertificatesPage })));
@@ -299,6 +302,16 @@ export const router = createBrowserRouter([
             )
           },
           {
+            path: 'ats-resume-score',
+            element: (
+              <PageLoader>
+                <StudentFeaturePage moduleId="ats-resume-score">
+                  <StudentAtsResumeScorePage />
+                </StudentFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
             path: 'schedule',
             element: (
               <PageLoader>
@@ -515,6 +528,16 @@ export const router = createBrowserRouter([
             )
           },
           {
+            path: 'ats-resume-score',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="ats-resume-score">
+                  <AdminAtsResumeScorePage />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
             path: 'workshops',
             element: (
               <PageLoader>
@@ -630,6 +653,16 @@ export const router = createBrowserRouter([
               <PageLoader>
                 <AdminFeaturePage moduleId="support">
                   <AdminSupportDetailPage />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'email-marketing',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="email-marketing">
+                  <AdminEmailMarketingPage />
                 </AdminFeaturePage>
               </PageLoader>
             )

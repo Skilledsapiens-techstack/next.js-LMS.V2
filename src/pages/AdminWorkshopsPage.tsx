@@ -1,11 +1,23 @@
-import { CalendarDays, Check, Clapperboard, Clock3, Copy, Edit3, Link as LinkIcon, Loader2, Plus, Radio, Save, Search, Trash2, Video, X } from 'lucide-react';
-import { FormEvent, useMemo, useState } from 'react';
+import { BookOpen, CalendarDays, Check, Clapperboard, Clock3, Copy, Edit3, Link as LinkIcon, Loader2, Plus, Radio, Save, Search, Trash2, Video, X } from 'lucide-react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
 import { AdminCohort, useAdminCohorts } from '../features/admin/useAdminCohorts';
-import { createTopicDraft, customWorkshopTopicValue, loadSavedWorkshopTopics, saveWorkshopTopics, uniqueTitles, WorkshopTopicDraft } from '../lib/workshopTopics';
+import { useAdminPrograms } from '../features/admin/useAdminPrograms';
+import { useAdminRecordingResourceLinks, useAdminRecordingResourceSummary, useUpdateAdminRecordingResourceLinks } from '../features/admin/useAdminRecordingCandidates';
+import { AdminResource, useAdminResources } from '../features/admin/useAdminResources';
+import {
+  createTopicDraft,
+  customWorkshopTopicValue,
+  loadSavedWorkshopTopicRecords,
+  saveWorkshopTopics,
+  uniqueTitles,
+  uniqueTopicRecords,
+  WorkshopTopicDraft,
+  WorkshopTopicRecord
+} from '../lib/workshopTopics';
 import {
   AdminWorkshop,
   AdminWorkshopSessionType,
@@ -31,6 +43,12 @@ type WorkshopForm = {
   time: string;
   title: string;
   zoomAccount: string;
+};
+
+type TopicResourceManager = {
+  recordingIds: string[];
+  topicId: string;
+  title: string;
 };
 
 const emptyWorkshopForm: WorkshopForm = {
@@ -157,6 +175,21 @@ function readableError(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+function normalizeTopicTitle(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function resourceSummary(resource: AdminResource) {
+  return [resource.resourceType, resource.resourceMode, resource.programKeys?.slice(0, 2).join(', '), resource.cohortNames?.slice(0, 2).join(', ')]
+    .filter(Boolean)
+    .join(' · ');
+}
+
 function isCustomLinkSource(value: string) {
   return value === 'Custom Link';
 }
@@ -172,19 +205,25 @@ function isValidHttpUrl(value: string) {
 
 export function AdminWorkshopsPage() {
   const workshopsQuery = useAdminWorkshops({ limit: 500, page: 1, status: 'all' });
+  const programsQuery = useAdminPrograms({ limit: 500, page: 1, status: 'all' });
   const cohortsPageOneQuery = useAdminCohorts({ limit: 100, page: 1, sort: 'name', status: 'all' });
   const cohortsPageTwoQuery = useAdminCohorts({ enabled: (cohortsPageOneQuery.data?.totalPages ?? 1) >= 2, limit: 100, page: 2, sort: 'name', status: 'all' });
   const cohortsPageThreeQuery = useAdminCohorts({ enabled: (cohortsPageOneQuery.data?.totalPages ?? 1) >= 3, limit: 100, page: 3, sort: 'name', status: 'all' });
+  const resourcesQuery = useAdminResources({ limit: 500, page: 1, status: 'active' });
   const saveWorkshopMutation = useSaveAdminWorkshop();
   const updateWorkshopMutation = useUpdateAdminWorkshop();
   const rescheduleWorkshopMutation = useRescheduleAdminWorkshop();
   const markCompletedMutation = useMarkAdminWorkshopCompleted();
   const cancelWorkshopMutation = useCancelAdminWorkshop();
+  const updateRecordingResourceLinksMutation = useUpdateAdminRecordingResourceLinks();
   const [form, setForm] = useState<WorkshopForm>(emptyWorkshopForm);
   const [cohortSearch, setCohortSearch] = useState('');
   const [activeTab, setActiveTab] = useState<WorkshopTab>('upcoming');
-  const [savedWorkshopTopics, setSavedWorkshopTopics] = useState<string[]>(loadSavedWorkshopTopics);
-  const [topicDrafts, setTopicDrafts] = useState<WorkshopTopicDraft[]>(() => loadSavedWorkshopTopics().map((title) => createTopicDraft(title, false)));
+  const [savedWorkshopTopicRecords, setSavedWorkshopTopicRecords] = useState<WorkshopTopicRecord[]>(loadSavedWorkshopTopicRecords);
+  const [topicDrafts, setTopicDrafts] = useState<WorkshopTopicDraft[]>(() =>
+    loadSavedWorkshopTopicRecords().map((topic) => createTopicDraft(topic.title, false, topic.programKeys, topic.resourceIds))
+  );
+  const [topicProgramFilter, setTopicProgramFilter] = useState('all');
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [pendingCancelWorkshop, setPendingCancelWorkshop] = useState<AdminWorkshop | null>(null);
@@ -198,8 +237,14 @@ export function AdminWorkshopsPage() {
   const [isTopicManagerOpen, setIsTopicManagerOpen] = useState(false);
   const [copiedWorkshopId, setCopiedWorkshopId] = useState<string | null>(null);
   const [editingWorkshopId, setEditingWorkshopId] = useState<string | null>(null);
+  const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
+  const [topicResourceManager, setTopicResourceManager] = useState<TopicResourceManager | null>(null);
+  const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
+  const topicResourceLinksQuery = useAdminRecordingResourceLinks(topicResourceManager?.recordingIds[0]);
 
   const workshops = workshopsQuery.data?.items ?? [];
+  const programs = useMemo(() => [...(programsQuery.data?.items ?? [])].sort((left, right) => left.name.localeCompare(right.name)), [programsQuery.data?.items]);
+  const resources = resourcesQuery.data?.items ?? [];
   const cohorts = useMemo(
     () => dedupeCohorts([cohortsPageOneQuery.data?.items, cohortsPageTwoQuery.data?.items, cohortsPageThreeQuery.data?.items]).filter((cohort) => cohort.status === 'active' || cohort.status === 'upcoming'),
     [cohortsPageOneQuery.data?.items, cohortsPageTwoQuery.data?.items, cohortsPageThreeQuery.data?.items]
@@ -225,8 +270,86 @@ export function AdminWorkshopsPage() {
   const upcomingCount = upcomingWorkshops.length;
   const pastCount = pastWorkshops.length;
   const cancelledCount = cancelledWorkshops.length;
-  const workshopTopicOptions = useMemo(() => uniqueTitles(savedWorkshopTopics), [savedWorkshopTopics]);
+  const cohortProgramKeyByName = useMemo(() => {
+    const map = new Map<string, string>();
+    cohorts.forEach((cohort) => {
+      const programKey = cohort.programKey?.trim().toLowerCase();
+      if (programKey) map.set(cohort.name, programKey);
+    });
+    return map;
+  }, [cohorts]);
+  const workshopTopicOptions = useMemo(() => uniqueTitles(savedWorkshopTopicRecords.map((topic) => topic.title)), [savedWorkshopTopicRecords]);
   const selectedTopicValue = customTitleMode || (form.title && !workshopTopicOptions.includes(form.title)) ? customWorkshopTopicValue : form.title;
+  const completedWorkshopsByTopic = useMemo(() => {
+    const map = new Map<string, AdminWorkshop[]>();
+    workshops
+      .filter((item) => isCompleted(item) && item.sessionType !== 'doubt_session')
+      .forEach((item) => {
+        const key = normalizeTopicTitle(item.title);
+        if (!key) return;
+        const rows = map.get(key) ?? [];
+        rows.push(item);
+        map.set(key, rows);
+      });
+    return map;
+  }, [workshops]);
+
+  const topicResourceCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    completedWorkshopsByTopic.forEach((items, key) => counts.set(key, items.length));
+    return counts;
+  }, [completedWorkshopsByTopic]);
+  const topicRecordingIds = useMemo(
+    () =>
+      Array.from(completedWorkshopsByTopic.values())
+        .flat()
+        .map((item) => item.id),
+    [completedWorkshopsByTopic]
+  );
+  const topicResourceSummaryQuery = useAdminRecordingResourceSummary(topicRecordingIds);
+  const recordingResourceCountById = useMemo(() => {
+    const map = new Map<string, number>();
+    topicResourceSummaryQuery.data?.items.forEach((item) => map.set(item.recordingId, item.resourceCount));
+    return map;
+  }, [topicResourceSummaryQuery.data?.items]);
+  const resourceCountByTopicKey = useMemo(() => {
+    const map = new Map<string, number>();
+    completedWorkshopsByTopic.forEach((items, key) => {
+      const counts = items.map((item) => recordingResourceCountById.get(item.id) ?? 0);
+      map.set(key, Math.max(0, ...counts));
+    });
+    return map;
+  }, [completedWorkshopsByTopic, recordingResourceCountById]);
+
+  const workshopTopicRecordsFromExistingMeetings = useMemo(
+    () =>
+      uniqueTopicRecords(
+        workshops
+          .filter((item) => item.sessionType !== 'doubt_session')
+          .map((item) => ({
+            programKeys: uniqueTitles([
+              item.programKey ?? '',
+              ...item.cohortNames.map((cohortName) => cohortProgramKeyByName.get(cohortName) ?? '')
+            ]).map((programKey) => programKey.toLowerCase()),
+            resourceIds: [],
+            title: item.title
+          }))
+      ),
+    [cohortProgramKeyByName, workshops]
+  );
+  const visibleTopicDrafts = useMemo(() => {
+    const filterKey = topicProgramFilter.trim().toLowerCase();
+    const filtered =
+      filterKey === 'all'
+        ? topicDrafts
+        : topicDrafts.filter((topic) => topic.programKeys.map((programKey) => programKey.toLowerCase()).includes(filterKey));
+    return [...filtered].sort((left, right) => {
+      const leftProgram = left.programKeys[0] ?? '';
+      const rightProgram = right.programKeys[0] ?? '';
+      if (filterKey === 'all' && leftProgram !== rightProgram) return leftProgram.localeCompare(rightProgram);
+      return left.title.localeCompare(right.title);
+    });
+  }, [topicDrafts, topicProgramFilter]);
 
   function updateForm<K extends keyof WorkshopForm>(key: K, value: WorkshopForm[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -389,21 +512,33 @@ export function AdminWorkshopsPage() {
     setTopicDrafts((drafts) => drafts.map((draft) => (draft.id === id ? { ...draft, title } : draft)));
   }
 
-  function toggleTopicDraftEditing(id: string) {
-    setTopicDrafts((drafts) => drafts.map((draft) => (draft.id === id ? { ...draft, isEditing: !draft.isEditing } : draft)));
+  function toggleTopicProgramKey(id: string, programKey: string) {
+    const normalizedProgramKey = programKey.trim().toLowerCase();
+    if (!normalizedProgramKey) return;
+    setTopicDrafts((drafts) =>
+      drafts.map((draft) => {
+        if (draft.id !== id) return draft;
+        const selected = new Set(draft.programKeys.map((key) => key.toLowerCase()));
+        if (selected.has(normalizedProgramKey)) selected.delete(normalizedProgramKey);
+        else selected.add(normalizedProgramKey);
+        return { ...draft, programKeys: Array.from(selected).sort() };
+      })
+    );
   }
 
   function removeTopicDraft(id: string) {
     setTopicDrafts((drafts) => (drafts.length > 1 ? drafts.filter((draft) => draft.id !== id) : [createTopicDraft()]));
+    setEditingTopicId((current) => (current === id ? null : current));
   }
 
   function saveTopicDrafts() {
-    const nextTopics = uniqueTitles(topicDrafts.map((topic) => topic.title));
+    const nextTopics = uniqueTopicRecords(topicDrafts.map((topic) => ({ programKeys: topic.programKeys, resourceIds: topic.resourceIds, title: topic.title })));
+    const nextTopicTitles = nextTopics.map((topic) => topic.title);
     setIsSavingTopics(true);
-    setSavedWorkshopTopics(nextTopics);
-    setTopicDrafts(nextTopics.length > 0 ? nextTopics.map((title) => createTopicDraft(title, false)) : [createTopicDraft()]);
+    setSavedWorkshopTopicRecords(nextTopics);
+    setTopicDrafts(nextTopics.length > 0 ? nextTopics.map((topic) => createTopicDraft(topic.title, false, topic.programKeys, topic.resourceIds)) : [createTopicDraft()]);
     saveWorkshopTopics(nextTopics);
-    if (form.title && !nextTopics.includes(form.title)) {
+    if (form.title && !nextTopicTitles.includes(form.title)) {
       setCustomTitleMode(false);
       setForm((current) => ({ ...current, title: '' }));
     }
@@ -416,6 +551,276 @@ export function AdminWorkshopsPage() {
     setTopicDrafts((drafts) => [createTopicDraft(), ...drafts]);
     window.setTimeout(() => setIsAddingTopic(false), 650);
   }
+
+  function openTopicResourceManager(topic: WorkshopTopicDraft) {
+    const title = topic.title.trim();
+    if (!title) return;
+    const topicKey = normalizeTopicTitle(title);
+    const matchingWorkshops = completedWorkshopsByTopic.get(topicKey) ?? [];
+
+    setActionMessage(null);
+    setSelectedResourceIds(topic.resourceIds);
+    setTopicResourceManager({
+      recordingIds: matchingWorkshops.map((item) => item.id),
+      topicId: topic.id,
+      title
+    });
+  }
+
+  function closeTopicResourceManager() {
+    setTopicResourceManager(null);
+    setSelectedResourceIds([]);
+  }
+
+  function closeTopicEditor() {
+    setEditingTopicId(null);
+  }
+
+  function toggleTopicResource(resourceId: string) {
+    setSelectedResourceIds((current) => {
+      const selected = new Set(current);
+      if (selected.has(resourceId)) selected.delete(resourceId);
+      else selected.add(resourceId);
+      return Array.from(selected);
+    });
+  }
+
+  async function saveTopicResources() {
+    if (!topicResourceManager) return;
+    setActionMessage(null);
+    try {
+      const updatedDrafts = topicDrafts.map((topic) =>
+        topic.id === topicResourceManager.topicId ? { ...topic, resourceIds: selectedResourceIds } : topic
+      );
+      const nextTopics = uniqueTopicRecords(updatedDrafts.map((topic) => ({ programKeys: topic.programKeys, resourceIds: topic.resourceIds, title: topic.title })));
+      setTopicDrafts(updatedDrafts);
+      setSavedWorkshopTopicRecords(nextTopics);
+      saveWorkshopTopics(nextTopics);
+
+      for (const recordingId of topicResourceManager.recordingIds) {
+        await updateRecordingResourceLinksMutation.mutateAsync({
+          recordingId,
+          resourceIds: selectedResourceIds
+        });
+      }
+      const recordingCount = topicResourceManager.recordingIds.length;
+      setActionMessage(
+        recordingCount > 0
+          ? `Related resources saved for this topic and updated for ${recordingCount} completed recording${recordingCount === 1 ? '' : 's'}.`
+          : 'Related resources saved for this topic. They can be applied once matching recordings are published.'
+      );
+      closeTopicResourceManager();
+    } catch (error) {
+      setActionMessage(readableError(error, 'Related resources could not be updated.'));
+    }
+  }
+
+  function renderTopicResourceManager() {
+    if (!topicResourceManager) return null;
+    const isBusy = updateRecordingResourceLinksMutation.isPending;
+    const isLoading = resourcesQuery.isLoading || topicResourceLinksQuery.isLoading;
+    const selectedResourceSet = new Set(selectedResourceIds);
+    const sortedResources = [...resources].sort((left, right) => {
+      const leftSelected = selectedResourceSet.has(left.id);
+      const rightSelected = selectedResourceSet.has(right.id);
+      if (leftSelected !== rightSelected) return leftSelected ? -1 : 1;
+      return left.title.localeCompare(right.title);
+    });
+
+    return (
+      <div className="admin-recording-resource-modal" role="dialog" aria-modal="true" aria-label="Manage topic resources">
+        <div className="admin-recording-resource-modal__panel">
+          <div className="admin-recording-resource-modal__header">
+            <div>
+              <span className="section-eyebrow">RELATED RESOURCES</span>
+              <h2>{topicResourceManager.title}</h2>
+              {topicResourceManager.recordingIds.length > 0 ? (
+                <p>
+                  Select Resource Library items to show under matching My Programs recordings. This will update {topicResourceManager.recordingIds.length} completed recording{topicResourceManager.recordingIds.length === 1 ? '' : 's'} with this topic title.
+                </p>
+              ) : (
+                <p>Select Resource Library items for this topic. Matching completed recordings can use this setup once they are published.</p>
+              )}
+            </div>
+            <button className="admin-recording-action" disabled={isBusy} onClick={closeTopicResourceManager} type="button">
+              Close
+            </button>
+          </div>
+          {resourcesQuery.isError || topicResourceLinksQuery.isError ? (
+            <div className="workshop-error-note">Resources could not be loaded right now. Existing meeting topics are unchanged.</div>
+          ) : null}
+          {isLoading ? (
+            <LoadingState />
+          ) : (
+            <div className="admin-recording-resource-picker">
+              {sortedResources.length > 0 ? (
+                sortedResources.map((resource) => (
+                  <label className="admin-recording-resource-option" key={resource.id}>
+                    <input checked={selectedResourceIds.includes(resource.id)} disabled={isBusy} onChange={() => toggleTopicResource(resource.id)} type="checkbox" />
+                    <span>
+                      <strong>{resource.title}</strong>
+                      <small>{resourceSummary(resource) || 'Resource Library item'}</small>
+                    </span>
+                    {resource.url ? (
+                      <a href={resource.url} onClick={(event) => event.stopPropagation()} rel="noreferrer" target="_blank">
+                        Preview
+                      </a>
+                    ) : null}
+                  </label>
+                ))
+              ) : (
+                <p className="admin-recording-resource-empty">No active resources are available to link.</p>
+              )}
+            </div>
+          )}
+          <div className="admin-recording-resource-modal__actions">
+            <span>{selectedResourceIds.length} selected</span>
+            <div>
+              <button className="admin-recording-action" disabled={isBusy} onClick={closeTopicResourceManager} type="button">
+                Cancel
+              </button>
+              <button className="admin-recording-action admin-recording-action--primary" disabled={isBusy || isLoading} onClick={() => void saveTopicResources()} type="button">
+                {isBusy ? <Loader2 className="admin-spin" size={14} /> : <Save size={14} />}
+                Save resources
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function renderTopicEditor() {
+    if (!editingTopicId) return null;
+    const topic = topicDrafts.find((draft) => draft.id === editingTopicId);
+    if (!topic) return null;
+    const topicKey = normalizeTopicTitle(topic.title);
+    const linkedRecordingCount = topicResourceCounts.get(topicKey) ?? 0;
+    const resourceCount = Math.max(topic.resourceIds.length, resourceCountByTopicKey.get(topicKey) ?? 0);
+    const canManageResources = topic.title.trim().length > 0;
+
+    return (
+      <div className="admin-recording-resource-modal" role="dialog" aria-modal="true" aria-label="Edit meeting topic">
+        <div className="admin-recording-resource-modal__panel workshop-topic-editor-modal">
+          <div className="admin-recording-resource-modal__header">
+            <div>
+              <span className="section-eyebrow">MEETING TOPIC</span>
+              <h2>Edit Topic</h2>
+              <p>Update this topic title, program tags, and related resource setup.</p>
+            </div>
+            <button className="admin-recording-action" onClick={closeTopicEditor} type="button">
+              Close
+            </button>
+          </div>
+          <div className="workshop-topic-editor-modal__content">
+            <label className="workshop-topic-editor-field">
+              <span>Topic title</span>
+              <input
+                aria-label="Topic title"
+                value={topic.title}
+                onChange={(event) => updateTopicDraft(topic.id, event.target.value)}
+                placeholder="Meeting topic title"
+                type="text"
+              />
+            </label>
+
+            <div className="workshop-topic-editor-summary">
+              <span>{resourceCount}R</span>
+              <span>{topic.programKeys.length}P</span>
+              <small>{linkedRecordingCount} matching completed recording{linkedRecordingCount === 1 ? '' : 's'}</small>
+            </div>
+
+            <div className="workshop-topic-editor-section">
+              <div className="workshop-topic-editor-section__head">
+                <div>
+                  <h3>Tag programs</h3>
+                  <p>One topic can be visible across multiple program groups.</p>
+                </div>
+                <strong>{topic.programKeys.length} selected</strong>
+              </div>
+              <div className="workshop-topic-program-menu workshop-topic-program-menu--modal">
+                {programs.length > 0 ? (
+                  programs.map((program) => {
+                    const programKey = program.programKey.trim().toLowerCase();
+                    if (!programKey) return null;
+                    return (
+                      <label key={program.id}>
+                        <input checked={topic.programKeys.includes(programKey)} onChange={() => toggleTopicProgramKey(topic.id, programKey)} type="checkbox" />
+                        <span>{program.name}</span>
+                        <small>{program.programKey}</small>
+                      </label>
+                    );
+                  })
+                ) : (
+                  <p>No programs loaded.</p>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="admin-recording-resource-modal__actions workshop-topic-editor-modal__actions">
+            <button
+              className="workshop-topic-action workshop-topic-action--remove"
+              onClick={() => {
+                if (window.confirm('Remove this meeting topic?')) removeTopicDraft(topic.id);
+              }}
+              type="button"
+            >
+              <Trash2 size={14} />
+              Remove
+            </button>
+            <div>
+              <button
+                className="workshop-topic-action workshop-topic-action--resources"
+                disabled={!canManageResources}
+                onClick={() => {
+                  closeTopicEditor();
+                  openTopicResourceManager(topic);
+                }}
+                title={canManageResources ? 'Manage related resources for this topic' : 'Add a topic title before linking resources'}
+                type="button"
+              >
+                <BookOpen size={14} />
+                Manage Resources
+              </button>
+              <button className="workshop-topic-action workshop-topic-action--done" onClick={closeTopicEditor} type="button">
+                <Check size={14} />
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  useEffect(() => {
+    if (topicResourceManager && topicResourceLinksQuery.data) {
+      setSelectedResourceIds((current) => (current.length > 0 ? current : topicResourceLinksQuery.data.resourceIds));
+    }
+  }, [topicResourceLinksQuery.data, topicResourceManager]);
+
+  useEffect(() => {
+    if (workshopTopicRecordsFromExistingMeetings.length === 0) return;
+    setTopicDrafts((current) => {
+      let changed = false;
+      const draftByTitle = new Map(current.map((topic) => [topic.title.trim().toLowerCase(), topic]));
+      workshopTopicRecordsFromExistingMeetings.forEach((record) => {
+        const key = record.title.trim().toLowerCase();
+        const existing = draftByTitle.get(key);
+        if (!existing) {
+          changed = true;
+          draftByTitle.set(key, createTopicDraft(record.title, false, record.programKeys, record.resourceIds));
+          return;
+        }
+        if (existing.programKeys.length === 0 && record.programKeys.length > 0) {
+          changed = true;
+          draftByTitle.set(key, { ...existing, programKeys: record.programKeys });
+        }
+      });
+      if (!changed) return current;
+      return Array.from(draftByTitle.values());
+    });
+  }, [workshopTopicRecordsFromExistingMeetings]);
 
   if (workshopsQuery.isLoading || cohortsPageOneQuery.isLoading || cohortsPageTwoQuery.isLoading || cohortsPageThreeQuery.isLoading) {
     return (
@@ -754,31 +1159,51 @@ export function AdminWorkshopsPage() {
           </div>
         </div>
         {isTopicManagerOpen ? <div className="workshop-topic-manager">
+          <div className="workshop-topic-manager__filters">
+            <label>
+              <span>Program sorting</span>
+              <select value={topicProgramFilter} onChange={(event) => setTopicProgramFilter(event.target.value)}>
+                <option value="all">All programs</option>
+                {programs.map((program) => (
+                  <option key={program.id} value={program.programKey.trim().toLowerCase()}>
+                    {program.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <strong>
+              {visibleTopicDrafts.length} of {topicDrafts.length} topics
+            </strong>
+          </div>
           <div className="workshop-topic-manager__rows">
-            {topicDrafts.map((topic) => (
-              <div className="workshop-topic-row" key={topic.id}>
-                <input
-                  aria-label="Meeting topic"
-                  readOnly={!topic.isEditing}
-                  value={topic.title}
-                  onChange={(event) => updateTopicDraft(topic.id, event.target.value)}
-                  placeholder="Meeting topic title"
-                  type="text"
-                />
-                <button className={topic.isEditing ? 'workshop-topic-action workshop-topic-action--done' : 'workshop-topic-action workshop-topic-action--edit'} onClick={() => toggleTopicDraftEditing(topic.id)} type="button">
-                  {topic.isEditing ? <Check size={14} /> : <Edit3 size={14} />}
-                  {topic.isEditing ? 'Done' : 'Edit'}
-                </button>
-                <button
-                  className="workshop-topic-action workshop-topic-action--remove"
-                  onClick={() => removeTopicDraft(topic.id)}
-                  type="button"
-                >
-                  <Trash2 size={14} />
-                  Remove
-                </button>
+            {visibleTopicDrafts.length > 0 ? visibleTopicDrafts.map((topic) => {
+              const topicKey = normalizeTopicTitle(topic.title);
+              const resourceCount = Math.max(topic.resourceIds.length, resourceCountByTopicKey.get(topicKey) ?? 0);
+              return (
+                <div className="workshop-topic-row" key={topic.id}>
+                  <input
+                    aria-label="Meeting topic"
+                    readOnly
+                    value={topic.title}
+                    placeholder="Meeting topic title"
+                    type="text"
+                  />
+                  <div className="workshop-topic-row__counts" aria-label={`${resourceCount} resources and ${topic.programKeys.length} programs tagged`}>
+                    <span>{resourceCount}R</span>
+                    <span>{topic.programKeys.length}P</span>
+                  </div>
+                  <button className="workshop-topic-action workshop-topic-action--edit" onClick={() => setEditingTopicId(topic.id)} type="button">
+                    <Edit3 size={14} />
+                    Edit
+                  </button>
+                </div>
+              );
+            }) : (
+              <div className="workshop-empty-list">
+                <Plus size={18} />
+                No topics found for the selected program.
               </div>
-            ))}
+            )}
           </div>
           <button className="workshop-topic-action workshop-topic-action--add workshop-topic-add-button" disabled={isAddingTopic} onClick={addTopicDraft} type="button">
             {isAddingTopic ? <Loader2 className="workshop-action-spinner" size={14} /> : <Plus size={15} />}
@@ -786,6 +1211,9 @@ export function AdminWorkshopsPage() {
           </button>
         </div> : null}
       </section>
+
+      {renderTopicEditor()}
+      {renderTopicResourceManager()}
 
       {pendingCancelWorkshop ? (
         <div className="student-modal-backdrop" role="presentation">

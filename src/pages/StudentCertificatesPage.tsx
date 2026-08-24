@@ -48,7 +48,6 @@ function certificateTone(certificate: StudentCertificate) {
 
 function downloadButtonLabel(certificate: StudentCertificate, isPreparing: boolean) {
   if (isPreparing) return 'Preparing PDF...';
-  if (certificate.generationStatus === 'failed' || certificate.generationStatus === 'expired') return 'Retry PDF';
   return 'Download PDF';
 }
 
