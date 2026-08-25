@@ -558,7 +558,7 @@ export function AdminAtsResumeScorePage() {
             <div>
               <span className="eyebrow">Paid packages</span>
               <h2>Pricing and credits</h2>
-              <p>Configure student-facing scan packs, Razorpay links, credits, and availability.</p>
+              <p>Configure student-facing scan packs, LMS prices, credits, and availability.</p>
             </div>
             <span className="ats-count-pill">{packages.length} packages</span>
           </header>
@@ -584,8 +584,8 @@ export function AdminAtsResumeScorePage() {
                       <input value={String(draft.scanCredits ?? item.scanCredits)} onChange={(event) => updatePackageDraft(item.id, { scanCredits: Number(event.target.value) })} type="number" min="1" />
                     </label>
                     <label className="ats-wide-field">
-                      Payment link
-                      <input value={String(draft.paymentLink ?? item.paymentLink ?? '')} onChange={(event) => updatePackageDraft(item.id, { paymentLink: event.target.value })} placeholder="https://rzp.io/..." type="url" />
+                      Fallback payment link
+                      <input value={String(draft.paymentLink ?? item.paymentLink ?? '')} onChange={(event) => updatePackageDraft(item.id, { paymentLink: event.target.value })} placeholder="Optional legacy Razorpay link" type="url" />
                     </label>
                     <label>
                       Status
@@ -737,6 +737,7 @@ export function AdminAtsResumeScorePage() {
                 <label>
                   Keywords
                   <textarea value={draft.keywords} onChange={(event) => setProfileDrafts((current) => ({ ...current, [activeProfile.id]: { ...draft, keywords: event.target.value } }))} rows={4} />
+                  <small>Optional weighting: write SQL | must-have, Power BI | important, or A/B testing | nice-to-have. Students only see the clean keyword text.</small>
                 </label>
                 <label>
                   Action verbs

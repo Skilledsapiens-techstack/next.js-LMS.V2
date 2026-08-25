@@ -10,6 +10,7 @@ export type AdminPaidAccessItemType = AdminPaymentItemType;
 
 export type AdminPaymentOrder = {
   amount: number;
+  checkoutUrl?: string;
   createdAt?: string;
   currency: string;
   id: string;
@@ -18,6 +19,7 @@ export type AdminPaymentOrder = {
   itemType: AdminPaymentItemType;
   orderId?: string;
   razorpayOrderId?: string;
+  razorpayPaymentLinkId?: string;
   razorpayPaymentId?: string;
   receipt?: string;
   status: AdminPaymentOrderStatus;

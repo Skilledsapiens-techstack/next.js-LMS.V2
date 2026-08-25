@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthProvider';
-import { apiGet, apiPost } from '../../lib/supabaseApi';
+import { apiGet, apiInvokeFunction, apiPost } from '../../lib/supabaseApi';
 import { AtsScoreResult } from '../../lib/atsResumeScoring';
 
 export type StudentAtsRole = {
@@ -61,6 +61,7 @@ export type StudentAtsPackage = {
 
 export type StudentAtsPackageOrder = {
   amount: number;
+  checkoutUrl?: string;
   currency: string;
   id: string;
   itemId: string;
@@ -70,6 +71,13 @@ export type StudentAtsPackageOrder = {
   paymentLink?: string;
   razorpayOrderId?: string;
   status: 'created' | 'paid' | 'failed' | 'cancelled';
+};
+
+export type StudentAtsCreditSyncResult = {
+  checked: number;
+  creditsGranted: number;
+  ok: boolean;
+  synced: Array<Record<string, unknown>>;
 };
 
 export type StudentAtsOverview = {
@@ -157,9 +165,26 @@ export function useCreateStudentAtsPackageOrder() {
 
   return useMutation({
     mutationFn: (body: { packageId: string }) =>
-      apiPost<StudentAtsPackageOrder, { packageId: string }>('/students/me/ats-package-orders', {
+      apiInvokeFunction<StudentAtsPackageOrder, { itemId: string; itemType: 'ats_package'; returnPath: string }>('razorpay-checkout', {
         accessToken: accessToken ?? undefined,
-        body
+        body: { itemId: body.packageId, itemType: 'ats_package', returnPath: '/student/ats-resume-score' }
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['student-ats-resume-score'] });
+      void queryClient.invalidateQueries({ queryKey: ['student-payment-orders'] });
+    }
+  });
+}
+
+export function useSyncStudentAtsCredits() {
+  const { accessToken } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      apiInvokeFunction<StudentAtsCreditSyncResult, { action: 'sync_ats_credits' }>('razorpay-checkout', {
+        accessToken: accessToken ?? undefined,
+        body: { action: 'sync_ats_credits' }
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['student-ats-resume-score'] });

@@ -20,7 +20,7 @@ import {
   UploadCloud,
   X
 } from 'lucide-react';
-import { ChangeEvent, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
@@ -29,6 +29,7 @@ import {
   useCreateStudentAtsAttempt,
   useCreateStudentAtsPackageOrder,
   useRecordStudentAtsReportDownload,
+  useSyncStudentAtsCredits,
   useStudentAtsResumeScore
 } from '../features/student/useStudentAtsResumeScore';
 import { analyzeAdvancedResume, analyzeBasicResume, AtsScoreCategory, AtsScoreResult } from '../lib/atsResumeScoring';
@@ -540,10 +541,23 @@ function keywordRewrite(keyword: string) {
   return `Assisted with ${keyword} work by reviewing supporting documents, preparing working notes, and coordinating follow-up for quarterly compliance.`;
 }
 
+function displayKeyword(keyword: string) {
+  const raw = keyword.trim();
+  const pipeParts = raw.split('|').map((part) => part.trim()).filter(Boolean);
+  if (pipeParts.length >= 2) return pipeParts[0];
+  const prefix = raw.match(/^\[(must-have|required|mandatory|core|critical|important|nice-to-have|optional|bonus|preferred|good-to-have)\]\s*(.+)$/i);
+  const suffix = raw.match(/^(.+?)\s*\((must-have|required|mandatory|core|critical|important|nice-to-have|optional|bonus|preferred|good-to-have)\)$/i);
+  const colon = raw.match(/^(.+?)\s*:\s*(must-have|required|mandatory|core|critical|important|nice-to-have|optional|bonus|preferred|good-to-have)$/i);
+  if (prefix) return prefix[2].trim();
+  if (suffix) return suffix[1].trim();
+  if (colon) return colon[1].trim();
+  return raw;
+}
+
 function uniqueTextItems(items: string[]) {
   const seen = new Set<string>();
   return items
-    .map((item) => item.replace(/\s+/g, ' ').trim())
+    .map((item) => displayKeyword(item).replace(/\s+/g, ' ').trim())
     .filter((item) => {
       const key = item.toLowerCase();
       if (!item || seen.has(key)) return false;
@@ -837,6 +851,7 @@ function categoryRecruiterReason(category: AtsScoreCategory) {
     contactInformation: 'Recruiters should be able to contact the student without searching through the resume.',
     formattingRisk: 'Clean formatting keeps the resume professional and easier to parse.',
     jobDescriptionMatch: 'JD alignment helps recruiters quickly see fit for this specific opening.',
+    levelReadiness: 'Career-stage fit shows whether the resume has the right kind of proof for this level.',
     quantifiedImpact: 'Metrics help recruiters compare impact and separate real work from generic responsibility.',
     resumeValidity: 'The file must first look like a real, readable resume before any score can be trusted.',
     roleKeywordMatch: 'Role keywords are most trusted when they appear with project or experience evidence.',
@@ -852,6 +867,7 @@ function categoryFixFormula(category: AtsScoreCategory) {
     bulletQuality: 'Use: Action + task + tool/method + measurable result.',
     contactInformation: 'Use one clean header with name, email, phone, LinkedIn, and portfolio if relevant.',
     jobDescriptionMatch: 'Mirror only truthful JD terms inside evidence bullets, not as a keyword dump.',
+    levelReadiness: 'Match proof to the stage: projects for early talent, ownership and impact for experienced roles.',
     quantifiedImpact: 'Add count, percentage, time saved, users, revenue, accuracy, or volume handled.',
     roleKeywordMatch: 'Place target-role keywords inside projects and experience where you can prove them.',
     sectionCompleteness: 'Use clear headings: Summary, Skills, Projects, Experience, Education, Certifications.'
@@ -1344,16 +1360,87 @@ function ScoreGuideModal({ analysis, onClose }: { analysis: Extract<AnalysisStat
   );
 }
 
+function AtsUnlockModal({
+  isPending,
+  onClose,
+  onUnlockNow,
+  priceText
+}: {
+  isPending: boolean;
+  onClose: () => void;
+  onUnlockNow: () => void;
+  priceText: string;
+}) {
+  const benefits = [
+    'Job description match and role fit scoring',
+    'Role keyword evidence checks, not just keyword stuffing',
+    'Deep line-level resume coaching suggestions',
+    'Sample CV points and role keywords to improve faster',
+    'Branded PDF report download after the advanced scan'
+  ];
+  const steps = ['Complete payment securely on Razorpay.', 'One advanced scan credit is added to your account.', 'Return here, choose Advanced match, and upload the resume again.', 'The full ATS report is generated from that advanced scan.'];
+
+  return (
+    <div className="ats-guide-backdrop" role="dialog" aria-modal="true" aria-labelledby="ats-unlock-title">
+      <section className="ats-unlock-modal">
+        <button aria-label="Close unlock details" className="ats-guide-close" disabled={isPending} onClick={onClose} type="button">
+          <X size={18} />
+        </button>
+        <div className="ats-unlock-modal__content">
+          <div className="ats-unlock-modal__copy">
+            <span className="eyebrow">Advanced ATS report</span>
+            <h2 id="ats-unlock-title">Unlock your full resume report</h2>
+            <p>Get the role-specific checks that help you understand what to fix before applying.</p>
+            <div className="ats-unlock-price">
+              <BadgeIndianRupee size={18} />
+              <span>{priceText}</span>
+            </div>
+            <ul className="ats-unlock-benefits">
+              {benefits.map((benefit) => (
+                <li key={benefit}>
+                  <CheckCircle2 size={18} />
+                  <span>{benefit}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="ats-unlock-modal__steps">
+            <span className="eyebrow">How it works</span>
+            <h3>Payment unlocks a scan credit</h3>
+            <ol>
+              {steps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+            <div className="ats-unlock-note">
+              <LockKeyhole size={16} />
+              <span>Payment does not auto-generate the report. The report is created when you run the next Advanced match scan.</span>
+            </div>
+          </div>
+        </div>
+        <footer className="ats-unlock-modal__actions">
+          <button className="student-action student-action--primary" disabled={isPending} onClick={onUnlockNow} type="button">
+            {isPending ? <Loader2 className="workshop-action-spinner" size={16} /> : <LockKeyhole size={16} />}
+            {isPending ? 'Preparing checkout...' : 'Unlock now'}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 function AtsReportWorkspace({
   analysis,
   onClose,
   onDownloadReport,
+  onUnlockAdvancedPending,
   onShowGuide,
   onUnlockAdvanced
 }: {
   analysis: Extract<AnalysisState, { status: 'ready' }>;
   onClose: () => void;
   onDownloadReport: () => void;
+  onUnlockAdvancedPending: boolean;
   onShowGuide: () => void;
   onUnlockAdvanced: () => void;
 }) {
@@ -1465,7 +1552,7 @@ function AtsReportWorkspace({
             <>
               <span>Locked premium</span>
               {LOCKED_PREMIUM_CHECKS.map((item) => (
-                <button className="ats-fix-nav__item ats-fix-nav__item--locked" key={item.key} onClick={onUnlockAdvanced} type="button">
+                <button className="ats-fix-nav__item ats-fix-nav__item--locked" disabled={onUnlockAdvancedPending} key={item.key} onClick={onUnlockAdvanced} type="button">
                   <span>{item.title}</span>
                   <LockKeyhole size={14} />
                 </button>
@@ -1479,9 +1566,9 @@ function AtsReportWorkspace({
             Download report
           </button>
         ) : !isPremiumUnlocked ? (
-          <button className="student-action student-action--primary ats-report-unlock" onClick={onUnlockAdvanced} type="button">
-            <LockKeyhole size={16} />
-            Unlock full report
+          <button className="student-action student-action--primary ats-report-unlock" disabled={onUnlockAdvancedPending} onClick={onUnlockAdvanced} type="button">
+            {onUnlockAdvancedPending ? <Loader2 className="workshop-action-spinner" size={16} /> : <LockKeyhole size={16} />}
+            {onUnlockAdvancedPending ? 'Preparing checkout...' : 'Unlock full report'}
           </button>
         ) : null}
       </aside>
@@ -1546,6 +1633,13 @@ function AtsReportWorkspace({
                 Unlock premium features
               </button>
             </header>
+            <div className="ats-payment-guidance">
+              <CheckCircle2 size={18} />
+              <div>
+                <strong>How unlock works</strong>
+                <span>Payment adds one advanced scan credit. After checkout, return here and run Advanced match to generate the full report.</span>
+              </div>
+            </div>
             <div className="ats-premium-lock-grid">
               {LOCKED_PREMIUM_CHECKS.map((item) => (
                 <article key={item.key}>
@@ -1810,14 +1904,18 @@ export function StudentAtsResumeScorePage() {
   const overviewQuery = useStudentAtsResumeScore();
   const createAttempt = useCreateStudentAtsAttempt();
   const createPackageOrder = useCreateStudentAtsPackageOrder();
+  const syncAtsCredits = useSyncStudentAtsCredits();
   const recordReportDownload = useRecordStudentAtsReportDownload();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const packagePanelRef = useRef<HTMLDivElement | null>(null);
+  const syncedStudentRef = useRef('');
   const [analysis, setAnalysis] = useState<AnalysisState>({ status: 'idle' });
   const [orderMessage, setOrderMessage] = useState<{ checkoutUrl?: string; tone: 'error' | 'success'; text: string } | null>(null);
+  const [pendingPackageId, setPendingPackageId] = useState<string | null>(null);
   const [scanMode, setScanMode] = useState<ScanMode>('basic');
   const [scanStepIndex, setScanStepIndex] = useState(0);
   const [showScoreGuide, setShowScoreGuide] = useState(false);
+  const [showUnlockModal, setShowUnlockModal] = useState(false);
   const [selectedRoleId, setSelectedRoleId] = useState('');
   const [selectedLevelId, setSelectedLevelId] = useState('');
   const [jobDescription, setJobDescription] = useState('');
@@ -1837,6 +1935,15 @@ export function StudentAtsResumeScorePage() {
   const uploadCtaLabel = scanMode === 'advanced' ? 'Use paid credit' : 'Choose PDF';
   const blockedCtaLabel = scanMode === 'basic' && !canUseFreeScan ? 'Unlock premium features' : scanMode === 'basic' ? 'Choose career stage' : 'Unlock advanced scan';
 
+  useEffect(() => {
+    const studentEmail = overview?.student.email ?? '';
+    if (!studentEmail || syncedStudentRef.current === studentEmail) return;
+    syncedStudentRef.current = studentEmail;
+    void syncAtsCredits.mutateAsync().catch(() => {
+      syncedStudentRef.current = '';
+    });
+  }, [overview?.student.email, syncAtsCredits]);
+
   const summary = useMemo(
     () => ({
       attempts: overview?.attempts.length ?? 0,
@@ -1847,6 +1954,16 @@ export function StudentAtsResumeScorePage() {
     }),
     [overview]
   );
+  const unlockReportPackage = useMemo(() => {
+    const packages = paidPackages.filter((item) => Number(item.amount) > 0);
+    return (
+      packages.find((item) => Number(item.amount) === 249 && item.currency === 'INR' && item.scanCredits === 1) ??
+      packages.find((item) => item.packageKey === 'ats_single_scan') ??
+      packages.find((item) => item.scanCredits === 1) ??
+      packages[0]
+    );
+  }, [paidPackages]);
+  const unlockReportPriceText = unlockReportPackage ? `${unlockReportPackage.currency} ${Number(unlockReportPackage.amount).toLocaleString()}` : 'Paid advanced scan';
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -1888,6 +2005,7 @@ export function StudentAtsResumeScorePage() {
         scanMode === 'advanced' && selectedRole && selectedLevel && selectedProfile
           ? analyzeAdvancedResume(extracted.text, {
               jobDescription,
+              levelKey: selectedLevel.levelKey,
               levelName: selectedLevel.levelName,
               roleName: selectedRole.roleName,
               roleProfile: selectedProfile,
@@ -1960,20 +2078,45 @@ export function StudentAtsResumeScorePage() {
     }
   }
 
-  async function handleCreatePackageOrder(packageId: string) {
+  async function handleCreatePackageOrder(packageId: string, options: { openCheckout?: boolean } = {}) {
     setOrderMessage(null);
+    setPendingPackageId(packageId);
     try {
       const order = await createPackageOrder.mutateAsync({ packageId });
+      const checkoutUrl = order.checkoutUrl ?? order.paymentLink;
       setOrderMessage({
-        checkoutUrl: order.paymentLink,
+        checkoutUrl,
         tone: 'success',
-        text: order.paymentLink
-          ? `Payment order ${order.orderId ?? order.id} is ready. Open checkout to complete payment; credits unlock after payment confirmation.`
-          : `Payment order ${order.orderId ?? order.id} is ready, but this package does not have a checkout link yet. Please contact support or ask admin to add a payment link.`
+        text: checkoutUrl
+          ? `Payment order ${order.orderId ?? order.id} is ready. After payment, 1 advanced scan credit will be added. Return here, choose Advanced match, and scan again to generate the full report.`
+          : `Payment order ${order.orderId ?? order.id} is ready, but checkout could not be opened. Please contact support.`
       });
+      if (checkoutUrl && options.openCheckout) {
+        window.location.assign(checkoutUrl);
+      }
     } catch (error) {
       setOrderMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Payment order could not be created.' });
+    } finally {
+      setPendingPackageId(null);
     }
+  }
+
+  function handleUnlockAdvancedCheckout() {
+    if (createPackageOrder.isPending) return;
+    setScanMode('advanced');
+    if (!unlockReportPackage) {
+      setShowUnlockModal(false);
+      setOrderMessage({ tone: 'error', text: 'No paid ATS package is available right now. Please contact support.' });
+      packagePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    void handleCreatePackageOrder(unlockReportPackage.id, { openCheckout: true });
+  }
+
+  function handleOpenUnlockModal() {
+    if (createPackageOrder.isPending) return;
+    setScanMode('advanced');
+    setShowUnlockModal(true);
   }
 
   function handlePrimaryUploadAction() {
@@ -1982,8 +2125,11 @@ export function StudentAtsResumeScorePage() {
       fileInputRef.current?.click();
       return;
     }
+    if (blockedCtaLabel === 'Choose career stage') {
+      return;
+    }
     setScanMode('advanced');
-    packagePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setShowUnlockModal(true);
   }
 
   if (overviewQuery.isLoading) {
@@ -2008,6 +2154,7 @@ export function StudentAtsResumeScorePage() {
     <div className="page-stack ats-resume-page">
       {analysis.status === 'processing' ? <AtsScanOverlay fileName={analysis.fileName} scanMode={scanMode} stepIndex={scanStepIndex} /> : null}
       {analysis.status === 'ready' && showScoreGuide ? <ScoreGuideModal analysis={analysis} onClose={() => setShowScoreGuide(false)} /> : null}
+      {showUnlockModal ? <AtsUnlockModal isPending={createPackageOrder.isPending} onClose={() => setShowUnlockModal(false)} onUnlockNow={handleUnlockAdvancedCheckout} priceText={unlockReportPriceText} /> : null}
       <PageHeader
         description="Check your PDF resume for ATS readability, structure, contact details, action verbs, measurable impact, role keywords, and JD match."
         eyebrow="Career tools"
@@ -2138,10 +2285,15 @@ export function StudentAtsResumeScorePage() {
             {analysis.status === 'processing' ? 'Analyzing...' : canUpload ? uploadCtaLabel : blockedCtaLabel}
           </button>
 
-          {!canUpload ? (
+          {scanMode === 'advanced' && hasPaidCredits ? (
+            <div className="ats-paywall-note ats-paywall-note--success">
+              <Sparkles size={16} />
+              <span>Advanced scan credit is available. Upload your resume here to generate the full report.</span>
+            </div>
+          ) : !canUpload ? (
             <div className="ats-paywall-note">
               <LockKeyhole size={16} />
-              <span>{scanMode === 'advanced' ? 'Advanced analysis needs an available paid scan credit and a role profile.' : 'Free scans are used. Paid scan packages unlock advanced analysis.'}</span>
+              <span>{scanMode === 'advanced' ? 'Advanced analysis needs an available paid scan credit and a role profile. After payment, scan again in Advanced match to generate the full report.' : 'Free scans are used. Buy an advanced scan credit, then scan again in Advanced match for the full report.'}</span>
             </div>
           ) : null}
         </div>
@@ -2169,11 +2321,18 @@ export function StudentAtsResumeScorePage() {
                     {item.currency} {Number(item.amount).toLocaleString()}
                   </span>
                   <button className="student-action student-action--primary ats-package-buy-button" disabled={createPackageOrder.isPending} onClick={() => void handleCreatePackageOrder(item.id)} type="button">
-                    {createPackageOrder.isPending ? 'Preparing...' : 'Buy'}
+                    {pendingPackageId === item.id ? 'Preparing...' : 'Buy'}
                   </button>
                 </div>
               </article>
             ))}
+          </div>
+          <div className="ats-payment-guidance ats-payment-guidance--compact">
+            <CheckCircle2 size={18} />
+            <div>
+              <strong>What happens after payment?</strong>
+              <span>Your account gets an advanced scan credit. Come back to this page, choose Advanced match, and upload the resume again to generate the full report.</span>
+            </div>
           </div>
           {orderMessage ? (
             <div className={orderMessage.tone === 'success' ? 'ats-alert ats-alert--success' : 'ats-alert ats-alert--error'}>
@@ -2185,7 +2344,7 @@ export function StudentAtsResumeScorePage() {
               ) : null}
             </div>
           ) : null}
-          <p>{hasPaidCredits ? 'Advanced scan credits are available on your account.' : 'Credits unlock automatically after successful payment confirmation.'}</p>
+          <p>{hasPaidCredits ? 'Advanced scan credit is available. Choose Advanced match and scan your resume again to generate the full report.' : 'Payment adds an advanced scan credit. The report is generated after you return and run the Advanced match scan.'}</p>
         </div>
       </section>
 
@@ -2205,10 +2364,8 @@ export function StudentAtsResumeScorePage() {
           }}
           onDownloadReport={() => void handleDownloadReport()}
           onShowGuide={() => setShowScoreGuide(true)}
-          onUnlockAdvanced={() => {
-            setScanMode('advanced');
-            packagePanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          }}
+          onUnlockAdvancedPending={createPackageOrder.isPending}
+          onUnlockAdvanced={handleOpenUnlockModal}
         />
       ) : null}
 

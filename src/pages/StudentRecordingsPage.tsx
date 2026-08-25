@@ -1,4 +1,4 @@
-import { ArrowLeft, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, Copy, ExternalLink, Link2, Lock, Menu, MessageCircle, PlayCircle, ShieldCheck, Video, X } from 'lucide-react';
+import { ArrowLeft, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, Copy, ExternalLink, Link2, Loader2, Lock, Menu, MessageCircle, PlayCircle, ShieldCheck, Video, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState, LockedState } from '../components/ScreenStates';
@@ -6,6 +6,7 @@ import { PageHeader } from '../components/PageHeader';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
 import { StudentCohort, useStudentCohorts } from '../features/student/useStudentCohorts';
+import { useCreateStudentCheckout } from '../features/student/useStudentCheckout';
 import {
   StudentRecording,
   StudentRecordingSection,
@@ -506,22 +507,27 @@ function RecordingProgressCard({ progress }: { progress: RecordingGroupProgress 
 function RecordingRow({
   isCompleted,
   isProgressPending,
+  isStartingCheckout,
   onMarkComplete,
   onOpenRecording,
+  onStartCheckout,
   playbackMode,
   recording,
   sectionKey
 }: {
   isCompleted: boolean;
   isProgressPending: boolean;
+  isStartingCheckout: boolean;
   onMarkComplete: (recordingId: string) => void;
   onOpenRecording: (recording: StudentRecording) => void;
+  onStartCheckout: (recording: StudentRecording) => void;
   playbackMode: RecordingPlaybackMode;
   recording: StudentRecording;
   sectionKey: StudentRecordingSection;
 }) {
   const canOpen = hasRecordingAccess(recording) && Boolean(recording.recordingUrl);
   const canOpenInPortal = playbackMode === 'popup' && Boolean(youtubeEmbedUrl(recording.recordingUrl));
+  const canPay = recording.locked && recording.accessType === 'paid';
   const sequenceNumber = recordingSequenceNumber(recording);
   const showSequenceBadge = sectionKey === 'induction_live_project' && sequenceNumber !== null;
   const [copied, setCopied] = useState(false);
@@ -578,11 +584,11 @@ function RecordingRow({
             <ExternalLink size={16} />
             Open recording
           </a>
-        ) : recording.paymentLink ? (
-          <a className="student-action student-action--primary" href={recording.paymentLink} rel="noreferrer" target="_blank">
-            <Lock size={16} />
-            Pay to unlock
-          </a>
+        ) : canPay ? (
+          <button className="student-action student-action--primary" disabled={isStartingCheckout} onClick={() => onStartCheckout(recording)} type="button">
+            {isStartingCheckout ? <Loader2 className="workshop-action-spinner" size={16} /> : <Lock size={16} />}
+            {isStartingCheckout ? 'Preparing...' : 'Pay to unlock'}
+          </button>
         ) : null}
         {canOpen ? (
           isCompleted ? (
@@ -1150,6 +1156,7 @@ export function StudentRecordingsPage() {
   const recordingsQuery = useStudentRecordings({ limit: 500, page: 1 });
   const cohortsQuery = useStudentCohorts({ limit: 100, page: 1, status: 'all' });
   const featureControlsQuery = useStudentFeatureControls();
+  const createCheckout = useCreateStudentCheckout();
   const recordings = recordingsQuery.data?.items ?? [];
   const enrolledCohorts = cohortsQuery.data?.items ?? [];
   const recordingsFeature = useMemo(() => featureControlsQuery.data?.items.find((item) => item.moduleId === 'recordings'), [featureControlsQuery.data?.items]);
@@ -1275,6 +1282,26 @@ export function StudentRecordingsPage() {
       setProgressError(message);
     } finally {
       setPendingProgressRecordingId(null);
+    }
+  }
+
+  async function startRecordingCheckout(recording: StudentRecording) {
+    const itemId = recording.workshopId || recording.id;
+    const checkoutWindow = window.open('', '_blank');
+    try {
+      const checkout = await createCheckout.mutateAsync({ itemId, itemType: 'recording' });
+      const checkoutUrl = checkout.checkoutUrl ?? checkout.paymentLink;
+      if (checkoutUrl && checkoutWindow) {
+        checkoutWindow.opener = null;
+        checkoutWindow.location.href = checkoutUrl;
+      } else if (checkoutUrl) {
+        window.location.href = checkoutUrl;
+      } else {
+        checkoutWindow?.close();
+      }
+    } catch {
+      checkoutWindow?.close();
+      await recordingsQuery.refetch();
     }
   }
 
@@ -1420,9 +1447,11 @@ export function StudentRecordingsPage() {
                     <RecordingRow
                       isCompleted={isRecordingCompleted(recording, completedRecordingIds)}
                       isProgressPending={pendingProgressRecordingId === recordingCompletionId(recording)}
+                      isStartingCheckout={createCheckout.isPending}
                       key={recording.id}
                       onMarkComplete={(recordingId) => void markRecordingComplete(recordingId)}
                       onOpenRecording={setActivePlayerRecording}
+                      onStartCheckout={(item) => void startRecordingCheckout(item)}
                       playbackMode={playbackMode}
                       recording={recording}
                       sectionKey={section.key}

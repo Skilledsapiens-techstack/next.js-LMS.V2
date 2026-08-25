@@ -69,6 +69,7 @@ const ADMIN_READ_PERMISSIONS_BY_PATH: Record<string, AdminPermission> = {
   '/admins/certificate-requests': 'admin.certificates.view',
   '/admins/certificate-review-items': 'admin.certificates.view',
   '/admins/certificates': 'admin.certificates.view',
+  '/admins/cohort-card-metrics': 'admin.cohorts.view',
   '/admins/cohorts': 'admin.cohorts.view',
   '/admins/dashboard': 'admin.dashboard.view',
   '/admins/email-queue': 'admin.email.view',
@@ -1130,6 +1131,7 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/students/me/resource-domains') return getStudentResourceDomainOptions(context, options.query) as Promise<TResponse>;
 
   if (cleanPath === '/admins/students/college-options') return getAdminStudentCollegeOptions(context) as Promise<TResponse>;
+  if (cleanPath === '/admins/cohort-card-metrics') return getAdminCohortCardMetrics(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/email-marketing-cohort-touch') return getAdminEmailMarketingCohortTouch(context) as Promise<TResponse>;
 
   if (cleanPath === '/admins/students') return getAdminStudentsList(context, options.query) as Promise<TResponse>;
@@ -2110,14 +2112,18 @@ async function getStudentDashboard(context: Awaited<ReturnType<typeof createCont
     callRpc(context, 'student_resources_view', { p_student_email: context.email }),
     callRpc(context, 'student_projects_bundle', { p_student_email: context.email }),
     callRpc(context, 'student_certificates_bundle', { p_student_email: context.email }),
-    getStudentGuidanceContent(context, { limit: 10, page: 1 }).catch(() => paginate([], { limit: 10, page: 1 }))
+    getStudentGuidanceContent(context, { limit: 10, page: 1 }, student).catch(() => paginate([], { limit: 10, page: 1 }))
   ]);
 
   return { certificates, dashboard, guidanceContent, projects, resources, student };
 }
 
-async function getStudentGuidanceContent(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
-  const student = await getStudentProfile(context);
+async function getStudentGuidanceContent(
+  context: Awaited<ReturnType<typeof createContext>>,
+  query: ApiClientOptions['query'],
+  studentProfile?: Awaited<ReturnType<typeof getStudentProfile>>
+) {
+  const student = studentProfile ?? await getStudentProfile(context);
   const studentId = String((student as Record<string, unknown>).id ?? '');
   const directProgramValues = [
     ...asStringArray((student as Record<string, unknown>).trackRoleIds),
@@ -3846,6 +3852,54 @@ async function getAdminEmailMarketingCohortTouch(context: Awaited<ReturnType<typ
     generatedAt: new Date().toISOString(),
     items: items.sort((first, second) => String(first.cohortName ?? '').localeCompare(String(second.cohortName ?? '')))
   };
+}
+
+async function getAdminCohortCardMetrics(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const names = splitCommaValues(query?.cohortNames).slice(0, 500);
+  const metrics = names.reduce<Record<string, { resources: number; students: number; workshops: number }>>((current, name) => {
+    current[name] = { resources: 0, students: 0, workshops: 0 };
+    return current;
+  }, {});
+
+  if (names.length === 0) return metrics;
+
+  const [studentCohortsResult, workshopsResult, resourcesResult] = await Promise.all([
+    context.supabase.from('student_cohorts').select('cohort_name,student_id').in('cohort_name', names).limit(20000),
+    context.supabase.from('workshops').select('cohort_names').limit(10000),
+    context.supabase.from('resources').select('cohort_names').limit(10000)
+  ]);
+
+  if (studentCohortsResult.error) throw new ApiClientError(studentCohortsResult.error.message, 503);
+  if (workshopsResult.error) throw new ApiClientError(workshopsResult.error.message, 503);
+  if (resourcesResult.error) throw new ApiClientError(resourcesResult.error.message, 503);
+
+  const studentIdsByCohort = new Map<string, Set<string>>();
+  (studentCohortsResult.data ?? []).forEach((row) => {
+    const cohortName = String(row.cohort_name ?? '').trim();
+    const studentId = String(row.student_id ?? '').trim();
+    if (!cohortName || !studentId || !metrics[cohortName]) return;
+    const ids = studentIdsByCohort.get(cohortName) ?? new Set<string>();
+    ids.add(studentId);
+    studentIdsByCohort.set(cohortName, ids);
+  });
+
+  studentIdsByCohort.forEach((ids, cohortName) => {
+    if (metrics[cohortName]) metrics[cohortName].students = ids.size;
+  });
+
+  const countScopedRows = (rows: unknown[] | null, metricKey: 'resources' | 'workshops') => {
+    (rows ?? []).forEach((row) => {
+      const rowCohortNames = isRecord(row) ? asStringArray(row.cohort_names ?? row.cohortNames) : [];
+      names.forEach((name) => {
+        if (rowCohortNames.some((cohortName) => cohortName.trim() === name)) metrics[name][metricKey] += 1;
+      });
+    });
+  };
+
+  countScopedRows(workshopsResult.data ?? [], 'workshops');
+  countScopedRows(resourcesResult.data ?? [], 'resources');
+
+  return metrics;
 }
 
 async function getAdminProjectSubmissionsList(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
@@ -8433,7 +8487,6 @@ function validateResourceWriteBody(payload: Record<string, unknown>, inserting: 
   if (price !== null && price !== undefined && Number(price) < 0) throw new ApiClientError('Resource price cannot be negative.', 400);
   if (accessType === 'paid') {
     if (price === null || price === undefined || Number(price) <= 0) throw new ApiClientError('Paid resources require a positive price.', 400);
-    if (!paymentLink) throw new ApiClientError('Paid resources require a payment link.', 400);
   }
   if (currency && currency.length > 10) throw new ApiClientError('Currency must be 10 characters or fewer.', 400);
 }

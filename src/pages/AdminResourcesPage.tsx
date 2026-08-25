@@ -516,11 +516,7 @@ export function AdminResourcesPage() {
         setFormError('Paid resources require a positive price.');
         return null;
       }
-      if (!paymentLink) {
-        setFormError('Paid resources require a payment link.');
-        return null;
-      }
-      if (!isHttpUrl(paymentLink)) {
+      if (paymentLink && !isHttpUrl(paymentLink)) {
         setFormError('Payment link must start with http:// or https://.');
         return null;
       }
@@ -921,12 +917,12 @@ export function AdminResourcesPage() {
               />
             </label>
             <label>
-              <span>Payment Link</span>
+              <span>Fallback Payment Link</span>
               <input
                 disabled={formState.accessType === 'free'}
                 value={formState.paymentLink}
                 onChange={(event) => updateForm('paymentLink', event.target.value)}
-                placeholder={formState.accessType === 'free' ? 'Only for paid resources' : 'Required for paid resources'}
+                placeholder={formState.accessType === 'free' ? 'Only for paid resources' : 'Optional legacy link'}
               />
             </label>
             <label className="admin-project-form__wide">
