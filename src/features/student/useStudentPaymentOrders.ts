@@ -8,6 +8,7 @@ export type StudentPaymentItemType = 'group' | 'workshop' | 'resource' | 'ats_pa
 
 export type StudentPaymentOrder = {
   amount: number;
+  checkoutUrl?: string;
   createdAt?: string;
   currency: string;
   id: string;
@@ -16,6 +17,7 @@ export type StudentPaymentOrder = {
   itemType: StudentPaymentItemType;
   orderId?: string;
   razorpayOrderId?: string;
+  razorpayPaymentLinkId?: string;
   razorpayPaymentId?: string;
   receipt?: string;
   status: StudentPaymentOrderStatus;

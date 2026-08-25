@@ -28068,6 +28068,48 @@ h1 {
   grid-column: 1 / -1;
 }
 
+.ats-paywall-note--success {
+  background: #ecfdf3;
+  color: #047857;
+}
+
+.ats-payment-guidance {
+  align-items: flex-start;
+  background: #f8fafc;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  color: var(--color-text-muted);
+  display: flex;
+  gap: 10px;
+  line-height: 1.45;
+  margin-top: 16px;
+  padding: 12px 14px;
+}
+
+.ats-payment-guidance svg {
+  color: #047857;
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.ats-payment-guidance strong {
+  color: var(--color-text);
+  display: block;
+  font-size: 14px;
+  line-height: 1.3;
+  margin-bottom: 3px;
+}
+
+.ats-payment-guidance span {
+  display: block;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.ats-payment-guidance--compact {
+  margin-top: 14px;
+}
+
 .ats-alert--error {
   background: #fff1f2;
   color: var(--color-danger);
@@ -28206,6 +28248,166 @@ h1 {
   color: var(--color-text-muted);
   font-size: 18px;
   margin: 0;
+}
+
+.ats-unlock-modal {
+  background: #ffffff;
+  border: 1px solid var(--ats-panel-border);
+  border-radius: 8px;
+  box-shadow: 0 24px 80px rgba(2, 6, 23, 0.32);
+  color: var(--color-text);
+  max-height: min(90vh, 820px);
+  max-width: 1040px;
+  overflow: auto;
+  padding: 0;
+  position: relative;
+  width: min(100%, 980px);
+}
+
+.ats-unlock-modal__content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.78fr);
+}
+
+.ats-unlock-modal__copy,
+.ats-unlock-modal__steps {
+  display: grid;
+  gap: 18px;
+  padding: 44px;
+}
+
+.ats-unlock-modal__steps {
+  background: #f3f6ff;
+  border-left: 1px solid #dbe3ef;
+  align-content: center;
+}
+
+.ats-unlock-modal h2,
+.ats-unlock-modal h3 {
+  color: var(--color-text);
+  line-height: 1.15;
+  margin: 0;
+}
+
+.ats-unlock-modal h2 {
+  font-size: 34px;
+}
+
+.ats-unlock-modal h3 {
+  font-size: 24px;
+}
+
+.ats-unlock-modal p {
+  color: var(--color-text-muted);
+  font-size: 18px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.ats-unlock-price {
+  align-items: center;
+  background: #fff7cc;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  color: #92400e;
+  display: inline-flex;
+  font-weight: 800;
+  gap: 8px;
+  justify-self: start;
+  padding: 10px 12px;
+}
+
+.ats-unlock-benefits,
+.ats-unlock-modal__steps ol {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+}
+
+.ats-unlock-benefits {
+  list-style: none;
+}
+
+.ats-unlock-benefits li {
+  align-items: flex-start;
+  color: var(--color-text-muted);
+  display: grid;
+  font-size: 16px;
+  font-weight: 500;
+  gap: 10px;
+  grid-template-columns: 20px minmax(0, 1fr);
+  line-height: 1.45;
+}
+
+.ats-unlock-benefits svg {
+  color: #047857;
+  margin-top: 2px;
+}
+
+.ats-unlock-modal__steps ol {
+  counter-reset: ats-unlock-step;
+  list-style: none;
+}
+
+.ats-unlock-modal__steps li {
+  align-items: flex-start;
+  color: var(--color-text-muted);
+  counter-increment: ats-unlock-step;
+  display: grid;
+  font-size: 16px;
+  font-weight: 500;
+  gap: 12px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  line-height: 1.45;
+}
+
+.ats-unlock-modal__steps li::before {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  color: var(--color-danger);
+  content: counter(ats-unlock-step);
+  display: flex;
+  font-size: 14px;
+  font-weight: 800;
+  height: 32px;
+  justify-content: center;
+  width: 32px;
+}
+
+.ats-unlock-note {
+  align-items: flex-start;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  color: #9a3412;
+  display: grid;
+  font-size: 14px;
+  font-weight: 600;
+  gap: 10px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  line-height: 1.45;
+  padding: 12px;
+}
+
+.ats-unlock-note svg {
+  margin-top: 2px;
+}
+
+.ats-unlock-modal__actions {
+  align-items: center;
+  background: #ffffff;
+  border-top: 1px solid var(--ats-panel-border);
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  padding: 18px 44px;
+}
+
+.ats-unlock-modal__actions .student-action {
+  min-width: 180px;
 }
 
 .ats-guide-summary {
@@ -30723,6 +30925,40 @@ h1 {
 
   .ats-guide-modal {
     padding: 28px 20px;
+  }
+
+  .ats-unlock-modal__content {
+    grid-template-columns: 1fr;
+  }
+
+  .ats-unlock-modal__copy,
+  .ats-unlock-modal__steps {
+    padding: 30px 20px;
+  }
+
+  .ats-unlock-modal__steps {
+    border-left: 0;
+    border-top: 1px solid #dbe3ef;
+  }
+
+  .ats-unlock-modal h2 {
+    font-size: 28px;
+  }
+
+  .ats-unlock-modal h3 {
+    font-size: 22px;
+  }
+
+  .ats-unlock-modal__actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+    padding: 16px 20px;
+  }
+
+  .ats-unlock-modal__actions .student-action,
+  .ats-unlock-modal__actions .segmented-button {
+    justify-content: center;
+    width: 100%;
   }
 
   .ats-guide-modal h2,

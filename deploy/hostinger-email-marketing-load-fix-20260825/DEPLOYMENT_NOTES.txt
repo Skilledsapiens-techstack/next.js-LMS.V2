@@ -1,0 +1,23 @@
+Hostinger deployment package
+
+Package: hostinger-email-marketing-load-fix-20260825
+
+Scope:
+- Improves Admin Email Marketing initial load behavior.
+- Replaces the per-cohort student-count request burst with one aggregate admin read path.
+- Allows supporting analytics data to load without blocking the main Email Marketing planner screen.
+- Keeps auto-draft creation waiting for cohort metrics so plan counts remain conservative.
+
+Backend:
+- No Supabase migration required.
+- No Supabase Edge Function deployment required.
+- Change is contained in the frontend app/data adapter bundle.
+
+Verification:
+- npm run typecheck passed.
+- npm run build passed.
+- Local route loads and redirects correctly to login when no admin session is present.
+- Authenticated browser verification could not be completed locally because both available browser sessions were logged out.
+
+Deploy:
+- Upload the contents of this package's dist/ directory to Hostinger for the LMS frontend.

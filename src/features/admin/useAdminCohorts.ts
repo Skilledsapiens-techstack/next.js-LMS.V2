@@ -359,42 +359,11 @@ export function useAdminCohortCardMetrics(cohortNames: string[]) {
 
   return useQuery({
     enabled: Boolean(accessToken && names.length > 0),
-    queryFn: async () => {
-      const [workshops, resources, studentCounts] = await Promise.all([
-        fetchAllAdminItems<unknown>(accessToken ?? undefined, '/admins/workshops', { status: 'all' }),
-        fetchAllAdminItems<unknown>(accessToken ?? undefined, '/admins/resources', { status: 'all' }),
-        Promise.all(
-          names.map(async (cohortName) => {
-            const response = await apiGet<PaginatedResponse<unknown>>('/admins/students', {
-              accessToken: accessToken ?? undefined,
-              query: { cohortName, limit: 1, page: 1, status: 'all' }
-            });
-            return [cohortName, response.total] as const;
-          })
-        )
-      ]);
-
-      const metrics = names.reduce<AdminCohortCardMetrics>((current, name) => {
-        current[name] = { resources: 0, students: 0, workshops: 0 };
-        return current;
-      }, {});
-
-      studentCounts.forEach(([name, count]) => {
-        if (metrics[name]) metrics[name].students = count;
-      });
-      workshops.forEach((item) => {
-        names.forEach((name) => {
-          if (includesCohortName(item, name)) metrics[name].workshops += 1;
-        });
-      });
-      resources.forEach((item) => {
-        names.forEach((name) => {
-          if (includesCohortName(item, name)) metrics[name].resources += 1;
-        });
-      });
-
-      return metrics;
-    },
+    queryFn: () =>
+      apiGet<AdminCohortCardMetrics>('/admins/cohort-card-metrics', {
+        accessToken: accessToken ?? undefined,
+        query: { cohortNames: names.join(',') }
+      }),
     queryKey: ['admin-cohort-card-metrics', accessToken, names.join('|')],
     staleTime: 30_000
   });

@@ -87,6 +87,8 @@ function referenceCandidates(payload: JsonRecord) {
   const orderNotes = asRecord(order.notes);
 
   return {
+    itemIds: uniqueStrings([paymentNotes.item_id, paymentNotes.itemId, paymentLinkNotes.item_id, paymentLinkNotes.itemId]),
+    itemTypes: uniqueStrings([paymentNotes.item_type, paymentNotes.itemType, paymentLinkNotes.item_type, paymentLinkNotes.itemType]).map((value) => value.toLowerCase()),
     lmsOrderIds: uniqueStrings([
       paymentNotes.lms_order_id,
       paymentNotes.lmsOrderId,
@@ -106,6 +108,7 @@ function referenceCandidates(payload: JsonRecord) {
     paymentAmount: Number(payment.amount ?? paymentLink.amount_paid ?? paymentLink.amount ?? 0),
     paymentCurrency: text(payment.currency || paymentLink.currency).toUpperCase(),
     paymentId: text(payment.id || payload.razorpay_payment_id || paymentLink.payment_id || paymentLink.paymentId),
+    razorpayPaymentLinkIds: uniqueStrings([paymentLink.id, paymentLink.payment_link_id, payload.razorpay_payment_link_id]),
     razorpayOrderIds: uniqueStrings([payment.order_id, payment.orderId, order.id, payload.razorpay_order_id]),
     studentEmails: uniqueStrings([
       payment.email,
@@ -146,8 +149,19 @@ async function findPaymentOrder(payload: JsonRecord) {
     const { data, error } = await admin
       .from('payment_orders')
       .select('*')
-      .eq('item_type', 'ats_package')
       .eq('order_id', orderId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) return { order: data as JsonRecord, refs };
+  }
+
+  for (const paymentLinkId of refs.razorpayPaymentLinkIds) {
+    const { data, error } = await admin
+      .from('payment_orders')
+      .select('*')
+      .eq('razorpay_payment_link_id', paymentLinkId)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -159,7 +173,6 @@ async function findPaymentOrder(payload: JsonRecord) {
     const { data, error } = await admin
       .from('payment_orders')
       .select('*')
-      .eq('item_type', 'ats_package')
       .eq('razorpay_order_id', razorpayOrderId)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -169,16 +182,18 @@ async function findPaymentOrder(payload: JsonRecord) {
   }
 
   const studentEmail = refs.studentEmails[0] || '';
-  const packageKey = refs.packageKeys[0] || await inferSinglePackageKeyFromPayment(refs);
+  const itemType = refs.itemTypes[0] || 'ats_package';
+  const packageKey = itemType === 'ats_package' ? refs.packageKeys[0] || await inferSinglePackageKeyFromPayment(refs) : '';
+  const itemId = refs.itemIds[0] || packageKey;
   const amount = paymentAmountInMajorUnit(refs);
-  if (studentEmail && packageKey && amount > 0) {
+  if (studentEmail && itemId && amount > 0) {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await admin
       .from('payment_orders')
       .select('*')
-      .eq('item_type', 'ats_package')
+      .eq('item_type', itemType)
       .eq('student_email', studentEmail)
-      .eq('item_id', packageKey)
+      .eq('item_id', itemId)
       .eq('status', 'created')
       .eq('amount', amount)
       .gte('created_at', since)
@@ -220,6 +235,22 @@ async function grantAtsCredits(paymentOrder: JsonRecord, refs: ReturnType<typeof
   const razorpayOrderId = refs.razorpayOrderIds[0] || text(paymentOrder.razorpay_order_id) || null;
   const scanCredits = Number(atsPackage.scan_credits ?? 0);
   if (!Number.isInteger(scanCredits) || scanCredits <= 0) throw new Error('ATS package scan credits are invalid.');
+
+  const { data: existingGrant, error: existingGrantError } = await admin
+    .from('ats_student_credit_grants')
+    .select('id,purchased_scans,remaining_scans')
+    .eq('source', 'payment')
+    .eq('source_payment_order_id', paymentOrderId)
+    .maybeSingle();
+  if (existingGrantError) throw existingGrantError;
+  if (existingGrant) {
+    return {
+      credits: Number(existingGrant.remaining_scans ?? existingGrant.purchased_scans ?? 0),
+      duplicate: true,
+      paymentOrderId,
+      studentEmail,
+    };
+  }
 
   const updatePayload: JsonRecord = {
     status: 'paid',
@@ -291,6 +322,59 @@ async function grantAtsCredits(paymentOrder: JsonRecord, refs: ReturnType<typeof
   };
 }
 
+async function grantPaidAccess(paymentOrder: JsonRecord, refs: ReturnType<typeof referenceCandidates>) {
+  const itemType = text(paymentOrder.item_type || refs.itemTypes[0]).toLowerCase();
+  const itemId = text(paymentOrder.item_id || refs.itemIds[0]);
+  if (!['resource', 'workshop', 'group'].includes(itemType)) throw new Error('Unsupported paid access item type.');
+  if (!itemId) throw new Error('Paid access item id is missing on payment order.');
+
+  const studentEmail = normalizeEmail(paymentOrder.student_email || refs.studentEmails[0]);
+  if (!studentEmail) throw new Error('Student email is missing on payment order.');
+
+  const paymentOrderId = text(paymentOrder.id || paymentOrder.order_id);
+  const paymentId = refs.paymentId || null;
+  const razorpayOrderId = refs.razorpayOrderIds[0] || text(paymentOrder.razorpay_order_id) || null;
+  const paymentLinkId = refs.razorpayPaymentLinkIds[0] || text(paymentOrder.razorpay_payment_link_id) || null;
+  const now = new Date().toISOString();
+
+  const updatePayload: JsonRecord = {
+    status: 'paid',
+    updated_at: now,
+  };
+  if (paymentId) updatePayload.razorpay_payment_id = paymentId;
+  if (razorpayOrderId) updatePayload.razorpay_order_id = razorpayOrderId;
+  if (paymentLinkId) updatePayload.razorpay_payment_link_id = paymentLinkId;
+
+  const { error: orderUpdateError } = await admin
+    .from('payment_orders')
+    .update(updatePayload)
+    .eq('id', paymentOrder.id);
+  if (orderUpdateError) throw orderUpdateError;
+
+  const accessId = `payment:${studentEmail}:${itemType}:${itemId}`;
+  const { error: accessError } = await admin
+    .from('paid_access')
+    .upsert({
+      access_id: accessId,
+      granted_at: now,
+      item_id: itemId,
+      item_type: itemType,
+      notes: `Activated from Razorpay payment${paymentId ? ` ${paymentId}` : ''}.`,
+      source: 'razorpay_payment',
+      status: 'active',
+      student_email: studentEmail,
+    }, { onConflict: 'access_id' });
+  if (accessError) throw accessError;
+
+  return {
+    accessId,
+    itemId,
+    itemType,
+    paymentOrderId,
+    studentEmail,
+  };
+}
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (request.method !== 'POST') return json(405, { error: 'Method not allowed.' });
@@ -321,13 +405,12 @@ Deno.serve(async (request) => {
       return json(202, {
         ok: false,
         pending: true,
-        reason: 'No matching ATS payment order found. Ensure Razorpay notes/reference_id include lms_order_id or use Razorpay order_id mapping.',
+        reason: 'No matching LMS payment order found. Ensure Razorpay notes/reference_id include lms_order_id.',
       });
     }
 
-    if (text(order.item_type) !== 'ats_package') return json(200, { ok: true, ignored: true, reason: 'Not an ATS package order.' });
-
-    const result = await grantAtsCredits(order, refs);
+    const itemType = text(order.item_type).toLowerCase();
+    const result = itemType === 'ats_package' ? await grantAtsCredits(order, refs) : await grantPaidAccess(order, refs);
     return json(200, { ok: true, event: eventName, ...result });
   } catch (error) {
     return json(500, { error: error instanceof Error ? error.message : String(error) });

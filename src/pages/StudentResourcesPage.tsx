@@ -5,6 +5,7 @@ import { ErrorState, LoadingState, LockedState } from '../components/ScreenState
 import { PageHeader } from '../components/PageHeader';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
+import { useCreateStudentCheckout } from '../features/student/useStudentCheckout';
 import { StudentResource, useStudentResourceDomains, useStudentResources } from '../features/student/useStudentResources';
 import { StudentPaymentOrder, useStudentPaymentOrders } from '../features/student/useStudentPaymentOrders';
 
@@ -93,22 +94,26 @@ function groupResourcesByType(resources: StudentResource[]) {
 function ResourceCard({
   bookmarked,
   isCheckingAccess,
+  isStartingCheckout,
   onToggleBookmark,
   onRefreshAccess,
+  onStartCheckout,
   paymentOrder,
   resource
 }: {
   bookmarked: boolean;
   isCheckingAccess: boolean;
+  isStartingCheckout: boolean;
   onToggleBookmark: (resource: StudentResource) => void;
   onRefreshAccess: () => void;
+  onStartCheckout: (resource: StudentResource) => void;
   paymentOrder?: StudentPaymentOrder;
   resource: StudentResource;
 }) {
   const [isOpening, setIsOpening] = useState(false);
   const canOpen = hasResourceAccess(resource) && Boolean(resource.url);
   const isPaymentPending = resource.locked && paymentOrder?.status === 'created';
-  const canPay = resource.locked && resource.accessType === 'paid' && Boolean(resource.paymentLink) && !isPaymentPending;
+  const canPay = resource.locked && resource.accessType === 'paid' && !isPaymentPending;
   const priceLabel = formatPrice(resource);
   const primaryLabel = canOpen ? 'Open Resource' : canPay ? `Pay ${priceLabel}` : isPaymentPending ? 'Check Payment Status' : 'Locked';
   const commerceTone = canOpen ? 'ready' : canPay ? 'paid' : isPaymentPending ? 'pending' : 'locked';
@@ -163,10 +168,10 @@ function ResourceCard({
               {isOpening ? 'Opening...' : primaryLabel}
             </a>
           ) : canPay ? (
-            <a className="student-action student-action--primary resource-card__action" href={resource.paymentLink} onClick={markOpening} rel="noreferrer" target="_blank">
-              {isOpening ? <Loader2 className="workshop-action-spinner" size={16} /> : <ExternalLink size={16} />}
-              {isOpening ? 'Opening...' : primaryLabel}
-            </a>
+            <button className="student-action student-action--primary resource-card__action" disabled={isStartingCheckout} onClick={() => onStartCheckout(resource)} type="button">
+              {isStartingCheckout ? <Loader2 className="workshop-action-spinner" size={16} /> : <ExternalLink size={16} />}
+              {isStartingCheckout ? 'Preparing...' : primaryLabel}
+            </button>
           ) : isPaymentPending ? (
             <button className="student-action student-action--primary resource-card__action" disabled={isCheckingAccess} onClick={onRefreshAccess} type="button">
               {isCheckingAccess ? <Loader2 className="workshop-action-spinner" size={16} /> : <RefreshCw size={16} />}
@@ -201,6 +206,7 @@ export function StudentResourcesPage() {
   const resourceDomainKey = searchParams.get('resourceDomainKey')?.trim() ?? '';
   const [isCheckingAccess, setIsCheckingAccess] = useState(false);
   const [bookmarkedResourceIds, setBookmarkedResourceIds] = useState<string[]>([]);
+  const createCheckout = useCreateStudentCheckout();
   const resourcesQuery = useStudentResources({ locked: 'all', page, programKey, resourceDomainKey });
   const resourceDomainsQuery = useStudentResourceDomains({ programKey });
   const paymentOrdersQuery = useStudentPaymentOrders({ itemType: 'resource', limit: 100, page: 1, status: 'all' });
@@ -287,6 +293,26 @@ export function StudentResourcesPage() {
     }
   }
 
+  async function startResourceCheckout(resource: StudentResource) {
+    const itemId = resource.resourceId || resource.id;
+    const checkoutWindow = window.open('', '_blank');
+    try {
+      const checkout = await createCheckout.mutateAsync({ itemId, itemType: 'resource' });
+      const checkoutUrl = checkout.checkoutUrl ?? checkout.paymentLink;
+      if (checkoutUrl && checkoutWindow) {
+        checkoutWindow.opener = null;
+        checkoutWindow.location.href = checkoutUrl;
+      } else if (checkoutUrl) {
+        window.location.href = checkoutUrl;
+      } else {
+        checkoutWindow?.close();
+      }
+    } catch {
+      checkoutWindow?.close();
+      await refreshPaymentAccess();
+    }
+  }
+
   if (resourcesQuery.isLoading) {
     return (
       <div className="page-stack">
@@ -368,9 +394,11 @@ export function StudentResourcesPage() {
                   <ResourceCard
                     bookmarked={bookmarkedResourceIds.includes(resourceBookmarkId(resource))}
                     isCheckingAccess={isCheckingAccess || resourcesQuery.isFetching || paymentOrdersQuery.isFetching}
+                    isStartingCheckout={createCheckout.isPending}
                     key={`saved-${resource.id}`}
                     onToggleBookmark={toggleBookmark}
                     onRefreshAccess={() => void refreshPaymentAccess()}
+                    onStartCheckout={(item) => void startResourceCheckout(item)}
                     paymentOrder={matchingPaymentOrder(resource, paymentOrders)}
                     resource={resource}
                   />
@@ -389,9 +417,11 @@ export function StudentResourcesPage() {
                   <ResourceCard
                     bookmarked={bookmarkedResourceIds.includes(resourceBookmarkId(resource))}
                     isCheckingAccess={isCheckingAccess || resourcesQuery.isFetching || paymentOrdersQuery.isFetching}
+                    isStartingCheckout={createCheckout.isPending}
                     key={resource.id}
                     onToggleBookmark={toggleBookmark}
                     onRefreshAccess={() => void refreshPaymentAccess()}
+                    onStartCheckout={(item) => void startResourceCheckout(item)}
                     paymentOrder={matchingPaymentOrder(resource, paymentOrders)}
                     resource={resource}
                   />

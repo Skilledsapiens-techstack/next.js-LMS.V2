@@ -1,10 +1,11 @@
-import { CalendarDays, ExternalLink, History, Lock } from 'lucide-react';
+import { CalendarDays, ExternalLink, History, Loader2, Lock } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { EmptyState, ErrorState, LoadingState, LockedState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
+import { useCreateStudentCheckout } from '../features/student/useStudentCheckout';
 import { StudentScheduleItem, StudentScheduleStatus, useStudentSchedule } from '../features/student/useStudentSchedule';
 
 const pageSize = 25;
@@ -136,8 +137,21 @@ function buildPageLink(page: number, view: ScheduleView) {
   return `?${params.toString()}`;
 }
 
-function ScheduleRow({ item, now, variant = 'upcoming' }: { item: StudentScheduleItem; now: number; variant?: ScheduleView }) {
+function ScheduleRow({
+  isStartingCheckout,
+  item,
+  now,
+  onStartCheckout,
+  variant = 'upcoming'
+}: {
+  isStartingCheckout: boolean;
+  item: StudentScheduleItem;
+  now: number;
+  onStartCheckout: (item: StudentScheduleItem) => void;
+  variant?: ScheduleView;
+}) {
   const canJoin = hasScheduleAccess(item) && Boolean(item.joinUrl);
+  const canPay = item.locked && item.accessType === 'paid';
   const isPast = variant === 'past';
   const displayStatus = isLiveByTime(item, now) ? 'Live' : item.status;
 
@@ -171,11 +185,11 @@ function ScheduleRow({ item, now, variant = 'upcoming' }: { item: StudentSchedul
             <ExternalLink size={16} />
             Join session
           </a>
-        ) : item.paymentLink ? (
-          <a className="student-action student-action--primary" href={item.paymentLink} rel="noreferrer" target="_blank">
-            <Lock size={16} />
-            Pay to unlock
-          </a>
+        ) : canPay ? (
+          <button className="student-action student-action--primary" disabled={isStartingCheckout} onClick={() => onStartCheckout(item)} type="button">
+            {isStartingCheckout ? <Loader2 className="workshop-action-spinner" size={16} /> : <Lock size={16} />}
+            {isStartingCheckout ? 'Preparing...' : 'Pay to unlock'}
+          </button>
         ) : null}
       </div> : null}
     </article>
@@ -187,6 +201,7 @@ export function StudentSchedulePage() {
   const page = asPositiveInteger(searchParams.get('page'), 1);
   const view = asScheduleView(searchParams.get('view'));
   const [now, setNow] = useState(() => Date.now());
+  const createCheckout = useCreateStudentCheckout();
   const scheduleQuery = useStudentSchedule({ includePast: true, limit: 500, page: 1, sessionType: 'workshop' });
 
   useEffect(() => {
@@ -207,6 +222,26 @@ export function StudentSchedulePage() {
   const visibleItems = paginateItems(scheduleItems, safePage);
   const lockedCount = useMemo(() => upcomingItems.filter((item) => item.locked).length, [upcomingItems]);
   const nextSession = upcomingItems.find((item) => isLiveByTime(item, now)) ?? upcomingItems[0];
+
+  async function startScheduleCheckout(item: StudentScheduleItem) {
+    const itemId = item.workshopId || item.id;
+    const checkoutWindow = window.open('', '_blank');
+    try {
+      const checkout = await createCheckout.mutateAsync({ itemId, itemType: 'workshop' });
+      const checkoutUrl = checkout.checkoutUrl ?? checkout.paymentLink;
+      if (checkoutUrl && checkoutWindow) {
+        checkoutWindow.opener = null;
+        checkoutWindow.location.href = checkoutUrl;
+      } else if (checkoutUrl) {
+        window.location.href = checkoutUrl;
+      } else {
+        checkoutWindow?.close();
+      }
+    } catch {
+      checkoutWindow?.close();
+      await scheduleQuery.refetch();
+    }
+  }
 
   if (scheduleQuery.isLoading) {
     return (
@@ -289,7 +324,14 @@ export function StudentSchedulePage() {
             </header>
           ) : null}
           {visibleItems.map((item) => (
-            <ScheduleRow item={item} key={item.id} now={now} variant={view} />
+            <ScheduleRow
+              isStartingCheckout={createCheckout.isPending}
+              item={item}
+              key={item.id}
+              now={now}
+              onStartCheckout={(row) => void startScheduleCheckout(row)}
+              variant={view}
+            />
           ))}
         </section>
       ) : (

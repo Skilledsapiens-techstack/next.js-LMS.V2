@@ -1371,11 +1371,12 @@ export function AdminEmailMarketingPage() {
   );
 
   const isCohortMetricsLoading = cohortNames.length > 0 && cohortCardMetricsQuery.isLoading;
-  const isLoading = cohortsQuery.isLoading || isCohortMetricsLoading || campaignsQuery.isLoading || templatesQuery.isLoading || todayPlanQuery.isLoading || cohortTouchQuery.isLoading || planHistoryQuery.isLoading || providerEventsQuery.isLoading || suppressionOverridesQuery.isLoading || todayPlanEventsQuery.isLoading;
-  const isError = cohortsQuery.isError || cohortCardMetricsQuery.isError || campaignsQuery.isError || templatesQuery.isError || todayPlanQuery.isError || cohortTouchQuery.isError || planHistoryQuery.isError || providerEventsQuery.isError || suppressionOverridesQuery.isError || todayPlanEventsQuery.isError;
+  const isLoading = cohortsQuery.isLoading || campaignsQuery.isLoading || templatesQuery.isLoading || todayPlanQuery.isLoading || cohortTouchQuery.isLoading || planHistoryQuery.isLoading;
+  const isAutoDraftLoading = isLoading || isCohortMetricsLoading;
+  const isError = cohortsQuery.isError || campaignsQuery.isError || templatesQuery.isError || todayPlanQuery.isError || cohortTouchQuery.isError || planHistoryQuery.isError;
 
   useEffect(() => {
-    if (isLoading || isError || todayPlan || !plan.selected.length || createPlan.isPending) return;
+    if (isAutoDraftLoading || isError || todayPlan || !plan.selected.length || createPlan.isPending) return;
     if (autoDraftAttemptedRef.current === todayKey) return;
     autoDraftAttemptedRef.current = todayKey;
 
@@ -1414,7 +1415,7 @@ export function AdminEmailMarketingPage() {
     fallbackCampaign,
     groupingStrategy,
     isError,
-    isLoading,
+    isAutoDraftLoading,
     plan,
     savedCampaign,
     suggestedResources,

@@ -1,9 +1,10 @@
-import { CalendarDays, ExternalLink, History, Lock, MessageCircle } from 'lucide-react';
+import { CalendarDays, ExternalLink, History, Loader2, Lock, MessageCircle } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ErrorState, LoadingState } from '../components/ScreenStates';
 import { PageHeader } from '../components/PageHeader';
 import { StatusBadge } from '../components/StatusBadge';
+import { useCreateStudentCheckout } from '../features/student/useStudentCheckout';
 import { StudentScheduleItem, StudentScheduleStatus, useStudentSchedule } from '../features/student/useStudentSchedule';
 
 const pageSize = 25;
@@ -115,8 +116,21 @@ function buildPageLink(page: number, view: SessionView) {
   return `?${params.toString()}`;
 }
 
-function DoubtSessionRow({ item, now, variant = 'upcoming' }: { item: StudentScheduleItem; now: number; variant?: SessionView }) {
+function DoubtSessionRow({
+  isStartingCheckout,
+  item,
+  now,
+  onStartCheckout,
+  variant = 'upcoming'
+}: {
+  isStartingCheckout: boolean;
+  item: StudentScheduleItem;
+  now: number;
+  onStartCheckout: (item: StudentScheduleItem) => void;
+  variant?: SessionView;
+}) {
   const canJoin = hasSessionAccess(item) && Boolean(item.joinUrl);
+  const canPay = item.locked && item.accessType === 'paid';
   const isPast = variant === 'past';
   const displayStatus = isLiveByTime(item, now) ? 'Live' : item.status;
 
@@ -151,11 +165,11 @@ function DoubtSessionRow({ item, now, variant = 'upcoming' }: { item: StudentSch
               <ExternalLink size={16} />
               Join session
             </a>
-          ) : item.paymentLink ? (
-            <a className="student-action student-action--primary" href={item.paymentLink} rel="noreferrer" target="_blank">
-              <Lock size={16} />
-              Pay to unlock
-            </a>
+          ) : canPay ? (
+            <button className="student-action student-action--primary" disabled={isStartingCheckout} onClick={() => onStartCheckout(item)} type="button">
+              {isStartingCheckout ? <Loader2 className="workshop-action-spinner" size={16} /> : <Lock size={16} />}
+              {isStartingCheckout ? 'Preparing...' : 'Pay to unlock'}
+            </button>
           ) : null}
         </div>
       ) : null}
@@ -168,6 +182,7 @@ export function StudentDoubtSessionsPage() {
   const page = asPositiveInteger(searchParams.get('page'), 1);
   const view = asSessionView(searchParams.get('view'));
   const [now, setNow] = useState(() => Date.now());
+  const createCheckout = useCreateStudentCheckout();
   const sessionsQuery = useStudentSchedule({ includePast: true, limit: 500, page: 1, sessionType: 'doubt_session' });
 
   useEffect(() => {
@@ -184,6 +199,26 @@ export function StudentDoubtSessionsPage() {
   const safePage = Math.min(page, totalPages);
   const visibleItems = paginateItems(sessionItems, safePage);
   const nextSession = upcomingItems.find((item) => isLiveByTime(item, now)) ?? upcomingItems[0];
+
+  async function startSessionCheckout(item: StudentScheduleItem) {
+    const itemId = item.workshopId || item.id;
+    const checkoutWindow = window.open('', '_blank');
+    try {
+      const checkout = await createCheckout.mutateAsync({ itemId, itemType: 'workshop' });
+      const checkoutUrl = checkout.checkoutUrl ?? checkout.paymentLink;
+      if (checkoutUrl && checkoutWindow) {
+        checkoutWindow.opener = null;
+        checkoutWindow.location.href = checkoutUrl;
+      } else if (checkoutUrl) {
+        window.location.href = checkoutUrl;
+      } else {
+        checkoutWindow?.close();
+      }
+    } catch {
+      checkoutWindow?.close();
+      await sessionsQuery.refetch();
+    }
+  }
 
   if (sessionsQuery.isLoading) {
     return (
@@ -266,7 +301,14 @@ export function StudentDoubtSessionsPage() {
             </header>
           ) : null}
           {visibleItems.map((item) => (
-            <DoubtSessionRow item={item} key={item.id} now={now} variant={view} />
+            <DoubtSessionRow
+              isStartingCheckout={createCheckout.isPending}
+              item={item}
+              key={item.id}
+              now={now}
+              onStartCheckout={(row) => void startSessionCheckout(row)}
+              variant={view}
+            />
           ))}
         </section>
       ) : (

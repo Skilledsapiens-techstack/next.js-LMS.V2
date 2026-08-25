@@ -1,7 +1,9 @@
 import * as pdfjs from 'pdfjs-dist';
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import pdfWorkerSource from 'pdfjs-dist/build/pdf.worker.mjs?raw';
 
-pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+const pdfWorkerBlob = new Blob([pdfWorkerSource], { type: 'text/javascript' });
+
+pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(pdfWorkerBlob);
 
 export type PdfResumeTextItem = {
   height: number;

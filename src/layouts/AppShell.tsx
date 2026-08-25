@@ -267,7 +267,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
                           {formatNavCount(navBadgeCount)}
                         </small>
                       ) : null}
-                      {isLearnerShell && item.moduleId === 'career-readiness' ? <small className="nav-item__badge nav-item__badge--new">New</small> : null}
+                      {isLearnerShell && item.moduleId === 'ats-resume-score' ? <small className="nav-item__badge nav-item__badge--new">New</small> : null}
                       {portal === 'student' && featureStatusMap.get(item.moduleId) === 'upcoming' ? <small className="nav-item__badge">Soon</small> : null}
                     </NavLink>
                   );
