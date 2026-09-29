@@ -34,18 +34,50 @@ type GuestProfile = {
   personalEmail: string;
 };
 
+type StudentDashboardCoreProbe = {
+  dashboard: unknown;
+  student: StudentProfile;
+};
+
+const preferredPortalStorageKey = 'skilled-sapiens-preferred-portal';
+
 function getProbePath(portal: Portal) {
   return portal === 'student' ? '/students/me' : '/admins/me';
+}
+
+function getPreferredPortal() {
+  if (typeof window === 'undefined') return null;
+  const portal = window.localStorage.getItem(preferredPortalStorageKey);
+  return portal === 'admin' || portal === 'student' ? portal : null;
 }
 
 export function ProtectedPortalRoute({ portal }: ProtectedPortalRouteProps) {
   const location = useLocation();
   const { accessToken, signOut, status } = useAuth();
+  const isStudentDashboardPath = portal === 'student' && location.pathname.replace(/\/+$/, '') === '/student';
+  const canShowStudentShell = portal === 'student' && status === 'authenticated' && Boolean(accessToken);
   const profileQuery = useQuery({
-    enabled: status === 'authenticated' && Boolean(accessToken),
+    enabled: status === 'authenticated' && Boolean(accessToken) && !isStudentDashboardPath,
     queryFn: () => apiGet<StudentProfile | AdminProfile>(getProbePath(portal), { accessToken: accessToken ?? undefined }),
-    queryKey: portal === 'admin' ? ['admin-profile', accessToken] : ['portal-profile', portal, accessToken],
-    staleTime: portal === 'admin' ? 5 * 60 * 1000 : 0
+    queryKey: portal === 'admin' ? ['admin-profile', accessToken] : ['student-profile', accessToken],
+    staleTime: portal === 'admin' ? 5 * 60 * 1000 : 60 * 1000
+  });
+  const dashboardCoreQuery = useQuery({
+    enabled: status === 'authenticated' && Boolean(accessToken) && isStudentDashboardPath,
+    queryFn: () => apiGet<StudentDashboardCoreProbe>('/students/me/dashboard-core', { accessToken: accessToken ?? undefined }),
+    queryKey: ['student-dashboard-core', accessToken],
+    staleTime: 60 * 1000
+  });
+  const accessQuery = isStudentDashboardPath ? dashboardCoreQuery : profileQuery;
+  const fallbackPortal: Portal = portal === 'student' ? 'admin' : 'student';
+  const preferredPortal = getPreferredPortal();
+  const shouldCheckFallbackPortal = accessQuery.error instanceof ApiClientError && accessQuery.error.status === 404;
+  const fallbackProfileQuery = useQuery({
+    enabled: status === 'authenticated' && Boolean(accessToken) && shouldCheckFallbackPortal,
+    queryFn: () => apiGet<StudentProfile | AdminProfile>(getProbePath(fallbackPortal), { accessToken: accessToken ?? undefined }),
+    queryKey: ['portal-fallback-profile', fallbackPortal, accessToken],
+    retry: false,
+    staleTime: 60 * 1000
   });
 
   if (status === 'configuration-missing') {
@@ -58,7 +90,11 @@ export function ProtectedPortalRoute({ portal }: ProtectedPortalRouteProps) {
     );
   }
 
-  if (status === 'loading' || profileQuery.isLoading) {
+  if (canShowStudentShell && accessQuery.isLoading) {
+    return <Outlet />;
+  }
+
+  if (status === 'loading' || accessQuery.isLoading) {
     return (
       <main className="page-frame">
         <StateBlock title="Checking secure session">Validating your portal access.</StateBlock>
@@ -70,15 +106,31 @@ export function ProtectedPortalRoute({ portal }: ProtectedPortalRouteProps) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
-  if (profileQuery.error instanceof ApiClientError && profileQuery.error.status === 403) {
+  if (accessQuery.error instanceof ApiClientError && accessQuery.error.status === 403) {
     return <Navigate to="/unauthorized" replace />;
   }
 
-  if (profileQuery.error instanceof ApiClientError && profileQuery.error.status === 401) {
+  if (accessQuery.error instanceof ApiClientError && accessQuery.error.status === 401) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
-  if (profileQuery.error instanceof ApiClientError && profileQuery.error.status === 404) {
+  if (accessQuery.error instanceof ApiClientError && accessQuery.error.status === 404) {
+    if (preferredPortal && preferredPortal !== portal) {
+      return <Navigate to={`/${preferredPortal}`} replace />;
+    }
+
+    if (fallbackProfileQuery.isLoading) {
+      return (
+        <main className="page-frame">
+          <StateBlock title="Finding your portal">Checking the right workspace for your account.</StateBlock>
+        </main>
+      );
+    }
+
+    if (fallbackProfileQuery.isSuccess) {
+      return <Navigate to={`/${fallbackPortal}`} replace />;
+    }
+
     return (
       <main className="page-frame">
         <StateBlock title="LMS access not linked" tone="warning">
@@ -93,7 +145,7 @@ export function ProtectedPortalRoute({ portal }: ProtectedPortalRouteProps) {
     );
   }
 
-  if (profileQuery.isError) {
+  if (accessQuery.isError) {
     return (
       <main className="page-frame">
         <StateBlock title="Portal profile check failed" tone="warning">

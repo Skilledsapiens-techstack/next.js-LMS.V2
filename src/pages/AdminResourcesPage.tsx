@@ -25,6 +25,7 @@ import {
 
 type ResourceFormState = {
   accessType: 'free' | 'paid';
+  availableOnPulse: boolean;
   cohortNames: string[];
   currency: string;
   description: string;
@@ -35,6 +36,10 @@ type ResourceFormState = {
   guestCtaUrl: string;
   guestRegistrationRequired: boolean;
   paymentLink: string;
+  pulseCategory: string;
+  pulseFeatured: boolean;
+  pulseSummary: string;
+  pulseVisibility: 'all' | 'college' | 'program';
   price: string;
   programKeys: string[];
   resourceId: string;
@@ -77,6 +82,14 @@ const resourceModeOptions = [
   { label: 'DOC', value: 'doc' }
 ];
 
+const pulseContentCategoryOptions = [
+  { label: 'Career starter', value: 'career_starter' },
+  { label: 'Resume and interview', value: 'resume_interview' },
+  { label: 'Finance and research', value: 'finance_research' },
+  { label: 'Marketing and growth', value: 'marketing_growth' },
+  { label: 'Project toolkit', value: 'project_toolkit' }
+];
+
 const emptyResourceDomainForm = {
   description: '',
   domainKey: '',
@@ -87,6 +100,7 @@ const emptyResourceDomainForm = {
 
 const emptyResourceForm: ResourceFormState = {
   accessType: 'free',
+  availableOnPulse: false,
   cohortNames: [],
   currency: 'INR',
   description: '',
@@ -97,6 +111,10 @@ const emptyResourceForm: ResourceFormState = {
   guestCtaUrl: '',
   guestRegistrationRequired: false,
   paymentLink: '',
+  pulseCategory: 'career_starter',
+  pulseFeatured: false,
+  pulseSummary: '',
+  pulseVisibility: 'all',
   price: '',
   programKeys: [],
   resourceId: `RES-${Date.now()}`,
@@ -134,6 +152,7 @@ function toIsoOrNull(value: string) {
 function mapResourceToForm(resource: AdminResource): ResourceFormState {
   return {
     accessType: resource.accessType,
+    availableOnPulse: resource.availableOnPulse === true,
     cohortNames: resource.cohortNames,
     currency: resource.currency || 'INR',
     description: resource.description ?? '',
@@ -144,6 +163,10 @@ function mapResourceToForm(resource: AdminResource): ResourceFormState {
     guestCtaUrl: resource.guestCtaUrl ?? '',
     guestRegistrationRequired: resource.guestRegistrationRequired === true,
     paymentLink: resource.paymentLink ?? '',
+    pulseCategory: resource.pulseCategory ?? 'career_starter',
+    pulseFeatured: resource.pulseFeatured === true,
+    pulseSummary: resource.pulseSummary ?? '',
+    pulseVisibility: resource.pulseVisibility ?? 'all',
     price: resource.price === undefined ? '' : String(resource.price),
     programKeys: resource.programKeys,
     resourceId: resource.resourceId ?? resource.id,
@@ -538,6 +561,11 @@ export function AdminResourcesPage() {
       guestCtaUrl: guestCtaUrl || null,
       guestRegistrationRequired: formState.guestRegistrationRequired,
       paymentLink: formState.accessType === 'paid' ? paymentLink : null,
+      availableOnPulse: formState.availableOnPulse,
+      pulseCategory: formState.availableOnPulse ? formState.pulseCategory : null,
+      pulseFeatured: formState.availableOnPulse ? formState.pulseFeatured : false,
+      pulseSummary: formState.availableOnPulse ? formState.pulseSummary.trim() || null : null,
+      pulseVisibility: formState.availableOnPulse ? formState.pulseVisibility : 'all',
       price: formState.accessType === 'paid' ? Number(price) : null,
       programKeys: effectiveProgramKeys,
       resourceId,
@@ -955,6 +983,48 @@ export function AdminResourcesPage() {
               </div>
               <p className="admin-resource-validation-note">When enabled, this resource appears in the guest Resource Library until the expiry date. Leave expiry blank for lifetime access.</p>
             </fieldset>
+            <fieldset className="admin-project-program-picker admin-project-form__wide">
+              <legend>Pulse visibility</legend>
+              <label className="admin-career-publish-toggle">
+                <input checked={formState.availableOnPulse} onChange={(event) => updateForm('availableOnPulse', event.target.checked)} type="checkbox" />
+                <span>Show this resource inside Pulse Resource Library</span>
+              </label>
+              <label className="admin-career-publish-toggle">
+                <input checked={formState.pulseFeatured} disabled={!formState.availableOnPulse} onChange={(event) => updateForm('pulseFeatured', event.target.checked)} type="checkbox" />
+                <span>Feature this item for students</span>
+              </label>
+              <div className="admin-career-cta-row">
+                <label>
+                  <span>Pulse Category</span>
+                  <select disabled={!formState.availableOnPulse} value={formState.pulseCategory} onChange={(event) => updateForm('pulseCategory', event.target.value)}>
+                    {pulseContentCategoryOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Pulse Audience</span>
+                  <select disabled={!formState.availableOnPulse} value={formState.pulseVisibility} onChange={(event) => updateForm('pulseVisibility', event.target.value as ResourceFormState['pulseVisibility'])}>
+                    <option value="all">All matched students</option>
+                    <option value="college">College community</option>
+                    <option value="program">Program learners</option>
+                  </select>
+                </label>
+              </div>
+              <label>
+                <span>Pulse Summary</span>
+                <textarea
+                  disabled={!formState.availableOnPulse}
+                  value={formState.pulseSummary}
+                  onChange={(event) => updateForm('pulseSummary', event.target.value)}
+                  placeholder="Short student-facing reason to open this resource from Pulse."
+                  rows={3}
+                />
+              </label>
+              <p className="admin-resource-validation-note">Pulse shows only active LMS resources that are checked here. LMS access rules still apply when students open the item.</p>
+            </fieldset>
             <label className="admin-project-form__wide">
               <span>Description</span>
               <textarea value={formState.description} onChange={(event) => updateForm('description', event.target.value)} placeholder="Short description" rows={4} />
@@ -1022,6 +1092,7 @@ export function AdminResourcesPage() {
           <div>
             <span>Resource Domains</span>
             <h2>Manage Student Filter Tabs</h2>
+            <p>Control the category tabs students use to browse resources.</p>
           </div>
           <button className="segmented-button admin-resource-action" onClick={resetDomainForm} type="button">
             Clear Domain Form
@@ -1029,7 +1100,7 @@ export function AdminResourcesPage() {
         </header>
 
         <div className="admin-resource-domain-manager__body">
-          <form className="admin-resource-domain-form" onSubmit={saveResourceDomain}>
+          <form className="admin-resource-domain-form admin-project-form" onSubmit={saveResourceDomain}>
             <label>
               <span>Domain Label *</span>
               <input value={domainFormState.label} onChange={(event) => updateDomainForm('label', event.target.value)} placeholder="Marketing" />
@@ -1069,6 +1140,12 @@ export function AdminResourcesPage() {
           </form>
 
           <div className="admin-resource-domain-list" aria-label="Resource Domain list">
+            <div className="admin-resource-domain-list__header">
+              <div>
+                <span>Student tabs</span>
+                <strong>{resourceDomains.length} domains</strong>
+              </div>
+            </div>
             {resourceDomainsQuery.isLoading ? (
               <p>Loading Resource Domains.</p>
             ) : resourceDomains.length > 0 ? (

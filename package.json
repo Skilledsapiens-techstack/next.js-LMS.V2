@@ -6,8 +6,11 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "tsc -b && vite build",
+    "build:pulse": "tsc -p apps/pulse/tsconfig.json && vite build --config apps/pulse/vite.config.ts",
     "dev": "vite --host 127.0.0.1",
+    "dev:pulse": "vite --config apps/pulse/vite.config.ts --host 127.0.0.1",
     "preview": "vite preview --host 127.0.0.1",
+    "preview:pulse": "vite preview --config apps/pulse/vite.config.ts --host 127.0.0.1",
     "audit:phase4-gates": "node scripts/audit-phase4-gates.js",
     "start": "npm run preview",
     "start:dev": "npm run dev",

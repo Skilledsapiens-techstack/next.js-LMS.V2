@@ -1,0 +1,11 @@
+{
+  "name": "@skilledsapiens/pulse",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone Pulse app shell sharing Skilled Sapiens auth, Supabase, branding, and UI modules.",
+  "scripts": {
+    "build": "npm run build:pulse --prefix ../..",
+    "dev": "npm run dev:pulse --prefix ../..",
+    "preview": "npm run preview:pulse --prefix ../.."
+  }
+}

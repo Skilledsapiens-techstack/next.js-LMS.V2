@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthProvider';
 import { apiGet, apiPost } from '../../lib/supabaseApi';
 import { PaginatedResponse } from './useStudentAnnouncements';
+import { type StudentCohort } from './useStudentCohorts';
 
 export type StudentRecordingAccessType = 'free' | 'paid';
 export type StudentRecordingSource = 'youtube' | 'zoom';
@@ -66,6 +67,10 @@ export type StudentRecordingProgressResponse = {
   items: StudentRecordingProgressItem[];
 };
 
+export type StudentRecordingsResponse = PaginatedResponse<StudentRecording> & {
+  cohorts?: StudentCohort[];
+};
+
 export function useStudentRecordings(query: StudentRecordingsQuery) {
   const { accessToken } = useAuth();
   const accessType = query.accessType ?? 'all';
@@ -77,7 +82,7 @@ export function useStudentRecordings(query: StudentRecordingsQuery) {
   return useQuery({
     enabled: Boolean(accessToken),
     queryFn: () =>
-      apiGet<PaginatedResponse<StudentRecording>>('/students/me/recordings', {
+      apiGet<StudentRecordingsResponse>('/students/me/recordings', {
         accessToken: accessToken ?? undefined,
         query: {
           accessType,
@@ -88,8 +93,7 @@ export function useStudentRecordings(query: StudentRecordingsQuery) {
         }
       }),
     queryKey: ['student-recordings', accessToken, page, limit, accessType, source, search],
-    refetchOnMount: 'always',
-    staleTime: 0
+    staleTime: 60_000
   });
 }
 
@@ -105,10 +109,9 @@ export function useStudentRecordingProgress(recordingIds: string[]) {
         query: {
           recordingIds: cleanRecordingIds.join(',')
         }
-      }),
+    }),
     queryKey: ['student-recording-progress', accessToken, cleanRecordingIds.join(',')],
-    refetchOnMount: 'always',
-    staleTime: 0
+    staleTime: 60_000
   });
 }
 
@@ -145,9 +148,8 @@ export function useStudentRecordingResources(recordingId: string | undefined, en
     queryFn: () =>
       apiGet<StudentRecordingResourcesResponse>(`/students/me/recordings/${encodeURIComponent(cleanRecordingId ?? '')}/resources`, {
         accessToken: accessToken ?? undefined
-      }),
+    }),
     queryKey: ['student-recording-resources', accessToken, cleanRecordingId],
-    refetchOnMount: 'always',
-    staleTime: 0
+    staleTime: 5 * 60_000
   });
 }

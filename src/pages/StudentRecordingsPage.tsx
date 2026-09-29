@@ -5,7 +5,7 @@ import { EmptyState, ErrorState, LoadingState, LockedState } from '../components
 import { PageHeader } from '../components/PageHeader';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
-import { StudentCohort, useStudentCohorts } from '../features/student/useStudentCohorts';
+import { StudentCohort } from '../features/student/useStudentCohorts';
 import { useCreateStudentCheckout } from '../features/student/useStudentCheckout';
 import {
   StudentRecording,
@@ -533,7 +533,8 @@ function RecordingRow({
   const [copied, setCopied] = useState(false);
   const [resourcesOpen, setResourcesOpen] = useState(false);
   const initialRelatedResources = recording.relatedResources ?? [];
-  const resourcesQuery = useStudentRecordingResources(recording.id, initialRelatedResources.length === 0 && hasRecordingAccess(recording));
+  const shouldLoadRelatedResources = resourcesOpen && initialRelatedResources.length === 0 && hasRecordingAccess(recording);
+  const resourcesQuery = useStudentRecordingResources(recording.id, shouldLoadRelatedResources);
   const relatedResources = initialRelatedResources.length > 0 ? initialRelatedResources : resourcesQuery.data?.resources ?? [];
 
   function copyPasscode() {
@@ -607,35 +608,41 @@ function RecordingRow({
             </button>
           )
         ) : null}
-        {relatedResources.length > 0 ? (
+        {canOpen ? (
           <button
-            aria-label={`${resourcesOpen ? 'Hide' : 'Show'} ${relatedResources.length} related resources for ${recording.title}`}
+            aria-label={`${resourcesOpen ? 'Hide' : 'Show'} related resources for ${recording.title}`}
             className={resourcesOpen ? 'student-recording-resource-toggle student-recording-resource-toggle--open' : 'student-recording-resource-toggle'}
             onClick={() => setResourcesOpen((current) => !current)}
             type="button"
           >
             <Link2 size={15} />
             Resources
-            <span>{relatedResources.length}</span>
+            {relatedResources.length > 0 ? <span>{relatedResources.length}</span> : null}
             <ChevronDown size={15} />
           </button>
         ) : null}
       </div>
-      {resourcesOpen && relatedResources.length > 0 ? (
+      {resourcesOpen ? (
         <div className="student-recording-resources">
           <div className="student-recording-resources__header">
             <span>Related resources</span>
             <strong>{relatedResources.length}</strong>
           </div>
-          {relatedResources.map((resource) => (
-            <a className="student-recording-resource-card" href={resource.url ?? '#'} key={resource.id} rel="noreferrer" target="_blank">
-              <span>
-                <strong>{resource.title}</strong>
-                {resource.description ? <small>{resource.description}</small> : null}
-              </span>
-              <ExternalLink size={15} />
-            </a>
-          ))}
+          {resourcesQuery.isLoading ? (
+            <p className="student-muted-state">Loading linked resources...</p>
+          ) : relatedResources.length > 0 ? (
+            relatedResources.map((resource) => (
+              <a className="student-recording-resource-card" href={resource.url ?? '#'} key={resource.id} rel="noreferrer" target="_blank">
+                <span>
+                  <strong>{resource.title}</strong>
+                  {resource.description ? <small>{resource.description}</small> : null}
+                </span>
+                <ExternalLink size={15} />
+              </a>
+            ))
+          ) : (
+            <p className="student-muted-state">No linked resources for this training module yet.</p>
+          )}
         </div>
       ) : null}
     </article>
@@ -955,9 +962,8 @@ function StudentRecordingsModernPlayer({
 
 function useStudentRecordingWorkspace(selectedProgramKey: string) {
   const recordingsQuery = useStudentRecordings({ limit: 500, page: 1 });
-  const cohortsQuery = useStudentCohorts({ limit: 100, page: 1, status: 'all' });
   const recordings = recordingsQuery.data?.items ?? [];
-  const enrolledCohorts = cohortsQuery.data?.items ?? [];
+  const enrolledCohorts = recordingsQuery.data?.cohorts ?? [];
   const enrolledPrograms = useMemo<RecordingProgramFilter[]>(() => {
     const programMap = new Map<string, { cohortNames: Set<string>; cohorts: StudentCohort[]; label: string; value: string }>();
     enrolledCohorts.forEach((cohort) => {
@@ -1012,8 +1018,8 @@ function useStudentRecordingWorkspace(selectedProgramKey: string) {
     completedRecordingIds,
     enrolledCohorts,
     enrolledPrograms,
-    isError: recordingsQuery.isError || cohortsQuery.isError,
-    isLoading: recordingsQuery.isLoading || cohortsQuery.isLoading,
+    isError: recordingsQuery.isError,
+    isLoading: recordingsQuery.isLoading,
     progressActions,
     progressByGroupKey,
     selectedGroup,
@@ -1154,11 +1160,10 @@ export function StudentRecordingsPage() {
   const selectedProgramKey = normalizeProgramKey(searchParams.get('programKey'));
   const page = asPositiveInteger(searchParams.get('page'), 1);
   const recordingsQuery = useStudentRecordings({ limit: 500, page: 1 });
-  const cohortsQuery = useStudentCohorts({ limit: 100, page: 1, status: 'all' });
   const featureControlsQuery = useStudentFeatureControls();
   const createCheckout = useCreateStudentCheckout();
   const recordings = recordingsQuery.data?.items ?? [];
-  const enrolledCohorts = cohortsQuery.data?.items ?? [];
+  const enrolledCohorts = recordingsQuery.data?.cohorts ?? [];
   const recordingsFeature = useMemo(() => featureControlsQuery.data?.items.find((item) => item.moduleId === 'recordings'), [featureControlsQuery.data?.items]);
   const playbackMode = getRecordingPlaybackMode(recordingsFeature);
   const recordingViewMode = getRecordingViewMode(recordingsFeature);
@@ -1324,7 +1329,7 @@ export function StudentRecordingsPage() {
     if (previousRecording) setModernActiveRecordingId(previousRecording.id);
   }
 
-  if (recordingsQuery.isLoading || cohortsQuery.isLoading || featureControlsQuery.isLoading) {
+  if (recordingsQuery.isLoading || featureControlsQuery.isLoading) {
     return (
       <div className="page-stack">
         <PageHeader description="Loading programs visible to your student profile." eyebrow="My learning" title="My Programs" />

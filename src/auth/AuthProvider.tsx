@@ -1,14 +1,18 @@
 import { Session } from '@supabase/supabase-js';
 import type { AuthChangeEvent } from '@supabase/supabase-js';
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { webEnv } from '../config/env';
 import { getSupabaseClient, isSupabaseAuthConfigured } from '../lib/supabaseClient';
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'configuration-missing';
 
 type AuthContextValue = {
   accessToken: string | null;
+  getLmsHandoffUrl: (path?: string) => string;
   isConfigured: boolean;
   isPasswordRecovery: boolean;
+  sendPulseAuthLink: (email: string, redirectPath?: string) => Promise<void>;
+  sendPulsePasswordSetup: (email: string, redirectPath?: string) => Promise<void>;
   resetPasswordForEmail: (email: string, intent?: 'forgot' | 'create', portal?: 'admin' | 'student') => Promise<void>;
   session: Session | null;
   signUpGuest: (payload: GuestSignUpPayload) => Promise<{ needsEmailVerification: boolean }>;
@@ -22,6 +26,23 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const passwordActionSessionKey = 'skilled-sapiens-password-action-session';
 const emailDeliveryDisabledMessage = 'Email delivery is temporarily disabled from Feature Control. Re-enable Email Delivery before sending emails.';
+const defaultLmsAppUrl = 'https://login.skilledsapiens.com';
+
+function resolveLmsAppUrl() {
+  if (typeof window !== 'undefined') {
+    const isLocalPulse = ['127.0.0.1', 'localhost'].includes(window.location.hostname) && window.location.port === '5174';
+    if (isLocalPulse && webEnv.lmsAppUrl === defaultLmsAppUrl) {
+      return `${window.location.protocol}//${window.location.hostname}:5173`;
+    }
+  }
+
+  return webEnv.lmsAppUrl || defaultLmsAppUrl;
+}
+
+function safeAppPath(path: string) {
+  if (!path.startsWith('/') || path.startsWith('//')) return '/student';
+  return path;
+}
 
 export type GuestSignUpPayload = {
   audienceType: 'student' | 'working_professional' | 'other';
@@ -34,10 +55,12 @@ export type GuestSignUpPayload = {
   fullName: string;
   interestedProgram?: string;
   interestedRoles: string[];
+  linkedinUrl: string;
   mentorAllocationInterest: 'yes_urgently' | 'maybe_later' | 'no';
   officialEmail?: string;
   password: string;
   personalEmail: string;
+  redirectPath?: string;
   whatsappNumber: string;
 };
 
@@ -64,6 +87,20 @@ function hasPasswordActionTokenSignal() {
 function passwordActionCode() {
   if (typeof window === 'undefined' || !hasPasswordActionRoute()) return null;
   return new URLSearchParams(window.location.search).get('code');
+}
+
+function sessionHandoffParams() {
+  if (typeof window === 'undefined') return null;
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const accessToken = hashParams.get('access_token');
+  const refreshToken = hashParams.get('refresh_token');
+  if (!accessToken || !refreshToken) return null;
+  return { accessToken, refreshToken };
+}
+
+function cleanSessionHandoffUrl() {
+  if (typeof window === 'undefined' || hasPasswordActionRoute()) return;
+  window.history.replaceState({}, '', `${window.location.pathname}${window.location.search}`);
 }
 
 function cleanPasswordActionUrl() {
@@ -154,11 +191,23 @@ export function AuthProvider({ children }: AuthProviderProps) {
     if (hasActionToken) rememberPasswordActionSession();
 
     const code = passwordActionCode();
+    const handoff = sessionHandoffParams();
 
     async function initializeSession() {
       let nextSession: Session | null = null;
 
-      if (code) {
+      if (handoff) {
+        const { data, error } = await authClient.auth.setSession({
+          access_token: handoff.accessToken,
+          refresh_token: handoff.refreshToken
+        });
+        if (!error) {
+          nextSession = data.session;
+          cleanSessionHandoffUrl();
+        }
+      }
+
+      if (!nextSession && code) {
         const { data, error } = await authClient.auth.exchangeCodeForSession(code);
         if (!error) {
           nextSession = data.session;
@@ -267,6 +316,66 @@ export function AuthProvider({ children }: AuthProviderProps) {
     [supabase]
   );
 
+  const sendPulseAuthLink = useCallback(
+    async (email: string, redirectPath = '/guest') => {
+      if (!supabase) {
+        throw new Error('Portal authentication is not configured for this environment.');
+      }
+
+      const safeRedirectPath = redirectPath.startsWith('/') ? redirectPath : '/guest';
+      const { data, error } = await supabase.functions.invoke('transactional-email', {
+        body: {
+          action: 'sendPulseAuthLink',
+          email: email.trim().toLowerCase(),
+          redirect_url: `${window.location.origin}${safeRedirectPath}`
+        }
+      });
+
+      if (error) {
+        throw new Error(await passwordEmailErrorMessage(data, error));
+      }
+
+      if (isRecord(data) && typeof data.error === 'string') {
+        throw new Error(String(data.error));
+      }
+    },
+    [supabase]
+  );
+
+  const sendPulsePasswordSetup = useCallback(
+    async (email: string, redirectPath = '/pulse/home') => {
+      if (!supabase) {
+        throw new Error('Portal authentication is not configured for this environment.');
+      }
+
+      const safeRedirectPath = redirectPath.startsWith('/') ? redirectPath : '/pulse/home';
+      const lmsAppUrl = resolveLmsAppUrl().replace(/\/$/, '');
+      const passwordParams = new URLSearchParams({
+        mode: 'recovery',
+        intent: 'forgot',
+        portal: 'student',
+        redirect: safeRedirectPath,
+        email: email.trim().toLowerCase()
+      });
+      const { data, error } = await supabase.functions.invoke('transactional-email', {
+        body: {
+          action: 'sendPulsePasswordSetup',
+          email: email.trim().toLowerCase(),
+          redirect_url: `${lmsAppUrl}/login?${passwordParams.toString()}`
+        }
+      });
+
+      if (error) {
+        throw new Error(await passwordEmailErrorMessage(data, error));
+      }
+
+      if (isRecord(data) && typeof data.error === 'string') {
+        throw new Error(String(data.error));
+      }
+    },
+    [supabase]
+  );
+
   const signUpGuest = useCallback(
     async (payload: GuestSignUpPayload) => {
       if (!supabase) {
@@ -274,11 +383,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       const personalEmail = payload.personalEmail.trim().toLowerCase();
+      const redirectPath = payload.redirectPath?.startsWith('/') ? payload.redirectPath : null;
       const { data, error } = await supabase.auth.signUp({
         email: personalEmail,
         password: payload.password,
         options: {
-          emailRedirectTo: `${window.location.origin}/guest`,
+          emailRedirectTo: `${window.location.origin}${redirectPath ?? '/guest'}`,
           data: {
             audience_type: payload.audienceType,
             college_name: payload.collegeName?.trim() || null,
@@ -290,6 +400,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
             full_name: payload.fullName.trim(),
             interested_program: payload.interestedProgram?.trim() || null,
             interested_roles: payload.interestedRoles,
+            linkedin_url: payload.linkedinUrl.trim(),
             lms_signup_type: 'guest',
             mentor_allocation_interest: payload.mentorAllocationInterest,
             official_email: payload.officialEmail?.trim().toLowerCase() || null,
@@ -301,6 +412,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       if (error) {
         throw error;
+      }
+
+      if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0 && !data.session) {
+        throw new Error('An account already exists with this email. Sign in with your existing password, or resend verification if the account is not verified yet.');
       }
 
       if (data.session) {
@@ -386,12 +501,37 @@ export function AuthProvider({ children }: AuthProviderProps) {
     forgetPasswordActionSession();
   }, [supabase]);
 
+  const getLmsHandoffUrl = useCallback(
+    (path = '/learning-access') => {
+      const lmsAppUrl = resolveLmsAppUrl().replace(/\/$/, '');
+      const safePath = safeAppPath(path);
+
+      if (!session?.access_token || !session.refresh_token) {
+        return `${lmsAppUrl}${safePath}`;
+      }
+
+      const fragmentParams = new URLSearchParams({
+        access_token: session.access_token,
+        expires_in: String(session.expires_in ?? 3600),
+        refresh_token: session.refresh_token,
+        token_type: session.token_type ?? 'bearer',
+        type: 'magiclink'
+      });
+
+      return `${lmsAppUrl}${safePath}#${fragmentParams.toString()}`;
+    },
+    [session]
+  );
+
   const value = useMemo<AuthContextValue>(
     () => ({
       accessToken: session?.access_token ?? null,
+      getLmsHandoffUrl,
       isConfigured,
       isPasswordRecovery,
       resetPasswordForEmail,
+      sendPulseAuthLink,
+      sendPulsePasswordSetup,
       session,
       signUpGuest,
       signInWithPassword,
@@ -400,7 +540,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       updatePassword,
       verifyPasswordOtpAndUpdatePassword
     }),
-    [isConfigured, isPasswordRecovery, resetPasswordForEmail, session, signInWithPassword, signOut, signUpGuest, status, updatePassword, verifyPasswordOtpAndUpdatePassword]
+    [getLmsHandoffUrl, isConfigured, isPasswordRecovery, resetPasswordForEmail, sendPulseAuthLink, sendPulsePasswordSetup, session, signInWithPassword, signOut, signUpGuest, status, updatePassword, verifyPasswordOtpAndUpdatePassword]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

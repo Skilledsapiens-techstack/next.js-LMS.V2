@@ -5,6 +5,7 @@ import { CareerReadinessCategory, CareerReadinessLinkButton, StudentCareerReadin
 import { PaginatedResponse } from '../student/useStudentAnnouncements';
 
 export type AdminCareerReadinessContent = StudentCareerReadinessContent & {
+  availableOnPulse?: boolean;
   createdAt?: string;
   createdBy?: string;
   guestAccessEnabled?: boolean;
@@ -12,10 +13,15 @@ export type AdminCareerReadinessContent = StudentCareerReadinessContent & {
   guestCtaLabel?: string | null;
   guestCtaUrl?: string | null;
   guestRegistrationRequired?: boolean;
+  pulseCategory?: string | null;
+  pulseFeatured?: boolean;
+  pulseSummary?: string | null;
+  pulseVisibility?: 'all' | 'college' | 'program';
   updatedBy?: string;
 };
 
 export type AdminCareerReadinessWritePayload = {
+  availableOnPulse?: boolean;
   category: CareerReadinessCategory;
   cohortNames: string[];
   content?: string | null;
@@ -29,6 +35,10 @@ export type AdminCareerReadinessWritePayload = {
   linkButtons: CareerReadinessLinkButton[];
   linkLabel?: string | null;
   linkUrl?: string | null;
+  pulseCategory?: string | null;
+  pulseFeatured?: boolean;
+  pulseSummary?: string | null;
+  pulseVisibility?: 'all' | 'college' | 'program';
   programKeys: string[];
   sectionTitle: string;
   sortOrder: number;

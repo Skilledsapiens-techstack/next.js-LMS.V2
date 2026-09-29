@@ -1155,6 +1155,7 @@ export function StudentProjectsPage() {
   const cohorts = useMemo(() => cohortsQuery.data?.items ?? [], [cohortsQuery.data?.items]);
   const allSubmissions = useMemo(() => allSubmissionsQuery.data?.items ?? [], [allSubmissionsQuery.data?.items]);
   const toolkitItems = useMemo(() => toolkitQuery.data?.items ?? [], [toolkitQuery.data?.items]);
+  const hasSupportDataError = cohortsQuery.isError || allSubmissionsQuery.isError;
   const roleOptions = useMemo(() => buildRoleOptions(projects), [projects]);
   const [selectedRole, setSelectedRole] = useState('all');
   const [selectedProjectId, setSelectedProjectId] = useState('');
@@ -1185,7 +1186,7 @@ export function StudentProjectsPage() {
     setSelectedProjectId(nextProjects[0]?.id ?? '');
   }
 
-  if (projectsQuery.isLoading || cohortsQuery.isLoading || allSubmissionsQuery.isLoading) {
+  if (projectsQuery.isLoading) {
     return (
       <div className="page-stack student-project-hub-page">
         <PageHeader description="Loading projects visible to your student profile." eyebrow="Live project hub" title="Your Active Projects" />
@@ -1194,7 +1195,7 @@ export function StudentProjectsPage() {
     );
   }
 
-  if (projectsQuery.isError || cohortsQuery.isError || allSubmissionsQuery.isError) {
+  if (projectsQuery.isError) {
     return (
       <div className="page-stack student-project-hub-page">
         <PageHeader description="Projects could not be loaded right now." eyebrow="Live project hub" title="Projects unavailable" />
@@ -1213,6 +1214,15 @@ export function StudentProjectsPage() {
 
       {projects.length > 0 ? (
         <>
+          {hasSupportDataError ? (
+            <section className="live-project-alert" role="status">
+              <strong>Some project support data is still loading.</strong>
+              <span>
+                Project briefs are available. Submission status or cohort selection may refresh after a moment.
+              </span>
+            </section>
+          ) : null}
+
           <section className="live-project-summary" aria-label="Project summary">
             <article className="live-project-summary-card">
               <FolderKanban size={20} />

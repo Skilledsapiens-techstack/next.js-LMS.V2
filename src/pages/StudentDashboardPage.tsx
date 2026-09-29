@@ -18,13 +18,15 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '../components/PageHeader';
 import { ProjectRichText } from '../components/ProjectRichText';
-import { ErrorState, LoadingState } from '../components/ScreenStates';
+import { ErrorState } from '../components/ScreenStates';
 import { StateBlock } from '../components/StateBlock';
 import { StatusBadge } from '../components/StatusBadge';
 import { type StudentAnnouncement } from '../features/student/useStudentAnnouncements';
-import { JsonRecord, StudentProfile, useStudentDashboard } from '../features/student/useStudentDashboard';
+import { JsonRecord, StudentProfile, useStudentDashboardCore, useStudentGuidanceContent } from '../features/student/useStudentDashboard';
+import { useStudentCertificates } from '../features/student/useStudentCertificates';
+import { useStudentProjects } from '../features/student/useStudentProjects';
 import { type StudentRecording } from '../features/student/useStudentRecordings';
-import { type StudentResource } from '../features/student/useStudentResources';
+import { type StudentResource, useStudentResources } from '../features/student/useStudentResources';
 import { type StudentScheduleItem, type StudentScheduleStatus } from '../features/student/useStudentSchedule';
 
 type UnknownRecord = Record<string, unknown>;
@@ -69,7 +71,9 @@ function pickArray(record: unknown, keys: string[]) {
   return [];
 }
 
-function countFromBundle(bundle: JsonRecord | undefined, keys: string[]) {
+function countFromBundle(bundle: unknown, keys: string[]) {
+  const total = numberValue(bundle, ['total']);
+  if (total !== undefined) return total;
   return pickArray(bundle, keys).length;
 }
 
@@ -462,8 +466,44 @@ function renderItemList<TItem>({
   return <div className="student-learning-list">{items.map(renderItem)}</div>;
 }
 
+function StudentDashboardLoadingPreview() {
+  return (
+    <div aria-busy="true" aria-live="polite" className="student-dashboard-cinematic-loader" role="status">
+      <div className="student-dashboard-cinematic-loader__scene" aria-hidden="true">
+        <span className="student-logo-particle student-logo-particle--one" />
+        <span className="student-logo-particle student-logo-particle--two" />
+        <span className="student-logo-particle student-logo-particle--three" />
+        <span className="student-logo-particle student-logo-particle--four" />
+        <span className="student-logo-particle student-logo-particle--five" />
+        <span className="student-logo-particle student-logo-particle--six" />
+        <span className="student-logo-ring student-logo-ring--outer" />
+        <span className="student-logo-ring student-logo-ring--inner" />
+        <div className="student-logo-core">
+          <img alt="" src="/apple-touch-icon.png" />
+        </div>
+        <span className="student-logo-spark student-logo-spark--one" />
+        <span className="student-logo-spark student-logo-spark--two" />
+        <span className="student-logo-spark student-logo-spark--three" />
+      </div>
+      <div className="student-dashboard-cinematic-loader__copy">
+        <span>Student dashboard</span>
+        <h1>Skilled Sapiens</h1>
+        <p>Preparing your learning workspace</p>
+      </div>
+      <div className="student-dashboard-cinematic-loader__progress" aria-hidden="true">
+        <span />
+      </div>
+    </div>
+  );
+}
+
 export function StudentDashboardPage() {
-  const dashboardQuery = useStudentDashboard();
+  const dashboardQuery = useStudentDashboardCore();
+  const loadDashboardDetails = dashboardQuery.isSuccess;
+  const resourcesQuery = useStudentResources({ accessType: 'all', enabled: loadDashboardDetails, locked: 'all', limit: 25, page: 1 });
+  const projectsQuery = useStudentProjects({ enabled: loadDashboardDetails, limit: 25, page: 1 });
+  const certificatesQuery = useStudentCertificates({ enabled: loadDashboardDetails, limit: 25, page: 1 });
+  const guidanceQuery = useStudentGuidanceContent({ enabled: loadDashboardDetails });
   const [selectedGuidance, setSelectedGuidance] = useState<StudentGuidanceContent | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const profile = dashboardQuery.data?.student;
@@ -476,7 +516,7 @@ export function StudentDashboardPage() {
   }, []);
 
   const dashboardItems = pickArray(dashboardQuery.data?.dashboard, ['workshops']);
-  const resourceItemsAll = takeMapped(pickArray(dashboardQuery.data?.resources, ['resources', 'items']), mapResource, 500).sort(
+  const resourceItemsAll = takeMapped(pickArray(resourcesQuery.data, ['resources', 'items']), mapResource, 25).sort(
     (left, right) => dateTimeValue(right, ['updatedAt']) - dateTimeValue(left, ['updatedAt'])
   );
   const scheduleItemsAll = takeMapped(dashboardItems, mapScheduleItem, 500);
@@ -489,15 +529,15 @@ export function StudentDashboardPage() {
   );
   const scopedCounts = {
     announcements: announcementItemsAll.length,
-    certificates: countFromBundle(dashboardQuery.data?.certificates, ['certificates', 'items']),
-    projects: countFromBundle(dashboardQuery.data?.projects, ['projects', 'items']),
+    certificates: countFromBundle(certificatesQuery.data, ['certificates', 'items']),
+    projects: countFromBundle(projectsQuery.data, ['projects', 'items']),
     recordings: recordingItemsAll.length,
     resources: resourceItemsAll.length,
     schedule: upcomingScheduleItems.length
   };
   const trackRoles = asArray(profile?.trackRoleIds).filter((role): role is string => typeof role === 'string');
   const liveProjectRoles = uniqueNames(asArray(profile?.liveProjectRoles).filter((role): role is string => typeof role === 'string'));
-  const guidanceItems = takeMapped(pickArray(dashboardQuery.data?.guidanceContent, ['items']), mapGuidanceContent, 10);
+  const guidanceItems = takeMapped(pickArray(guidanceQuery.data, ['items']), mapGuidanceContent, 10);
   const programGuidance = guidanceItems.find((item) => item.contentKey === 'program_structure');
   const certificateGuidance = guidanceItems.find((item) => item.contentKey === 'certificate_structure');
   const showLeadershipGuidance = isLeadershipContext(profile, trackRoles);
@@ -518,12 +558,7 @@ export function StudentDashboardPage() {
   const hasProfileCollege = Boolean(profile?.collegeName?.trim());
 
   if (isLoading) {
-    return (
-      <div className="page-stack">
-        <PageHeader description="Loading your learning workspace." eyebrow="Student dashboard" title="Welcome back" />
-        <LoadingState />
-      </div>
-    );
+    return <StudentDashboardLoadingPreview />;
   }
 
   if (isError) {

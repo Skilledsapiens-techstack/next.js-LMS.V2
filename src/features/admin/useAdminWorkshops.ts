@@ -9,6 +9,7 @@ export type AdminWorkshopStatus = 'Upcoming' | 'Scheduled' | 'Live' | 'Completed
 
 export type AdminWorkshop = {
   accessType: AdminWorkshopAccessType;
+  availableOnPulse?: boolean;
   cohortNames: string[];
   currency?: string;
   date: string;
@@ -42,6 +43,7 @@ export type AdminWorkshopsQuery = {
 };
 
 export type AdminWorkshopWritePayload = {
+  availableOnPulse?: boolean;
   cohortNames?: string[];
   customJoinUrl?: string;
   date: string;

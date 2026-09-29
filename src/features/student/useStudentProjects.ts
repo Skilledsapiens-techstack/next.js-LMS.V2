@@ -46,6 +46,7 @@ export type StudentProject = {
 };
 
 export type StudentProjectsQuery = {
+  enabled?: boolean;
   limit?: number;
   page?: number;
   programKey?: string;
@@ -62,7 +63,7 @@ export function useStudentProjects(query: StudentProjectsQuery) {
   const search = query.search?.trim();
 
   return useQuery({
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && query.enabled !== false,
     queryFn: () =>
       apiGet<PaginatedResponse<StudentProject>>('/students/me/projects', {
         accessToken: accessToken ?? undefined,

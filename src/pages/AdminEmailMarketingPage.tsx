@@ -174,6 +174,18 @@ type EmailMarketingStep = {
 
 type CohortGroupingStrategy = 'oldest_touch' | 'same_program' | 'same_domain' | 'smallest_first';
 
+type PlannerAudienceScope = {
+  cohortName: string;
+  domainKey: string;
+  programKey: string;
+};
+
+const defaultPlannerAudienceScope: PlannerAudienceScope = {
+  cohortName: '',
+  domainKey: '',
+  programKey: ''
+};
+
 const emailMarketingTabs: { key: EmailMarketingTab; label: string }[] = [
   { key: 'today', label: 'Today' },
   { key: 'rotation', label: 'Schedule' },
@@ -410,6 +422,38 @@ function sortCohortsByTouch(cohorts: AdminCohort[], cohortTouches: Map<string, s
   });
 }
 
+function plannerScopeFromMetadata(metadata?: Record<string, unknown>): PlannerAudienceScope | null {
+  const scope = metadata?.audienceScope;
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) return null;
+  const source = scope as Record<string, unknown>;
+  return {
+    cohortName: typeof source.cohortName === 'string' ? source.cohortName : '',
+    domainKey: typeof source.domainKey === 'string' ? source.domainKey : '',
+    programKey: typeof source.programKey === 'string' ? source.programKey : ''
+  };
+}
+
+function arePlannerScopesEqual(first: PlannerAudienceScope, second: PlannerAudienceScope) {
+  return first.cohortName === second.cohortName && first.domainKey === second.domainKey && first.programKey === second.programKey;
+}
+
+function formatPlannerAudienceScope(scope: PlannerAudienceScope) {
+  if (scope.cohortName) return `cohort ${scope.cohortName}`;
+  const parts = [];
+  if (scope.programKey) parts.push(`program ${scope.programKey}`);
+  if (scope.domainKey) parts.push(`domain ${scope.domainKey}`);
+  return parts.length ? parts.join(' and ') : 'all active cohorts';
+}
+
+function filterCohortsByPlannerScope(cohorts: AdminCohort[], scope: PlannerAudienceScope = defaultPlannerAudienceScope) {
+  return cohorts.filter((cohort) => {
+    if (scope.cohortName) return cohort.name === scope.cohortName;
+    if (scope.programKey && cohort.programKey !== scope.programKey) return false;
+    if (scope.domainKey && cohort.domainKey !== scope.domainKey) return false;
+    return true;
+  });
+}
+
 function groupCohortsForStrategy(cohorts: AdminCohort[], strategy: CohortGroupingStrategy, cohortTouches: Map<string, string | undefined>) {
   const touchSorted = sortCohortsByTouch(cohorts, cohortTouches);
   if (strategy === 'oldest_touch') return touchSorted;
@@ -430,14 +474,22 @@ function groupCohortsForStrategy(cohorts: AdminCohort[], strategy: CohortGroupin
   });
 }
 
-function buildRotatingPlan(cohorts: AdminCohort[], targetCount: number, date: Date, cohortTouches = new Map<string, string | undefined>(), groupingStrategy: CohortGroupingStrategy = 'oldest_touch') {
+function buildRotatingPlan(
+  cohorts: AdminCohort[],
+  targetCount: number,
+  date: Date,
+  cohortTouches = new Map<string, string | undefined>(),
+  groupingStrategy: CohortGroupingStrategy = 'oldest_touch',
+  audienceScope: PlannerAudienceScope = defaultPlannerAudienceScope
+) {
   const activeCohorts = cohorts
     .filter((cohort) => cohort.status === 'active' && cohort.studentCount > 0);
+  const scopedCohorts = filterCohortsByPlannerScope(activeCohorts, audienceScope);
 
-  if (!activeCohorts.length) return { activeCohorts, selected: [] as AdminCohort[], total: 0 };
+  if (!scopedCohorts.length) return { activeCohorts: scopedCohorts, selected: [] as AdminCohort[], total: 0 };
 
-  const groupedCohorts = groupCohortsForStrategy(activeCohorts, groupingStrategy, cohortTouches);
-  const hasTouchHistory = activeCohorts.some((cohort) => cohortTouches.has(cohort.name));
+  const groupedCohorts = groupCohortsForStrategy(scopedCohorts, groupingStrategy, cohortTouches);
+  const hasTouchHistory = scopedCohorts.some((cohort) => cohortTouches.has(cohort.name));
   const startIndex = hasTouchHistory || groupingStrategy !== 'oldest_touch' ? 0 : dayOfYear(date) % groupedCohorts.length;
   const selected: AdminCohort[] = [];
   let total = 0;
@@ -568,6 +620,7 @@ function buildPlanPayload({
   cohortPlan,
   fallbackCampaign,
   groupingStrategy,
+  audienceScope,
   targetCount,
   todayKey
 }: {
@@ -576,6 +629,7 @@ function buildPlanPayload({
   cohortPlan: ReturnType<typeof buildRotatingPlan>;
   fallbackCampaign: CampaignIdea;
   groupingStrategy: CohortGroupingStrategy;
+  audienceScope: PlannerAudienceScope;
   targetCount: number;
   todayKey: string;
 }) {
@@ -590,6 +644,7 @@ function buildPlanPayload({
     dailyLimit,
     metadata: {
       generatedBy: 'admin-email-marketing-page',
+      audienceScope,
       groupingStrategy,
       preferredTemplateKey: campaign?.templateKey ?? null,
       prioritization: groupingStrategy,
@@ -603,7 +658,7 @@ function buildPlanPayload({
     plannedRecipientCount: cohortPlan.total,
     planKey: `email-marketing-${todayKey}`,
     priorityScore: campaign?.rotationWeight ?? (fallbackCampaign.priority === 'High' ? 100 : fallbackCampaign.priority === 'Medium' ? 70 : 40),
-    rationale: `Grouped ${cohortPlan.selected.length} active cohort${cohortPlan.selected.length === 1 ? '' : 's'} using ${cohortGroupingOptions.find((option) => option.value === groupingStrategy)?.label ?? 'the selected grouping strategy'}, then capped the plan around the ${targetCount}-student daily target within the ${dailyLimit} email limit.`,
+    rationale: `Scoped to ${formatPlannerAudienceScope(audienceScope)}, grouped ${cohortPlan.selected.length} active cohort${cohortPlan.selected.length === 1 ? '' : 's'} using ${cohortGroupingOptions.find((option) => option.value === groupingStrategy)?.label ?? 'the selected grouping strategy'}, then capped the plan around the ${targetCount}-student daily target within the ${dailyLimit} email limit.`,
     resourceIds: campaign?.defaultResourceIds ?? [],
     status: 'draft' as const,
     suggestedBatchSize: targetCount,
@@ -618,6 +673,7 @@ function buildUpcomingPlanPreviews({
   cohorts,
   diversityContext,
   groupingStrategy,
+  audienceScope,
   startDate,
   targetCount,
   templatePhases
@@ -627,6 +683,7 @@ function buildUpcomingPlanPreviews({
   cohorts: AdminCohort[];
   diversityContext?: CampaignDiversityContext;
   groupingStrategy: CohortGroupingStrategy;
+  audienceScope: PlannerAudienceScope;
   startDate: Date;
   targetCount: number;
   templatePhases: Set<string>;
@@ -639,7 +696,7 @@ function buildUpcomingPlanPreviews({
   for (let offset = 1; offset <= 7; offset += 1) {
     const previewDate = addDays(startDate, offset);
     const dateKey = isoDate(previewDate);
-    const cohortPlan = buildRotatingPlan(cohorts, targetCount, previewDate, simulatedTouches, groupingStrategy);
+    const cohortPlan = buildRotatingPlan(cohorts, targetCount, previewDate, simulatedTouches, groupingStrategy, audienceScope);
     const savedCampaign = pickSavedCampaign(dayOfYear(previewDate), campaigns, cohortPlan.selected, simulatedTouches, previewDate, {
       recentCampaignKeys,
       recentPhases
@@ -1079,6 +1136,7 @@ export function AdminEmailMarketingPage() {
   const [activeTab, setActiveTab] = useState<EmailMarketingTab>('today');
   const [targetCount, setTargetCount] = useState(defaultSuggestedBatch);
   const [groupingStrategy, setGroupingStrategy] = useState<CohortGroupingStrategy>('oldest_touch');
+  const [plannerAudienceScope, setPlannerAudienceScope] = useState<PlannerAudienceScope>(defaultPlannerAudienceScope);
   const [viewDensity, setViewDensity] = useState<'comfortable' | 'compact'>('compact');
   const [historyStatusFilter, setHistoryStatusFilter] = useState('active');
   const [campaignStatusFilter, setCampaignStatusFilter] = useState('active');
@@ -1127,8 +1185,9 @@ export function AdminEmailMarketingPage() {
   const liveCohortCountByName = useMemo(() => new Map(liveCohorts.map((cohort) => [cohort.name, cohort.studentCount])), [liveCohorts]);
   const cohortProgramOptions = useMemo(() => Array.from(new Set(liveCohorts.map((cohort) => cohort.programKey).filter((value): value is string => Boolean(value)))).sort(), [liveCohorts]);
   const cohortDomainOptions = useMemo(() => Array.from(new Set(liveCohorts.map((cohort) => cohort.domainKey).filter((value): value is string => Boolean(value)))).sort(), [liveCohorts]);
+  const activeCohortScopeOptions = useMemo(() => liveCohorts.filter((cohort) => cohort.status === 'active' && cohort.studentCount > 0).sort((first, second) => first.name.localeCompare(second.name)), [liveCohorts]);
   const selectedGroupingOption = cohortGroupingOptions.find((option) => option.value === groupingStrategy) ?? cohortGroupingOptions[0];
-  const plan = useMemo(() => buildRotatingPlan(liveCohorts, targetCount, today, cohortTouches, groupingStrategy), [cohortTouches, groupingStrategy, liveCohorts, targetCount, today]);
+  const plan = useMemo(() => buildRotatingPlan(liveCohorts, targetCount, today, cohortTouches, groupingStrategy, plannerAudienceScope), [cohortTouches, groupingStrategy, liveCohorts, plannerAudienceScope, targetCount, today]);
   const templates = templatesQuery.data?.items ?? [];
   const activeTemplates = useMemo(() => templates.filter((template) => template.status === 'active'), [templates]);
   const campaigns = campaignsQuery.data?.items ?? [];
@@ -1176,8 +1235,10 @@ export function AdminEmailMarketingPage() {
   const savedPlanGroupingStrategy = typeof todayPlan?.metadata?.groupingStrategy === 'string' && cohortGroupingOptions.some((option) => option.value === todayPlan.metadata.groupingStrategy)
     ? todayPlan.metadata.groupingStrategy as CohortGroupingStrategy
     : null;
+  const savedPlanAudienceScope = plannerScopeFromMetadata(todayPlan?.metadata);
   const hasSavedPlanBatchMismatch = savedPlanBatchSize !== null && savedPlanBatchSize !== targetCount;
   const hasSavedPlanGroupingMismatch = savedPlanGroupingStrategy !== null && savedPlanGroupingStrategy !== groupingStrategy;
+  const hasSavedPlanAudienceScopeMismatch = Boolean(savedPlanAudienceScope && !arePlannerScopesEqual(savedPlanAudienceScope, plannerAudienceScope));
   const batchCapSourceLabel = savedPlanBatchSize !== null ? `today’s saved plan (${savedPlanBatchSize})` : `Suggested daily target (${targetCount})`;
   const effectiveGroupingStrategy = savedPlanGroupingStrategy ?? groupingStrategy;
   const effectiveGroupingOption = cohortGroupingOptions.find((option) => option.value === effectiveGroupingStrategy) ?? selectedGroupingOption;
@@ -1363,11 +1424,12 @@ export function AdminEmailMarketingPage() {
         cohorts: liveCohorts,
         diversityContext: buildCampaignDiversityContext(planHistoryQuery.data?.items ?? [], todayKey),
         groupingStrategy,
+        audienceScope: plannerAudienceScope,
         startDate: today,
         targetCount,
         templatePhases
       }),
-    [campaigns, cohortTouches, groupingStrategy, liveCohorts, planHistoryQuery.data?.items, targetCount, templatePhases, today, todayKey]
+    [campaigns, cohortTouches, groupingStrategy, liveCohorts, planHistoryQuery.data?.items, plannerAudienceScope, targetCount, templatePhases, today, todayKey]
   );
 
   const isCohortMetricsLoading = cohortNames.length > 0 && cohortCardMetricsQuery.isLoading;
@@ -1381,7 +1443,7 @@ export function AdminEmailMarketingPage() {
     autoDraftAttemptedRef.current = todayKey;
 
     const payload = {
-      ...buildPlanPayload({ campaign: savedCampaign, cohortPlan: plan, cohortTouches, fallbackCampaign, groupingStrategy, targetCount, todayKey }),
+      ...buildPlanPayload({ campaign: savedCampaign, cohortPlan: plan, cohortTouches, fallbackCampaign, groupingStrategy, audienceScope: plannerAudienceScope, targetCount, todayKey }),
       resourceIds: suggestedResources.map((resource) => resource.id)
     };
 
@@ -1417,6 +1479,7 @@ export function AdminEmailMarketingPage() {
     isError,
     isAutoDraftLoading,
     plan,
+    plannerAudienceScope,
     savedCampaign,
     suggestedResources,
     targetCount,
@@ -1425,11 +1488,11 @@ export function AdminEmailMarketingPage() {
     todayPlanQuery
   ]);
 
-  async function refreshTodayPlan(nextTargetCount = targetCount, nextGroupingStrategy = groupingStrategy) {
+  async function refreshTodayPlan(nextTargetCount = targetCount, nextGroupingStrategy = groupingStrategy, nextAudienceScope = plannerAudienceScope) {
     setMessage(null);
-    const nextPlan = nextTargetCount === targetCount && nextGroupingStrategy === groupingStrategy
+    const nextPlan = nextTargetCount === targetCount && nextGroupingStrategy === groupingStrategy && arePlannerScopesEqual(nextAudienceScope, plannerAudienceScope)
       ? plan
-      : buildRotatingPlan(liveCohorts, nextTargetCount, today, cohortTouches, nextGroupingStrategy);
+      : buildRotatingPlan(liveCohorts, nextTargetCount, today, cohortTouches, nextGroupingStrategy, nextAudienceScope);
     if (!nextPlan.selected.length) {
       setMessage({ tone: 'error', text: 'No active cohorts with live linked students are available for today’s Email Marketing plan.' });
       return;
@@ -1442,7 +1505,7 @@ export function AdminEmailMarketingPage() {
       .slice(0, 4)
       .map((item) => item.resource);
     const payload = {
-      ...buildPlanPayload({ campaign: nextSavedCampaign, cohortPlan: nextPlan, cohortTouches, fallbackCampaign, groupingStrategy: nextGroupingStrategy, targetCount: nextTargetCount, todayKey }),
+      ...buildPlanPayload({ campaign: nextSavedCampaign, cohortPlan: nextPlan, cohortTouches, fallbackCampaign, groupingStrategy: nextGroupingStrategy, audienceScope: nextAudienceScope, targetCount: nextTargetCount, todayKey }),
       resourceIds: nextSuggestedResources.map((resource) => resource.id)
     };
     try {
@@ -1450,7 +1513,7 @@ export function AdminEmailMarketingPage() {
         ? await updatePlan.mutateAsync({ body: payload, planId: todayPlan.id })
         : await createPlan.mutateAsync(payload);
       await createPlanEvent.mutateAsync({
-        details: { cohortNames: payload.cohortNames, groupingStrategy: nextGroupingStrategy, plannedRecipientCount: payload.plannedRecipientCount, suggestedBatchSize: payload.suggestedBatchSize },
+        details: { audienceScope: nextAudienceScope, cohortNames: payload.cohortNames, groupingStrategy: nextGroupingStrategy, plannedRecipientCount: payload.plannedRecipientCount, suggestedBatchSize: payload.suggestedBatchSize },
         eventType: todayPlan ? 'note' : 'created',
         planId: savedPlan.id
       });
@@ -1463,7 +1526,7 @@ export function AdminEmailMarketingPage() {
   }
 
   async function handleSaveTodayPlan() {
-    await refreshTodayPlan(targetCount, groupingStrategy);
+    await refreshTodayPlan(targetCount, groupingStrategy, plannerAudienceScope);
   }
 
   async function handleTargetCountChange(nextTargetCount: number) {
@@ -1476,7 +1539,7 @@ export function AdminEmailMarketingPage() {
     }
     const shouldRefresh = window.confirm(`Refresh today’s saved Email Marketing plan with a ${nextTargetCount}-student batch cap?`);
     if (!shouldRefresh) return;
-    await refreshTodayPlan(nextTargetCount, groupingStrategy);
+    await refreshTodayPlan(nextTargetCount, groupingStrategy, plannerAudienceScope);
   }
 
   async function handleGroupingStrategyChange(nextGroupingStrategy: CohortGroupingStrategy) {
@@ -1490,14 +1553,31 @@ export function AdminEmailMarketingPage() {
     const nextOption = cohortGroupingOptions.find((option) => option.value === nextGroupingStrategy);
     const shouldRefresh = window.confirm(`Refresh today’s saved Email Marketing plan using "${nextOption?.label ?? 'the selected grouping'}"?`);
     if (!shouldRefresh) return;
-    await refreshTodayPlan(targetCount, nextGroupingStrategy);
+    await refreshTodayPlan(targetCount, nextGroupingStrategy, plannerAudienceScope);
+  }
+
+  async function handlePlannerAudienceScopeChange(partialScope: Partial<PlannerAudienceScope>) {
+    const nextAudienceScope = {
+      ...plannerAudienceScope,
+      ...partialScope
+    };
+    setPlannerAudienceScope(nextAudienceScope);
+    setRecipientPreview(null);
+    if (!todayPlan || (savedPlanAudienceScope && arePlannerScopesEqual(savedPlanAudienceScope, nextAudienceScope))) return;
+    if (!['draft', 'reviewed'].includes(todayPlan.status)) {
+      setMessage({ tone: 'error', text: `Planner scope changed, but today’s ${todayPlan.status} plan cannot be refreshed.` });
+      return;
+    }
+    const shouldRefresh = window.confirm(`Refresh today’s saved Email Marketing plan for ${formatPlannerAudienceScope(nextAudienceScope)}?`);
+    if (!shouldRefresh) return;
+    await refreshTodayPlan(targetCount, groupingStrategy, nextAudienceScope);
   }
 
   async function previewRecipients() {
     setMessage(null);
     setRecipientPreview(null);
     const payload = {
-      ...buildPlanPayload({ campaign: savedCampaign, cohortPlan: plan, cohortTouches, fallbackCampaign, groupingStrategy, targetCount, todayKey }),
+      ...buildPlanPayload({ campaign: savedCampaign, cohortPlan: plan, cohortTouches, fallbackCampaign, groupingStrategy, audienceScope: plannerAudienceScope, targetCount, todayKey }),
       resourceIds: suggestedResources.map((resource) => resource.id)
     };
     const cohortNames = displayedPlan?.cohortNames?.length ? displayedPlan.cohortNames : payload.cohortNames;
@@ -1602,6 +1682,7 @@ export function AdminEmailMarketingPage() {
         cohortTouches,
         fallbackCampaign: appliedFallback,
         groupingStrategy,
+        audienceScope: plannerAudienceScope,
         targetCount,
         todayKey
       }),
@@ -1612,6 +1693,7 @@ export function AdminEmailMarketingPage() {
           cohortTouches,
           fallbackCampaign: appliedFallback,
           groupingStrategy,
+          audienceScope: plannerAudienceScope,
           targetCount,
           todayKey
         }).metadata,
@@ -1659,7 +1741,7 @@ export function AdminEmailMarketingPage() {
       return;
     }
 
-    const basePayload = buildPlanPayload({ campaign: savedCampaign, cohortPlan: plan, cohortTouches, fallbackCampaign, groupingStrategy, targetCount, todayKey });
+    const basePayload = buildPlanPayload({ campaign: savedCampaign, cohortPlan: plan, cohortTouches, fallbackCampaign, groupingStrategy, audienceScope: plannerAudienceScope, targetCount, todayKey });
     const copyMetadata = {
       smartCopyVariant: {
         appliedAt: new Date().toISOString(),
@@ -1716,7 +1798,7 @@ export function AdminEmailMarketingPage() {
       return;
     }
 
-    const basePayload = buildPlanPayload({ campaign: savedCampaign, cohortPlan: plan, cohortTouches, fallbackCampaign, groupingStrategy, targetCount, todayKey });
+    const basePayload = buildPlanPayload({ campaign: savedCampaign, cohortPlan: plan, cohortTouches, fallbackCampaign, groupingStrategy, audienceScope: plannerAudienceScope, targetCount, todayKey });
     const abMetadata = {
       smartCopyAbTest: {
         activeVariantKey: activeVariant.variantKey,
@@ -2785,6 +2867,42 @@ export function AdminEmailMarketingPage() {
             </select>
           </label>
           <label>
+            <span>Program scope</span>
+            <select value={plannerAudienceScope.programKey} onChange={(event) => void handlePlannerAudienceScopeChange({ cohortName: '', programKey: event.target.value })}>
+              <option value="">All programs</option>
+              {cohortProgramOptions.map((programKey) => (
+                <option key={programKey} value={programKey}>{programKey}</option>
+              ))}
+              {plannerAudienceScope.programKey && !cohortProgramOptions.includes(plannerAudienceScope.programKey) ? (
+                <option value={plannerAudienceScope.programKey}>{plannerAudienceScope.programKey}</option>
+              ) : null}
+            </select>
+          </label>
+          <label>
+            <span>Domain scope</span>
+            <select value={plannerAudienceScope.domainKey} onChange={(event) => void handlePlannerAudienceScopeChange({ cohortName: '', domainKey: event.target.value })}>
+              <option value="">All domains</option>
+              {cohortDomainOptions.map((domainKey) => (
+                <option key={domainKey} value={domainKey}>{domainKey}</option>
+              ))}
+              {plannerAudienceScope.domainKey && !cohortDomainOptions.includes(plannerAudienceScope.domainKey) ? (
+                <option value={plannerAudienceScope.domainKey}>{plannerAudienceScope.domainKey}</option>
+              ) : null}
+            </select>
+          </label>
+          <label>
+            <span>Cohort scope</span>
+            <select value={plannerAudienceScope.cohortName} onChange={(event) => void handlePlannerAudienceScopeChange({ cohortName: event.target.value })}>
+              <option value="">Auto-select cohorts</option>
+              {activeCohortScopeOptions.map((cohort) => (
+                <option key={cohort.id} value={cohort.name}>{`${cohort.name} (${cohort.studentCount})`}</option>
+              ))}
+              {plannerAudienceScope.cohortName && !activeCohortScopeOptions.some((cohort) => cohort.name === plannerAudienceScope.cohortName) ? (
+                <option value={plannerAudienceScope.cohortName}>{plannerAudienceScope.cohortName}</option>
+              ) : null}
+            </select>
+          </label>
+          <label>
             <span>View density</span>
             <select value={viewDensity} onChange={(event) => setViewDensity(event.target.value as typeof viewDensity)}>
               <option value="compact">Compact console</option>
@@ -2795,10 +2913,14 @@ export function AdminEmailMarketingPage() {
             {todayPlan ? 'Refresh Saved Plan' : 'Save Today Plan'}
           </button>
         </div>
-        {hasSavedPlanBatchMismatch || hasSavedPlanGroupingMismatch ? (
+        <div className="auth-alert auth-alert--success email-marketing-settings-alert">
+          Current planner scope: {formatPlannerAudienceScope(plannerAudienceScope)}. {plannerAudienceScope.cohortName ? 'Cohort scope overrides program and domain scope.' : 'Program and domain scopes combine before grouping is applied.'}
+        </div>
+        {hasSavedPlanBatchMismatch || hasSavedPlanGroupingMismatch || hasSavedPlanAudienceScopeMismatch ? (
           <div className="auth-alert auth-alert--warning email-marketing-settings-alert">
             Today’s saved plan is not using the current settings. {hasSavedPlanBatchMismatch ? `Saved batch cap is ${savedPlanBatchSize}; dropdown is ${targetCount}. ` : ''}
             {hasSavedPlanGroupingMismatch ? `Saved grouping is ${cohortGroupingOptions.find((option) => option.value === savedPlanGroupingStrategy)?.label ?? savedPlanGroupingStrategy}; dropdown is ${selectedGroupingOption.label}. ` : ''}
+            {hasSavedPlanAudienceScopeMismatch && savedPlanAudienceScope ? `Saved scope is ${formatPlannerAudienceScope(savedPlanAudienceScope)}; dropdown scope is ${formatPlannerAudienceScope(plannerAudienceScope)}. ` : ''}
             Click Refresh Saved Plan to apply the current settings before previewing or sending.
           </div>
         ) : null}

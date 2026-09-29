@@ -7,8 +7,33 @@ import { LoadingState } from '../components/ScreenStates';
 import { StudentFeatureGate } from '../components/StudentFeatureGate';
 import { adminNavItems, guestNavItems, studentNavItems } from './routeConfig';
 
+const PulseAppLayout = lazy(() => import('../pulse/layouts').then((module) => ({ default: module.PulseAppLayout })));
+const PulsePublicLayout = lazy(() => import('../pulse/layouts').then((module) => ({ default: module.PulsePublicLayout })));
+const PulseAccessRequestPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseAccessRequestPage })));
+const PulseHomePage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseHomePage })));
+const PulseInvitePage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseInvitePage })));
+const PulseInviteLandingPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseInviteLandingPage })));
+const PulseLandingPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseLandingPage })));
+const PulseLoginPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseLoginPage })));
+const PulseActivityPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseActivityPage })));
+const PulseCareerReadinessDetailPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseCareerReadinessDetailPage })));
+const PulseCareerReadinessPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseCareerReadinessPage })));
+const PulseBecomeMentorPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseBecomeMentorPage })));
+const PulseMentorshipDetailPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseMentorshipDetailPage })));
+const PulseMentorshipPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseMentorshipPage })));
+const PulseNotificationsPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseNotificationsPage })));
+const PulseOpportunityDetailPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseOpportunityDetailPage })));
+const PulseOpportunitiesPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseOpportunitiesPage })));
+const PulsePeoplePage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulsePeoplePage })));
+const PulseProfileDetailPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseProfileDetailPage })));
+const PulseProfilePage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseProfilePage })));
+const PulseResourceLibraryPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseResourceLibraryPage })));
+const PulseSearchPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseSearchPage })));
+const PulseStarsPage = lazy(() => import('../pulse/pages').then((module) => ({ default: module.PulseStarsPage })));
 const AdminDashboardPage = lazy(() => import('../pages/AdminDashboardPage').then((module) => ({ default: module.AdminDashboardPage })));
 const AdminAnnouncementsPage = lazy(() => import('../pages/AdminAnnouncementsPage').then((module) => ({ default: module.AdminAnnouncementsPage })));
+const AdminBannersPage = lazy(() => import('../pages/AdminBannersPage').then((module) => ({ default: module.AdminBannersPage })));
+const AdminWebsiteManagementPage = lazy(() => import('../pages/AdminWebsiteManagementPage').then((module) => ({ default: module.AdminWebsiteManagementPage })));
 const AdminCareerReadinessPage = lazy(() => import('../pages/AdminCareerReadinessPage').then((module) => ({ default: module.AdminCareerReadinessPage })));
 const AdminAtsResumeScorePage = lazy(() => import('../pages/AdminAtsResumeScorePage').then((module) => ({ default: module.AdminAtsResumeScorePage })));
 const AdminStudentsPage = lazy(() => import('../pages/AdminStudentsPage').then((module) => ({ default: module.AdminStudentsPage })));
@@ -47,15 +72,18 @@ const AdminEmailCenterPage = lazy(() => import('../pages/AdminEmailCenterPage').
 const AdminEmailMarketingPage = lazy(() => import('../pages/AdminEmailMarketingPage').then((module) => ({ default: module.AdminEmailMarketingPage })));
 const AdminObservabilityPage = lazy(() => import('../pages/AdminObservabilityPage').then((module) => ({ default: module.AdminObservabilityPage })));
 const AdminWhatsAppGroupsPage = lazy(() => import('../pages/AdminWhatsAppGroupsPage').then((module) => ({ default: module.AdminWhatsAppGroupsPage })));
+const AdminPulseManagementPage = lazy(() => import('../pages/AdminPulseManagementPage').then((module) => ({ default: module.AdminPulseManagementPage })));
 const LoginPage = lazy(() => import('../pages/LoginPage').then((module) => ({ default: module.LoginPage })));
 const GuestSignupPage = lazy(() => import('../pages/GuestSignupPage').then((module) => ({ default: module.GuestSignupPage })));
 const GuestAccessPage = lazy(() => import('../pages/GuestAccessPage').then((module) => ({ default: module.GuestAccessPage })));
+const ExploreSkilledSapiensPage = lazy(() => import('../pages/ExploreSkilledSapiensPage').then((module) => ({ default: module.ExploreSkilledSapiensPage })));
 const ModulePlaceholderPage = lazy(() => import('../pages/ModulePlaceholderPage').then((module) => ({ default: module.ModulePlaceholderPage })));
 const StudentAnnouncementsPage = lazy(() => import('../pages/StudentAnnouncementsPage').then((module) => ({ default: module.StudentAnnouncementsPage })));
 const StudentCareerReadinessPage = lazy(() => import('../pages/StudentCareerReadinessPage').then((module) => ({ default: module.StudentCareerReadinessPage })));
 const StudentAtsResumeScorePage = lazy(() => import('../pages/StudentAtsResumeScorePage').then((module) => ({ default: module.StudentAtsResumeScorePage })));
 const StudentDashboardPage = lazy(() => import('../pages/StudentDashboardPage').then((module) => ({ default: module.StudentDashboardPage })));
 const StudentDoubtSessionsPage = lazy(() => import('../pages/StudentDoubtSessionsPage').then((module) => ({ default: module.StudentDoubtSessionsPage })));
+const StudentLearningAccessPage = lazy(() => import('../pages/StudentLearningAccessPage').then((module) => ({ default: module.StudentLearningAccessPage })));
 const StudentCertificatesPage = lazy(() => import('../pages/StudentCertificatesPage').then((module) => ({ default: module.StudentCertificatesPage })));
 const StudentResourcesPage = lazy(() => import('../pages/StudentResourcesPage').then((module) => ({ default: module.StudentResourcesPage })));
 const StudentRecordingsPage = lazy(() => import('../pages/StudentRecordingsPage').then((module) => ({ default: module.StudentRecordingsPage })));
@@ -139,10 +167,431 @@ export const router = createBrowserRouter([
     errorElement: <RouteErrorFallback />
   },
   {
+    path: '/pulse',
+    element: (
+      <PageLoader>
+        <PulsePublicLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseLandingPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/invite/:code',
+    element: (
+      <PageLoader>
+        <PulsePublicLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseInviteLandingPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/access-request',
+    element: (
+      <PageLoader>
+        <PulsePublicLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseAccessRequestPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/access-request/:code',
+    element: (
+      <PageLoader>
+        <PulsePublicLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseAccessRequestPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/login',
+    element: (
+      <PageLoader>
+        <PulsePublicLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseLoginPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/home',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseHomePage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/activity',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseActivityPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/profile',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseProfilePage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/u/:profileId',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseProfileDetailPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/search',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseSearchPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/people',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulsePeoplePage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/notifications',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseNotificationsPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/my-college',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseHomePage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/global',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseHomePage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/opportunities',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseOpportunitiesPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/opportunities/:opportunityId',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseOpportunityDetailPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/resources',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseResourceLibraryPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/career-readiness',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseCareerReadinessPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/career-readiness/:contentId',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseCareerReadinessDetailPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/clubs',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <Navigate to="/pulse/home" replace />
+      }
+    ]
+  },
+  {
+    path: '/pulse/clubs/:clubKey',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <Navigate to="/pulse/home" replace />
+      }
+    ]
+  },
+  {
+    path: '/pulse/mentorship',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseMentorshipPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/mentorship/:sessionId',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseMentorshipDetailPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/mentorship/become',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseBecomeMentorPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/stars',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseStarsPage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/recognition',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseHomePage />
+      }
+    ]
+  },
+  {
+    path: '/pulse/invite',
+    element: (
+      <PageLoader>
+        <PulseAppLayout />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />,
+    children: [
+      {
+        index: true,
+        element: <PulseInvitePage />
+      }
+    ]
+  },
+  {
     path: '/guest',
     element: <ProtectedGuestRoute />,
     errorElement: <RouteErrorFallback />,
     children: [
+      {
+        path: 'explore',
+        element: (
+          <PageLoader>
+            <ExploreSkilledSapiensPage portal="guest" />
+          </PageLoader>
+        )
+      },
+      {
+        path: 'explore/:pageSlug',
+        element: (
+          <PageLoader>
+            <ExploreSkilledSapiensPage portal="guest" />
+          </PageLoader>
+        )
+      },
       {
         element: <AppShell navItems={guestNavItems} portal="guest" />,
         children: [
@@ -224,10 +673,35 @@ export const router = createBrowserRouter([
     errorElement: <RouteErrorFallback />
   },
   {
+    path: '/learning-access',
+    element: (
+      <PageLoader>
+        <StudentLearningAccessPage />
+      </PageLoader>
+    ),
+    errorElement: <RouteErrorFallback />
+  },
+  {
     path: '/student',
     element: <ProtectedPortalRoute portal="student" />,
     errorElement: <RouteErrorFallback />,
     children: [
+      {
+        path: 'explore',
+        element: (
+          <PageLoader>
+            <ExploreSkilledSapiensPage portal="student" />
+          </PageLoader>
+        )
+      },
+      {
+        path: 'explore/:pageSlug',
+        element: (
+          <PageLoader>
+            <ExploreSkilledSapiensPage portal="student" />
+          </PageLoader>
+        )
+      },
       {
         path: 'programs/player',
         element: (
@@ -433,6 +907,26 @@ export const router = createBrowserRouter([
               <PageLoader>
                 <AdminFeaturePage moduleId="announcements">
                   <AdminAnnouncementsPage />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'banners',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="banners">
+                  <AdminBannersPage />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'website-management',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="website-management">
+                  <AdminWebsiteManagementPage />
                 </AdminFeaturePage>
               </PageLoader>
             )
@@ -683,6 +1177,82 @@ export const router = createBrowserRouter([
               <PageLoader>
                 <AdminFeaturePage moduleId="whatsapp-groups">
                   <AdminWhatsAppGroupsPage />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'community',
+            element: (
+              <Navigate to="/admin/pulse" replace />
+            )
+          },
+          {
+            path: 'pulse',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="pulse-overview">
+                  <AdminPulseManagementPage activeTab="overview" />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'pulse/colleges',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="pulse-colleges">
+                  <AdminPulseManagementPage activeTab="colleges" />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'pulse/clubs',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="pulse-clubs">
+                  <AdminPulseManagementPage activeTab="clubs" />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'pulse/profiles',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="pulse-profiles">
+                  <AdminPulseManagementPage activeTab="profiles" />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'pulse/moderation',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="pulse-moderation">
+                  <AdminPulseManagementPage activeTab="moderation" />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'pulse/opportunities',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="pulse-opportunities">
+                  <AdminPulseManagementPage activeTab="opportunities" />
+                </AdminFeaturePage>
+              </PageLoader>
+            )
+          },
+          {
+            path: 'pulse/mentorship',
+            element: (
+              <PageLoader>
+                <AdminFeaturePage moduleId="pulse-mentorship">
+                  <AdminPulseManagementPage activeTab="mentorship" />
                 </AdminFeaturePage>
               </PageLoader>
             )

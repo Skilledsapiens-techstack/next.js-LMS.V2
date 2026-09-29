@@ -1,9 +1,10 @@
 import { FormEvent, useMemo, useState } from 'react';
-import { ArrowRight, BriefcaseBusiness, Building2, Eye, EyeOff, GraduationCap, KeyRound, Loader2, Mail, MapPin, Phone, ShieldCheck, UserRound } from 'lucide-react';
+import { ArrowRight, BriefcaseBusiness, Building2, Eye, EyeOff, GraduationCap, KeyRound, Linkedin, Loader2, Mail, MapPin, Phone, ShieldCheck, UserRound } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth, type GuestSignUpPayload } from '../auth/AuthProvider';
 import { StateBlock } from '../components/StateBlock';
+import { normalizeLinkedInProfileUrl } from '../pulse/lib/linkedin';
 
 const currentStatusOptions = [
   { label: 'Student', value: 'student' },
@@ -28,6 +29,7 @@ const initialForm: GuestSignUpPayload = {
   fullName: '',
   interestedProgram: '',
   interestedRoles: [],
+  linkedinUrl: '',
   mentorAllocationInterest: 'maybe_later',
   officialEmail: '',
   password: '',
@@ -108,8 +110,15 @@ export function GuestSignupPage() {
       return;
     }
 
+    const linkedinUrl = normalizeLinkedInProfileUrl(form.linkedinUrl);
+    if (!linkedinUrl) {
+      setStatus('failed');
+      setErrorMessage('Enter a valid LinkedIn profile URL, for example https://www.linkedin.com/in/your-profile.');
+      return;
+    }
+
     try {
-      await signUpGuest(form);
+      await signUpGuest({ ...form, linkedinUrl });
       setStatus('sent');
     } catch (error) {
       setStatus('failed');
@@ -156,8 +165,9 @@ export function GuestSignupPage() {
                 <div className="guest-form-grid">
                   <TextField icon={<UserRound size={17} />} label="Full name" value={form.fullName} onChange={(value) => updateField('fullName', value)} required />
                   <TextField icon={<Mail size={17} />} label="Personal Email" type="email" value={form.personalEmail} onChange={(value) => updateField('personalEmail', value)} required helper="Login and communication email." />
-                  <TextField icon={<Mail size={17} />} label="Official Email" type="email" value={form.officialEmail ?? ''} onChange={(value) => updateField('officialEmail', value)} required={isStudent} helper={isStudent ? 'Mandatory for college students.' : 'Optional for working professionals.'} />
+                  <TextField icon={<Mail size={17} />} label="Official email (College/Company)" type="email" value={form.officialEmail ?? ''} onChange={(value) => updateField('officialEmail', value)} required={isStudent} helper={isStudent ? 'Mandatory for college students.' : 'Optional for working professionals.'} />
                   <TextField icon={<Phone size={17} />} label="WhatsApp number (+91)" inputMode="numeric" value={form.whatsappNumber} onChange={(value) => updateField('whatsappNumber', cleanWhatsApp(value))} required />
+                  <TextField icon={<Linkedin size={17} />} label="LinkedIn URL" type="url" value={form.linkedinUrl} onChange={(value) => updateField('linkedinUrl', value)} required helper="Use your public LinkedIn profile link." placeholder="https://www.linkedin.com/in/your-profile" />
                   <PasswordField label="Password" value={form.password} show={showPassword} onChange={(value) => updateField('password', value)} onToggle={() => setShowPassword((current) => !current)} required />
                   <PasswordField label="Confirm password" value={confirmPassword} show={showConfirmPassword} onChange={setConfirmPassword} onToggle={() => setShowConfirmPassword((current) => !current)} required />
                 </div>
@@ -254,6 +264,7 @@ function TextField({
   inputMode,
   label,
   onChange,
+  placeholder,
   required,
   type = 'text',
   value
@@ -263,6 +274,7 @@ function TextField({
   inputMode?: 'numeric';
   label: string;
   onChange: (value: string) => void;
+  placeholder?: string;
   required?: boolean;
   type?: string;
   value: string;
@@ -272,7 +284,7 @@ function TextField({
       <span className="auth-field-label">{label}{required ? ' *' : ''}</span>
       <div className="auth-input-shell">
         {icon}
-        <input inputMode={inputMode} type={type} value={value} required={required} onChange={(event) => onChange(event.target.value)} />
+        <input inputMode={inputMode} type={type} value={value} placeholder={placeholder} required={required} onChange={(event) => onChange(event.target.value)} />
       </div>
       {helper ? <small>{helper}</small> : null}
     </label>

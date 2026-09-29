@@ -1,13 +1,13 @@
-import { Bell, ExternalLink, LogOut, Menu, ShieldCheck, X } from 'lucide-react';
+import { Bell, ExternalLink, LogOut, Menu, Send, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { NavItem, Portal } from '../app/routeConfig';
 import { useAuth } from '../auth/AuthProvider';
 import { MODULE_VIEW_PERMISSIONS, hasAdminPermission, type AdminPermission } from '../auth/adminPermissions';
-import { StatusBadge } from '../components/StatusBadge';
+import { StudentBannerLayer } from '../components/StudentBannerLayer';
 import { WhatsAppContactWidget } from '../components/WhatsAppContactWidget';
-import { useStudentFeatureControls } from '../features/useFeatureControls';
+import { getFeatureMessage, usePublicExploreSkilledSapiensFeatureControl, useStudentFeatureControls } from '../features/useFeatureControls';
 import { StudentAnnouncement, useStudentAnnouncements } from '../features/student/useStudentAnnouncements';
 import { useStudentCertificates } from '../features/student/useStudentCertificates';
 import { StudentScheduleItem, useStudentSchedule } from '../features/student/useStudentSchedule';
@@ -39,8 +39,9 @@ const studentSections: NavSection[] = [
 const adminSections: NavSection[] = [
   { title: 'Main', moduleIds: ['dashboard', 'recording-candidates', 'workshops', 'resources', 'career-readiness', 'ats-resume-score'] },
   { title: 'Administration', moduleIds: ['students', 'cohorts', 'programs', 'projects', 'project-submissions', 'certificates', 'enrollments', 'admin-users', 'feature-control'] },
-  { title: 'Community', moduleIds: ['community', 'whatsapp-groups', 'email-marketing', 'email-center'] },
-  { title: 'Help', moduleIds: ['announcements', 'support', 'observability'] },
+  { title: 'Pulse Management', moduleIds: ['pulse-overview', 'pulse-colleges', 'pulse-clubs', 'pulse-profiles', 'pulse-moderation', 'pulse-opportunities', 'pulse-mentorship'] },
+  { title: 'Community', moduleIds: ['whatsapp-groups', 'email-marketing', 'email-center'] },
+  { title: 'Help', moduleIds: ['announcements', 'banners', 'website-management', 'support', 'observability'] },
   { title: 'Payments', moduleIds: ['payment-orders', 'paid-access'] }
 ];
 
@@ -129,6 +130,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   const workspaceLabel = isLearnerShell ? 'Learning workspace' : 'Admin workspace';
   const [isNavOpen, setIsNavOpen] = useState(false);
   const [isAnnouncementOpen, setIsAnnouncementOpen] = useState(false);
+  const [areStudentBadgeQueriesReady, setAreStudentBadgeQueriesReady] = useState(portal !== 'student');
   const [dismissedBannerId, setDismissedBannerId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const announcementMenuRef = useRef<HTMLDivElement | null>(null);
@@ -136,6 +138,7 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   const navigate = useNavigate();
   const { accessToken, signOut } = useAuth();
   const featureControlsQuery = useStudentFeatureControls({ enabled: portal === 'student' });
+  const publicExploreFeatureQuery = usePublicExploreSkilledSapiensFeatureControl({ enabled: portal === 'guest' });
   const adminProfileQuery = useQuery({
     enabled: portal === 'admin' && Boolean(accessToken),
     queryFn: () => apiGet<AdminProfile>('/admins/me', { accessToken: accessToken ?? undefined }),
@@ -152,10 +155,11 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   const certificatesEnabled = portal === 'student' && featureStatusMap.get('certificates') !== 'hide';
   const scheduleEnabled = portal === 'student' && featureStatusMap.get('schedule') !== 'hide';
   const doubtSessionsEnabled = portal === 'student' && featureStatusMap.get('doubt-sessions') !== 'hide';
-  const announcementsQuery = useStudentAnnouncements({ activeOnly: true, enabled: announcementsEnabled, limit: 5, page: 1, priority: 'all' });
-  const certificateCountQuery = useStudentCertificates({ enabled: certificatesEnabled, limit: 1, page: 1 });
-  const workshopCountQuery = useStudentSchedule({ enabled: scheduleEnabled, includePast: true, limit: 500, page: 1, sessionType: 'workshop' });
-  const doubtSessionCountQuery = useStudentSchedule({ enabled: doubtSessionsEnabled, includePast: true, limit: 500, page: 1, sessionType: 'doubt_session' });
+  const shouldLoadStudentBadgeQueries = portal === 'student' && areStudentBadgeQueriesReady;
+  const announcementsQuery = useStudentAnnouncements({ activeOnly: true, enabled: shouldLoadStudentBadgeQueries && announcementsEnabled, limit: 5, page: 1, priority: 'all' });
+  const certificateCountQuery = useStudentCertificates({ enabled: shouldLoadStudentBadgeQueries && certificatesEnabled, limit: 1, page: 1 });
+  const workshopCountQuery = useStudentSchedule({ enabled: shouldLoadStudentBadgeQueries && scheduleEnabled, includePast: true, limit: 500, page: 1, sessionType: 'workshop' });
+  const doubtSessionCountQuery = useStudentSchedule({ enabled: shouldLoadStudentBadgeQueries && doubtSessionsEnabled, includePast: true, limit: 500, page: 1, sessionType: 'doubt_session' });
   const navSections = groupNavItems(visibleNavItems, portal);
   const activeNavItem = [...visibleNavItems]
     .sort((left, right) => right.path.length - left.path.length)
@@ -178,6 +182,21 @@ export function AppShell({ navItems, portal }: AppShellProps) {
   );
   const bannerAnnouncement = announcementItems.find((item) => item.pinned || item.priority === 'urgent');
   const whatsappFeature = featureControlsQuery.data?.items.find((item) => item.moduleId === 'whatsapp-widget');
+  const explorePath = isLearnerShell ? `/${portal}/explore` : null;
+  const returnPath = `${location.pathname}${location.search}${location.hash}`;
+  const exploreFeature = portal === 'student'
+    ? featureControlsQuery.data?.items.find((item) => item.moduleId === 'explore-skilled-sapiens')
+    : portal === 'guest'
+      ? publicExploreFeatureQuery.data
+      : undefined;
+  const exploreFeatureStatus = exploreFeature?.status ?? 'show';
+  const showExploreCta = Boolean(explorePath) && exploreFeatureStatus !== 'hide';
+  const isExploreCtaDisabled = exploreFeatureStatus === 'upcoming';
+  const pulseExploreFeature = portal === 'student'
+    ? featureControlsQuery.data?.items.find((item) => item.moduleId === 'explore-pulse')
+    : undefined;
+  const showPulseExploreCta = portal === 'student'
+    && (featureControlsQuery.isError || (!featureControlsQuery.isLoading && (pulseExploreFeature?.status ?? 'show') === 'show'));
 
   useEffect(() => {
     if (portal !== 'student') return undefined;
@@ -185,6 +204,17 @@ export function AppShell({ navItems, portal }: AppShellProps) {
     const intervalId = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(intervalId);
   }, [portal]);
+
+  useEffect(() => {
+    if (portal !== 'student') {
+      setAreStudentBadgeQueriesReady(true);
+      return undefined;
+    }
+
+    setAreStudentBadgeQueriesReady(false);
+    const timeoutId = window.setTimeout(() => setAreStudentBadgeQueriesReady(true), 2_000);
+    return () => window.clearTimeout(timeoutId);
+  }, [portal, location.pathname]);
 
   useEffect(() => {
     setIsAnnouncementOpen(false);
@@ -344,8 +374,26 @@ export function AppShell({ navItems, portal }: AppShellProps) {
                 ) : null}
               </div>
             ) : null}
-            <StatusBadge tone="safe">Protected session</StatusBadge>
-            <ShieldCheck size={20} />
+            {showExploreCta && explorePath ? (
+              isExploreCtaDisabled ? (
+                <button className="topbar-explore-link topbar-explore-link--disabled" title={getFeatureMessage(exploreFeature)} type="button">
+                  <Sparkles size={17} />
+                  <span>Explore Skilled Sapiens</span>
+                  <small>Soon</small>
+                </button>
+              ) : (
+              <Link className="topbar-explore-link" to={explorePath} state={{ from: returnPath }}>
+                <Sparkles size={17} />
+                <span>Explore Skilled Sapiens</span>
+              </Link>
+              )
+            ) : null}
+            {showPulseExploreCta ? (
+              <Link className="topbar-pulse-link" to="/pulse/home">
+                <Send size={17} />
+                <span>Explore Pulse</span>
+              </Link>
+            ) : null}
           </div>
         </header>
 
@@ -364,6 +412,8 @@ export function AppShell({ navItems, portal }: AppShellProps) {
             </div>
           </section>
         ) : null}
+
+        <StudentBannerLayer enabled={portal === 'student'} />
 
         <main className="page-frame">
           <Outlet />

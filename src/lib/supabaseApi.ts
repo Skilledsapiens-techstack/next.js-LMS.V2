@@ -46,6 +46,13 @@ type LightweightCountRequest = SupabaseQuery &
     error: { message: string } | null;
   }>;
 
+type SupabaseRangeRequest = {
+  range: (from: number, to: number) => PromiseLike<{
+    data: unknown[] | null;
+    error: { message: string } | null;
+  }>;
+};
+
 type AdminProfileRecord = Record<string, unknown> & {
   email?: string;
   permissions: AdminPermission[];
@@ -63,6 +70,7 @@ const STUDENT_BUNDLE_SECTIONS: Record<string, string[]> = {
 const ADMIN_READ_PERMISSIONS_BY_PATH: Record<string, AdminPermission> = {
   '/admins/announcements': 'admin.announcements.view',
   '/admins/announcements/recipient-count': 'admin.announcements.view',
+  '/admins/banners': 'admin.announcements.view',
   '/admins/audit-logs': 'admin.observability.view',
   '/admins/career-readiness-content': 'admin.resources.view',
   '/admins/certificate-program-settings': 'admin.certificates.view',
@@ -85,6 +93,8 @@ const ADMIN_READ_PERMISSIONS_BY_PATH: Record<string, AdminPermission> = {
   '/admins/enrollment-webhook-events': 'admin.enrollments.view',
   '/admins/admin-users': 'admin.admin_users.view',
   '/admins/feature-controls': 'admin.feature_control.manage',
+  '/admins/website-management/inquiries': 'admin.website.view',
+  '/admins/website-management/modules': 'admin.website.view',
   '/admins/ats-attempts': 'admin.ats.view',
   '/admins/ats-packages': 'admin.ats.view',
   '/admins/ats-role-levels': 'admin.ats.view',
@@ -216,6 +226,7 @@ const COHORT_WRITE_COLUMNS = new Set([
 
 const WORKSHOP_WRITE_COLUMNS = new Set([
   'access_type',
+  'available_on_pulse',
   'cohort_names',
   'currency',
   'date',
@@ -245,6 +256,7 @@ const WORKSHOP_WRITE_COLUMNS = new Set([
 
 const RESOURCE_WRITE_COLUMNS = new Set([
   'access_type',
+  'available_on_pulse',
   'cohort_names',
   'currency',
   'description',
@@ -255,6 +267,10 @@ const RESOURCE_WRITE_COLUMNS = new Set([
   'guest_cta_url',
   'guest_registration_required',
   'payment_link',
+  'pulse_category',
+  'pulse_featured',
+  'pulse_summary',
+  'pulse_visibility',
   'price',
   'program_keys',
   'resource_domain_key',
@@ -315,6 +331,7 @@ const STUDENT_GUIDANCE_CONTENT_WRITE_COLUMNS = new Set([
 ]);
 
 const CAREER_READINESS_CONTENT_WRITE_COLUMNS = new Set([
+  'available_on_pulse',
   'category',
   'cohort_names',
   'content',
@@ -329,6 +346,10 @@ const CAREER_READINESS_CONTENT_WRITE_COLUMNS = new Set([
   'link_buttons',
   'link_label',
   'link_url',
+  'pulse_category',
+  'pulse_featured',
+  'pulse_summary',
+  'pulse_visibility',
   'program_keys',
   'section_title',
   'sort_order',
@@ -470,6 +491,30 @@ const ANNOUNCEMENT_WRITE_COLUMNS = new Set([
   'updated_by'
 ]);
 
+const BANNER_WRITE_COLUMNS = new Set([
+  'audience',
+  'banner_id',
+  'banner_type',
+  'cohort_names',
+  'created_by',
+  'cta_label',
+  'cta_url',
+  'custom_type',
+  'display_type',
+  'end_at',
+  'message',
+  'priority',
+  'program_keys',
+  'require_acknowledgement',
+  'start_at',
+  'status',
+  'student_emails',
+  'target_ats_credits',
+  'target_paid_access',
+  'title',
+  'updated_by'
+]);
+
 const FEATURE_CONTROL_WRITE_COLUMNS = new Set([
   'module_id',
   'settings',
@@ -477,6 +522,33 @@ const FEATURE_CONTROL_WRITE_COLUMNS = new Set([
   'student_path',
   'status',
   'upcoming_message',
+  'updated_by'
+]);
+
+const WEBSITE_CAMPUS_INQUIRY_WRITE_COLUMNS = new Set([
+  'designation',
+  'email',
+  'institution_name',
+  'interested_in',
+  'message',
+  'metadata',
+  'name',
+  'partner_type',
+  'phone',
+  'source_page',
+  'status',
+  'submitted_by_email',
+  'updated_by'
+]);
+
+const WEBSITE_NAV_MODULE_WRITE_COLUMNS = new Set([
+  'label',
+  'module_key',
+  'nav_group',
+  'settings',
+  'slug',
+  'sort_order',
+  'status',
   'updated_by'
 ]);
 
@@ -632,6 +704,12 @@ const EMAIL_TEMPLATE_PHASE_ALIASES: Record<string, string> = {
 
 const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
   '/admins/announcements': { table: 'announcements', searchColumns: ['title', 'message', 'audience'] },
+  '/admins/banners': {
+    table: 'banners',
+    filterColumns: { audience: 'audience', displayType: 'display_type', status: 'status', type: 'banner_type' },
+    searchColumns: ['title', 'message', 'banner_type', 'custom_type', 'display_type', 'audience'],
+    sortColumns: { newest: { column: 'updated_at', ascending: false }, priority: { column: 'priority', ascending: false } }
+  },
   '/admins/audit-logs': {
     table: 'audit_logs',
     filterColumns: { entityId: 'entity_id', entityType: 'entity_type' },
@@ -730,6 +808,18 @@ const TABLE_ENDPOINTS: Record<string, TableEndpoint> = {
     table: 'feature_controls',
     searchColumns: ['module_id', 'student_label', 'student_path'],
     sortColumns: { order: { column: 'sort_order', ascending: true } }
+  },
+  '/admins/website-management/inquiries': {
+    table: 'website_campus_inquiries',
+    filterColumns: { sourcePage: 'source_page', status: 'status' },
+    searchColumns: ['source_page', 'name', 'designation', 'institution_name', 'email', 'phone', 'partner_type', 'interested_in', 'message'],
+    sortColumns: { newest: { column: 'created_at', ascending: false }, updated: { column: 'updated_at', ascending: false } }
+  },
+  '/admins/website-management/modules': {
+    table: 'website_nav_modules',
+    filterColumns: { group: 'nav_group', status: 'status' },
+    searchColumns: ['module_key', 'label', 'slug', 'nav_group'],
+    sortColumns: { order: { column: 'sort_order', ascending: true }, updated: { column: 'updated_at', ascending: false } }
   },
   '/admins/ats-attempts': {
     table: 'ats_attempts',
@@ -971,11 +1061,29 @@ const WRITE_ENDPOINTS: Record<string, WriteEndpoint> = {
     table: 'announcements',
     validateBody: validateAnnouncementWriteBody
   },
+  banners: {
+    columns: BANNER_WRITE_COLUMNS,
+    normalizeBody: normalizeBannerWriteBody,
+    table: 'banners',
+    validateBody: validateBannerWriteBody
+  },
   feature_controls: {
     columns: FEATURE_CONTROL_WRITE_COLUMNS,
     normalizeBody: normalizeFeatureControlWriteBody,
     table: 'feature_controls',
     validateBody: validateFeatureControlWriteBody
+  },
+  website_campus_inquiries: {
+    columns: WEBSITE_CAMPUS_INQUIRY_WRITE_COLUMNS,
+    normalizeBody: normalizeWebsiteCampusInquiryWriteBody,
+    table: 'website_campus_inquiries',
+    validateBody: validateWebsiteCampusInquiryWriteBody
+  },
+  website_nav_modules: {
+    columns: WEBSITE_NAV_MODULE_WRITE_COLUMNS,
+    normalizeBody: normalizeWebsiteNavModuleWriteBody,
+    table: 'website_nav_modules',
+    validateBody: validateWebsiteNavModuleWriteBody
   },
   ats_roles: {
     columns: ATS_ROLE_WRITE_COLUMNS,
@@ -1054,6 +1162,8 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/public/feature-controls/guest-login') return getPublicGuestLoginFeatureControl() as Promise<TResponse>;
   if (cleanPath === '/public/feature-controls/login-create-password') return getPublicLoginCreatePasswordFeatureControl() as Promise<TResponse>;
   if (cleanPath === '/public/feature-controls/whatsapp-widget') return getPublicWhatsAppWidgetFeatureControl() as Promise<TResponse>;
+  if (cleanPath === '/public/feature-controls/explore-skilled-sapiens') return getPublicExploreSkilledSapiensFeatureControl() as Promise<TResponse>;
+  if (cleanPath === '/public/website-nav-modules') return getPublicWebsiteNavModules() as Promise<TResponse>;
 
   const context = await createContext(options.accessToken);
 
@@ -1068,6 +1178,7 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   const readPermission = getAdminReadPermission(cleanPath);
   if (readPermission) await requireAdminPermission(context, readPermission);
   if (cleanPath === '/students/me/dashboard') return getStudentDashboard(context) as Promise<TResponse>;
+  if (cleanPath === '/students/me/dashboard-core') return getStudentDashboardCore(context) as Promise<TResponse>;
   if (cleanPath === '/admins/dashboard') return getAdminDashboard(context) as Promise<TResponse>;
   if (cleanPath === '/admins/observability') return getAdminObservability(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/student-audit-logs') return getStudentAuditLogs(context, options.query) as Promise<TResponse>;
@@ -1078,6 +1189,7 @@ export async function apiGet<TResponse>(path: string, options: ApiClientOptions 
   if (cleanPath === '/support/categories') return getSupportCategories(context, options.query, false) as Promise<TResponse>;
   if (cleanPath === '/students/me/support-settings') return getSupportContactSettings(context, false) as Promise<TResponse>;
   if (cleanPath === '/students/me/support-faqs') return getStudentSupportFaqs(context, options.query) as Promise<TResponse>;
+  if (cleanPath === '/students/me/banners') return getStudentBanners(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/support-categories') return getSupportCategories(context, options.query, true) as Promise<TResponse>;
   if (cleanPath === '/admins/support-faqs') return getAdminSupportFaqs(context, options.query) as Promise<TResponse>;
   if (cleanPath === '/admins/support-settings') return getSupportContactSettings(context, true) as Promise<TResponse>;
@@ -1166,6 +1278,10 @@ async function getPublicWhatsAppWidgetFeatureControl() {
   return getPublicFeatureControl('whatsapp-widget', getDefaultWhatsAppWidgetFeatureControl);
 }
 
+async function getPublicExploreSkilledSapiensFeatureControl() {
+  return getPublicFeatureControl('explore-skilled-sapiens', getDefaultExploreSkilledSapiensFeatureControl);
+}
+
 async function getPublicFeatureControl(moduleId: string, getDefaultFeatureControl: () => unknown) {
   const supabase = getSupabaseClient();
   if (!supabase) return getDefaultFeatureControl();
@@ -1178,6 +1294,78 @@ async function getPublicFeatureControl(moduleId: string, getDefaultFeatureContro
   if (error) throw new ApiClientError(error.message, 503);
   if (!data) return getDefaultFeatureControl();
 
+  return camelize(data);
+}
+
+function getDefaultWebsiteNavModules() {
+  return [
+    { id: 'website-nav-home-default', isCore: true, label: 'Home', moduleKey: 'home', navGroup: 'main', settings: {}, slug: 'home', sortOrder: 10, status: 'visible' },
+    { id: 'website-nav-placement-default', isCore: false, label: 'Placement Mentorship', moduleKey: 'placement-mentorship', navGroup: 'main', settings: { hasDropdown: true }, slug: 'placement-mentorship', sortOrder: 20, status: 'visible' },
+    { id: 'website-nav-placement-students-default', isCore: false, label: 'Students', moduleKey: 'placement-mentorship-students', navGroup: 'placement', settings: {}, slug: 'placement-mentorship', sortOrder: 21, status: 'visible' },
+    { id: 'website-nav-placement-professionals-default', isCore: false, label: 'Working Professionals', moduleKey: 'placement-mentorship-professionals', navGroup: 'placement', settings: {}, slug: 'placement-mentorship-professionals', sortOrder: 22, status: 'visible' },
+    { id: 'website-nav-live-projects-default', isCore: false, label: 'Live Projects', moduleKey: 'live-projects', navGroup: 'main', settings: {}, slug: 'live-projects', sortOrder: 30, status: 'visible' },
+    { id: 'website-nav-leadership-default', isCore: false, label: 'Leadership Programs', moduleKey: 'leadership-programs', navGroup: 'main', settings: {}, slug: 'leadership-programs', sortOrder: 40, status: 'visible' },
+    { id: 'website-nav-business-default', isCore: false, label: 'Business Connect', moduleKey: 'business-connect', navGroup: 'main', settings: {}, slug: 'business-connect', sortOrder: 50, status: 'visible' },
+    { id: 'website-nav-campus-default', isCore: false, label: 'Campus Connect', moduleKey: 'campus-connect', navGroup: 'main', settings: {}, slug: 'campus-connect', sortOrder: 60, status: 'visible' }
+  ];
+}
+
+async function getPublicWebsiteNavModules() {
+  const supabase = getSupabaseClient();
+  if (!supabase) return getDefaultWebsiteNavModules();
+
+  const { data, error } = await supabase
+    .from('website_nav_modules')
+    .select('id,module_key,label,nav_group,slug,status,sort_order,is_core,settings,updated_at,updated_by')
+    .order('sort_order', { ascending: true });
+
+  if (error) return getDefaultWebsiteNavModules();
+  return (data && data.length > 0 ? data : getDefaultWebsiteNavModules()).map(camelize);
+}
+
+async function submitPublicCampusConnectInquiry(body: unknown) {
+  const supabase = getSupabaseClient();
+  if (!supabase) throw new ApiClientError('Supabase is not configured.', 503);
+
+  const endpoint = getWriteEndpoint('website_campus_inquiries');
+  const payload = prepareWritePayload(
+    endpoint,
+    {
+      ...(isRecord(body) ? body : {}),
+      sourcePage: 'campus-connect',
+      status: 'new',
+      metadata: {
+        ...(isRecord(body) && isRecord(body.metadata) ? body.metadata : {}),
+        submittedFrom: 'explore-campus-connect'
+      }
+    },
+    true
+  );
+  const { data, error } = await supabase.from('website_campus_inquiries').insert(payload).select('*').single();
+  if (error) throw mutationError(error, 'website_campus_inquiries');
+  return camelize(data);
+}
+
+async function submitPublicBusinessConnectInquiry(body: unknown) {
+  const supabase = getSupabaseClient();
+  if (!supabase) throw new ApiClientError('Supabase is not configured.', 503);
+
+  const endpoint = getWriteEndpoint('website_campus_inquiries');
+  const payload = prepareWritePayload(
+    endpoint,
+    {
+      ...(isRecord(body) ? body : {}),
+      sourcePage: 'business-connect',
+      status: 'new',
+      metadata: {
+        ...(isRecord(body) && isRecord(body.metadata) ? body.metadata : {}),
+        submittedFrom: 'explore-business-connect'
+      }
+    },
+    true
+  );
+  const { data, error } = await supabase.from('website_campus_inquiries').insert(payload).select('*').single();
+  if (error) throw mutationError(error, 'website_campus_inquiries');
   return camelize(data);
 }
 
@@ -1223,6 +1411,20 @@ function getDefaultWhatsAppWidgetFeatureControl() {
   });
 }
 
+function getDefaultExploreSkilledSapiensFeatureControl() {
+  return camelize({
+    id: 'explore-skilled-sapiens-default',
+    is_core: false,
+    module_id: 'explore-skilled-sapiens',
+    settings: { scope: 'student_guest' },
+    sort_order: 170,
+    status: 'show',
+    student_label: 'Explore Skilled Sapiens',
+    student_path: '/student/explore',
+    upcoming_message: 'Explore Skilled Sapiens is currently unavailable.'
+  });
+}
+
 export async function apiPatch<TResponse, TBody = unknown>(path: string, options: ApiMutationOptions<TBody> = {}): Promise<TResponse> {
   if (!webEnv.writeActionsEnabled) {
     throw new ApiClientError('Write actions are disabled in this environment.', 403);
@@ -1247,6 +1449,28 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
 
   const guestLeadAccess = cleanPath.match(/^\/admins\/guest-leads\/([^/]+)\/access$/);
   if (guestLeadAccess) return updateGuestLeadAccess(context, decodeURIComponent(guestLeadAccess[1]), options.body) as Promise<TResponse>;
+
+  const websiteInquiryStatus = cleanPath.match(/^\/admins\/website-management\/inquiries\/([^/]+)\/status$/);
+  if (websiteInquiryStatus) {
+    return updateById(
+      context,
+      'website_campus_inquiries',
+      decodeURIComponent(websiteInquiryStatus[1]),
+      { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email },
+      'status_changed'
+    ) as Promise<TResponse>;
+  }
+
+  const websiteNavModuleStatus = cleanPath.match(/^\/admins\/website-management\/modules\/([^/]+)\/status$/);
+  if (websiteNavModuleStatus) {
+    return updateById(
+      context,
+      'website_nav_modules',
+      decodeURIComponent(websiteNavModuleStatus[1]),
+      { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email },
+      'status_changed'
+    ) as Promise<TResponse>;
+  }
 
   const projectSubmissionReview = cleanPath.match(/^\/admins\/project-submissions\/([^/]+)\/(approve|reject|changes-requested)$/);
   if (projectSubmissionReview) return reviewProjectSubmission(context, decodeURIComponent(projectSubmissionReview[1]), projectSubmissionReview[2], options.body) as Promise<TResponse>;
@@ -1328,6 +1552,33 @@ export async function apiPatch<TResponse, TBody = unknown>(path: string, options
       context,
       'announcements',
       decodeURIComponent(announcementUpdate[1]),
+      { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email },
+      'updated'
+    ) as Promise<TResponse>;
+  }
+
+  const bannerArchive = cleanPath.match(/^\/admins\/banners\/([^/]+)\/archive$/);
+  if (bannerArchive) {
+    return updateById(context, 'banners', decodeURIComponent(bannerArchive[1]), { status: 'inactive', updatedBy: context.email }, 'archived') as Promise<TResponse>;
+  }
+
+  const bannerStatus = cleanPath.match(/^\/admins\/banners\/([^/]+)\/status$/);
+  if (bannerStatus) {
+    return updateById(
+      context,
+      'banners',
+      decodeURIComponent(bannerStatus[1]),
+      { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email },
+      'status_changed'
+    ) as Promise<TResponse>;
+  }
+
+  const bannerUpdate = cleanPath.match(/^\/admins\/banners\/([^/]+)$/);
+  if (bannerUpdate) {
+    return updateById(
+      context,
+      'banners',
+      decodeURIComponent(bannerUpdate[1]),
       { ...(isRecord(options.body) ? options.body : {}), updatedBy: context.email },
       'updated'
     ) as Promise<TResponse>;
@@ -1481,8 +1732,11 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
     throw new ApiClientError('Write actions are disabled in this environment.', 403);
   }
 
-  const context = await createContext(options.accessToken);
   const cleanPath = stripQuery(path);
+  if (cleanPath === '/public/campus-connect-inquiries') return submitPublicCampusConnectInquiry(options.body) as Promise<TResponse>;
+  if (cleanPath === '/public/business-connect-inquiries') return submitPublicBusinessConnectInquiry(options.body) as Promise<TResponse>;
+
+  const context = await createContext(options.accessToken);
   const writePermission = getAdminWritePermission(cleanPath, 'post');
   if (writePermission) await requireAdminPermission(context, writePermission);
 
@@ -1516,6 +1770,19 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
       {
         ...(isRecord(options.body) ? options.body : {}),
         announcementId: `ANN-${Date.now()}`,
+        createdBy: context.email,
+        updatedBy: context.email
+      },
+      'created'
+    ) as Promise<TResponse>;
+  }
+  if (cleanPath === '/admins/banners') {
+    return insertRow(
+      context,
+      'banners',
+      {
+        ...(isRecord(options.body) ? options.body : {}),
+        bannerId: `BNR-${Date.now()}`,
         createdBy: context.email,
         updatedBy: context.email
       },
@@ -1585,6 +1852,8 @@ export async function apiPost<TResponse, TBody = unknown>(path: string, options:
   if (cleanPath === '/admins/certificates/live-project') return issueLiveProjectCertificate(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/admins/certificates/manual') return issueManualCertificate(context, options.body) as Promise<TResponse>;
   if (cleanPath === '/students/me/presence') return updateStudentPresence(context) as Promise<TResponse>;
+  const studentBannerDismiss = cleanPath.match(/^\/students\/me\/banners\/([^/]+)\/dismiss$/);
+  if (studentBannerDismiss) return dismissStudentBanner(context, decodeURIComponent(studentBannerDismiss[1]), options.body) as Promise<TResponse>;
   const studentRecordingProgress = cleanPath.match(/^\/students\/me\/recordings\/([^/]+)\/progress$/);
   if (studentRecordingProgress) return markStudentRecordingComplete(context, decodeURIComponent(studentRecordingProgress[1])) as Promise<TResponse>;
   if (cleanPath === '/students/me/project-submissions') return submitStudentProjectReport(context, options.body) as Promise<TResponse>;
@@ -1681,6 +1950,7 @@ function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'pos
   if (path.match(/^\/admins\/students\/[^/]+\/lp-attempts$/)) return 'admin.students.manage';
   if (path.match(/^\/admins\/students\/[^/]+/)) return 'admin.students.manage';
   if (path.match(/^\/admins\/guest-leads\/[^/]+\/(status|access|notes)$/)) return 'admin.students.manage';
+  if (path.match(/^\/admins\/website-management\/(inquiries|modules)\/[^/]+\/status$/)) return 'admin.website.manage';
 
   if (path === '/admins/cohorts' || path.match(/^\/admins\/cohorts\/[^/]+/)) return 'admin.cohorts.manage';
   if (path === '/admins/programs' || path.match(/^\/admins\/programs\/[^/]+/)) return 'admin.programs.manage';
@@ -1704,6 +1974,7 @@ function getAdminWritePermission(path: string, method: 'delete' | 'patch' | 'pos
   if (path === '/admins/resource-domains' || path.match(/^\/admins\/resource-domains\/[^/]+/)) return 'admin.resources.manage';
   if (path === '/admins/resources' || path.match(/^\/admins\/resources\/[^/]+/)) return 'admin.resources.manage';
   if (path === '/admins/announcements' || path.match(/^\/admins\/announcements\/[^/]+/)) return 'admin.announcements.manage';
+  if (path === '/admins/banners' || path.match(/^\/admins\/banners\/[^/]+/)) return 'admin.announcements.manage';
   if (path === '/admins/email-templates' || path.match(/^\/admins\/email-templates\/[^/]+/)) return 'admin.email.manage';
   if (path === '/admins/email-marketing-campaigns' || path.match(/^\/admins\/email-marketing-campaigns\/[^/]+/)) return 'admin.email.manage';
   if (path === '/admins/email-marketing-plans' || path.match(/^\/admins\/email-marketing-plans\/[^/]+/)) return 'admin.email.manage';
@@ -1768,6 +2039,34 @@ function getRequestSupabaseClient(accessToken: string, userId: string) {
   return client;
 }
 
+type AccessTokenClaims = {
+  email?: unknown;
+  email_confirmed_at?: unknown;
+  exp?: unknown;
+  sub?: unknown;
+};
+
+function decodeBase64UrlJson(value: string) {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized.padEnd(normalized.length + (4 - normalized.length % 4) % 4, '=');
+  const binary = globalThis.atob(padded);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+}
+
+function getAccessTokenClaims(accessToken: string) {
+  const [, payload] = accessToken.split('.');
+  if (!payload) return null;
+
+  try {
+    const claims = decodeBase64UrlJson(payload);
+    if (!isRecord(claims)) return null;
+    return claims as AccessTokenClaims;
+  } catch (_error) {
+    return null;
+  }
+}
+
 async function createContext(accessToken?: string) {
   const authClient = getSupabaseClient();
   if (!authClient || !webEnv.supabaseUrl || !webEnv.supabaseAnonKey) {
@@ -1775,12 +2074,25 @@ async function createContext(accessToken?: string) {
   }
   if (!accessToken) throw new ApiClientError('Supabase access token is required.', 401);
 
-  const { data, error } = await authClient.auth.getUser(accessToken);
-  if (error || !data.user?.email) throw new ApiClientError('Supabase session is invalid.', 401);
+  const claims = getAccessTokenClaims(accessToken);
+  const userId = typeof claims?.sub === 'string' ? claims.sub : '';
+  const email = typeof claims?.email === 'string' ? normalizeEmail(claims.email) : '';
+  const expiresAt = typeof claims?.exp === 'number' ? claims.exp * 1000 : 0;
+  if (!userId || !email || (expiresAt > 0 && expiresAt <= Date.now())) {
+    const { data, error } = await authClient.auth.getUser(accessToken);
+    if (error || !data.user?.email) throw new ApiClientError('Supabase session is invalid.', 401);
 
-  const supabase = getRequestSupabaseClient(accessToken, data.user.id);
-  const email = normalizeEmail(data.user.email);
-  return { accessToken, email, emailVerifiedAt: data.user.email_confirmed_at ?? null, supabase, userId: data.user.id };
+    return {
+      accessToken,
+      email: normalizeEmail(data.user.email),
+      emailVerifiedAt: data.user.email_confirmed_at ?? null,
+      supabase: getRequestSupabaseClient(accessToken, data.user.id),
+      userId: data.user.id
+    };
+  }
+
+  const emailVerifiedAt = typeof claims?.email_confirmed_at === 'string' ? claims.email_confirmed_at : null;
+  return { accessToken, email, emailVerifiedAt, supabase: getRequestSupabaseClient(accessToken, userId), userId };
 }
 
 async function getStudentProfile(context: Awaited<ReturnType<typeof createContext>>) {
@@ -2118,6 +2430,14 @@ async function getStudentDashboard(context: Awaited<ReturnType<typeof createCont
   return { certificates, dashboard, guidanceContent, projects, resources, student };
 }
 
+async function getStudentDashboardCore(context: Awaited<ReturnType<typeof createContext>>) {
+  const [student, dashboard] = await Promise.all([
+    getStudentProfile(context),
+    callRpc(context, 'student_dashboard_bundle', { p_student_email: context.email })
+  ]);
+  return { dashboard, student };
+}
+
 async function getStudentGuidanceContent(
   context: Awaited<ReturnType<typeof createContext>>,
   query: ApiClientOptions['query'],
@@ -2163,8 +2483,28 @@ async function getStudentGuidanceContent(
 }
 
 async function getStudentCareerReadinessContent(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
-  const data = await callRpc(context, 'student_career_readiness_content', { p_student_email: context.email });
-  const items = Array.isArray(data) ? data.map(enrichRow).map(camelize) : [];
+  const wantsPulse = String(query?.pulse ?? '').trim().toLowerCase() === 'true';
+  let data: unknown;
+  if (wantsPulse) {
+    try {
+      data = await callRpc(context, 'student_pulse_career_readiness_content', { p_student_email: context.email });
+    } catch {
+      try {
+        data = await callRpc(context, 'student_career_readiness_content', { p_pulse: true, p_student_email: context.email });
+      } catch {
+        data = await callRpc(context, 'student_career_readiness_content', { p_student_email: context.email });
+      }
+    }
+  } else {
+    try {
+      data = await callRpc(context, 'student_career_readiness_content', { p_student_email: context.email });
+    } catch {
+      data = await callRpc(context, 'student_career_readiness_content', { p_pulse: false, p_student_email: context.email });
+    }
+  }
+  const items = (Array.isArray(data) ? data.map(enrichRow).map(camelize) : []).filter(
+    (item) => !wantsPulse || (isRecord(item) && item.availableOnPulse === true)
+  );
   const category = String(query?.category ?? '').trim();
   const search = String(query?.search ?? '').trim().toLowerCase();
   const filtered = items
@@ -3090,7 +3430,9 @@ function isObservabilityReadError(error: unknown) {
 }
 
 async function getStudentBundleList(context: Awaited<ReturnType<typeof createContext>>, sections: string[], query: ApiClientOptions['query']) {
-  const bundle = await callRpc(context, 'student_dashboard_bundle', { p_student_email: context.email });
+  const bundle = sections.includes('announcements')
+    ? await getStudentAnnouncementsBundle(context)
+    : await callRpc(context, 'student_dashboard_bundle', { p_student_email: context.email });
   const items = extractItems(bundle, sections);
   const activeOnly = query?.activeOnly === true || query?.activeOnly === 'true';
   const filteredItems = activeOnly && sections.includes('announcements') ? items.filter(isVisibleAnnouncementNow) : items;
@@ -3100,23 +3442,204 @@ async function getStudentBundleList(context: Awaited<ReturnType<typeof createCon
   return paginate(enrichedItems, query);
 }
 
+async function getStudentAnnouncementsBundle(context: Awaited<ReturnType<typeof createContext>>) {
+  try {
+    return await callRpc(context, 'student_announcements_bundle', { p_student_email: context.email });
+  } catch (error) {
+    if (error instanceof ApiClientError && /student_announcements_bundle/i.test(error.message)) {
+      return callRpc(context, 'student_dashboard_bundle', { p_student_email: context.email });
+    }
+    throw error;
+  }
+}
+
+async function getStudentBanners(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
+  const student = (await getStudentProfile(context)) as Record<string, unknown>;
+  const studentId = String(student.id ?? '').trim();
+  const studentEmail = normalizeEmail(student.email || context.email);
+  const altEmail = normalizeEmail(student.altEmail);
+  const emailCandidates = uniqueStrings([studentEmail, altEmail, context.email].map(normalizeEmail).filter(Boolean));
+  const cohortNames = uniqueStrings([
+    student.cohortName,
+    ...(await getStudentLinkedCohortNames(context, studentId))
+  ].map((value) => String(value ?? '').trim()).filter(Boolean));
+  const programTokens = uniqueStrings([
+    ...String(student.programName ?? '').split(','),
+    ...asStringArray(student.trackRoleIds),
+    ...asStringArray(student.liveProjectRoleIds),
+    ...asStringArray(student.liveProjectRoles)
+  ].map((value) => normalizeScopeToken(value)).filter(Boolean));
+
+  const [{ data: bannerRows, error: bannerError }, hasPaidAccess, hasAtsCredits] = await Promise.all([
+    context.supabase
+      .from('banners')
+      .select('*')
+      .eq('status', 'active')
+      .limit(200),
+    studentHasPaidAccess(context, emailCandidates),
+    studentHasAtsCredits(context, emailCandidates)
+  ]);
+
+  if (bannerError) throw new ApiClientError(bannerError.message, 503);
+
+  const now = Date.now();
+  const items = (bannerRows ?? [])
+    .filter((row) => isVisibleBannerNow(row, now))
+    .filter((row) => bannerMatchesStudent(row as Record<string, unknown>, { cohortNames, emailCandidates, hasAtsCredits, hasPaidAccess, programTokens }))
+    .map(enrichRow)
+    .map(camelize)
+    .sort(compareBanners);
+
+  return paginate(items, query);
+}
+
+async function studentHasPaidAccess(context: Awaited<ReturnType<typeof createContext>>, emails: string[]) {
+  if (emails.length === 0) return false;
+  const { count, error } = await context.supabase
+    .from('paid_access')
+    .select('id', { count: 'exact', head: true })
+    .in('student_email', emails)
+    .limit(1);
+  if (error) return false;
+  return Number(count ?? 0) > 0;
+}
+
+async function studentHasAtsCredits(context: Awaited<ReturnType<typeof createContext>>, emails: string[]) {
+  if (emails.length === 0) return false;
+  const { count, error } = await context.supabase
+    .from('ats_student_credit_grants')
+    .select('id', { count: 'exact', head: true })
+    .in('student_email', emails)
+    .gt('remaining_scans', 0)
+    .limit(1);
+  if (error) return false;
+  return Number(count ?? 0) > 0;
+}
+
+async function dismissStudentBanner(context: Awaited<ReturnType<typeof createContext>>, bannerId: string, body: unknown) {
+  const student = (await getStudentProfile(context)) as Record<string, unknown>;
+  const studentEmail = normalizeEmail(student.email || context.email);
+  const studentId = String(student.id ?? '').trim() || null;
+  const acknowledged = isRecord(body) && body.acknowledged === true;
+
+  const { data: banner, error: bannerError } = await context.supabase
+    .from('banners')
+    .select('id,require_acknowledgement,status,start_at,end_at')
+    .eq('id', bannerId)
+    .maybeSingle();
+  if (bannerError) throw new ApiClientError(bannerError.message, 503);
+  if (!banner || !isVisibleBannerNow(banner)) throw new ApiClientError('This Banner is no longer active.', 404);
+  if ((banner as Record<string, unknown>).require_acknowledgement === true && !acknowledged) {
+    throw new ApiClientError('Please confirm that you have read this Banner.', 400);
+  }
+
+  const { data: existing, error: existingError } = await context.supabase
+    .from('banner_dismissals')
+    .select('*')
+    .eq('banner_id', bannerId)
+    .eq('student_email', studentEmail)
+    .maybeSingle();
+  if (existingError) throw new ApiClientError(existingError.message, 503);
+  if (existing) {
+    if (acknowledged === true && (existing as Record<string, unknown>).acknowledged !== true) {
+      const { data: updated, error: updateError } = await context.supabase
+        .from('banner_dismissals')
+        .update({ acknowledged: true, dismissed_at: new Date().toISOString() })
+        .eq('id', (existing as Record<string, unknown>).id)
+        .select('*')
+        .single();
+      if (updateError) throw mutationError(updateError, 'banner_dismissals');
+      return { dismissed: true, item: camelize(updated) };
+    }
+    return { dismissed: true, item: camelize(existing) };
+  }
+
+  const { data, error } = await context.supabase
+    .from('banner_dismissals')
+    .insert({ acknowledged, banner_id: bannerId, student_email: studentEmail, student_id: studentId })
+    .select('*')
+    .single();
+  if (error) throw mutationError(error, 'banner_dismissals');
+  return { dismissed: true, item: camelize(data) };
+}
+
+function isVisibleBannerNow(row: unknown, now = Date.now()) {
+  if (!isRecord(row)) return false;
+  if (String(row.status ?? 'active').toLowerCase() !== 'active') return false;
+  const startAt = typeof row.start_at === 'string' && row.start_at ? new Date(row.start_at).getTime() : null;
+  const endAt = typeof row.end_at === 'string' && row.end_at ? new Date(row.end_at).getTime() : null;
+  if (startAt !== null && !Number.isNaN(startAt) && startAt > now) return false;
+  if (endAt !== null && !Number.isNaN(endAt) && endAt < now) return false;
+  return true;
+}
+
+function bannerMatchesStudent(
+  row: Record<string, unknown>,
+  context: { cohortNames: string[]; emailCandidates: string[]; hasAtsCredits: boolean; hasPaidAccess: boolean; programTokens: string[] }
+) {
+  const audience = String(row.audience ?? 'all').toLowerCase();
+  if (audience === 'all') return true;
+  if (audience === 'student') {
+    const targetEmails = asStringArray(row.student_emails).map(normalizeEmail).filter(Boolean);
+    return targetEmails.some((email) => context.emailCandidates.includes(email));
+  }
+  if (audience === 'cohort') {
+    const targetCohorts = asStringArray(row.cohort_names).map(normalizeScopeToken);
+    return targetCohorts.some((cohort) => context.cohortNames.map(normalizeScopeToken).includes(cohort));
+  }
+  if (audience === 'program') {
+    const targetPrograms = asStringArray(row.program_keys).map(normalizeScopeToken);
+    return targetPrograms.some((program) => context.programTokens.includes(program));
+  }
+  if (audience === 'access') {
+    return (row.target_paid_access === true && context.hasPaidAccess) || (row.target_ats_credits === true && context.hasAtsCredits);
+  }
+  return false;
+}
+
+function compareBanners(a: unknown, b: unknown) {
+  const priorityWeight: Record<string, number> = { urgent: 4, high: 3, normal: 2, low: 1 };
+  const left = isRecord(a) ? a : {};
+  const right = isRecord(b) ? b : {};
+  const priorityDelta = (priorityWeight[String(right.priority ?? 'normal')] ?? 2) - (priorityWeight[String(left.priority ?? 'normal')] ?? 2);
+  if (priorityDelta !== 0) return priorityDelta;
+  return new Date(String(right.updatedAt ?? right.updated_at ?? right.createdAt ?? right.created_at ?? 0)).getTime()
+    - new Date(String(left.updatedAt ?? left.updated_at ?? left.createdAt ?? left.created_at ?? 0)).getTime();
+}
+
+function normalizeScopeToken(value: unknown) {
+  return String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
 async function getStudentRecordingsList(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
-  const bundle = await callRpc(context, 'student_dashboard_bundle', { p_student_email: context.email });
+  const bundle = await getStudentRecordingsBundle(context);
   const workshops = extractItems(bundle, ['recordings', 'workshopRecordings', 'workshops']);
   const cohorts = extractItems(bundle, ['cohorts', 'studentCohorts']);
   const enrolledPrograms = extractItems(bundle, ['studentPrograms', 'programs', 'activePrograms']);
   const rows = workshops.filter(isStudentRecordingRow).map(enrichRow).map(camelize).filter(studentRecordingHasAudienceScope);
   const sequencedItems = await enrichStudentRecordingsWithSequence(context, rows, [...cohorts, ...enrolledPrograms]);
-  const items = await enrichStudentRecordingsWithRelatedResources(context, sequencedItems);
   const search = String(query?.search ?? '').trim().toLowerCase();
-  const filtered = items
+  const filtered = sequencedItems
     .filter((item) => matchesClientFilters(item, query))
     .filter((item) => !search || JSON.stringify(item).toLowerCase().includes(search))
     .sort(compareStudentRecordingsWithSequence);
   const page = Number(query?.page ?? 1);
   const limit = Math.min(Number(query?.limit ?? 25), 500);
   const start = (page - 1) * limit;
-  return createPaginatedResponse(filtered.slice(start, start + limit), filtered.length, page, limit);
+  const response = createPaginatedResponse(filtered.slice(start, start + limit), filtered.length, page, limit);
+  const enrichedCohorts = await enrichStudentCohortProgramNames(context, cohorts);
+  return { ...response, cohorts: enrichedCohorts.map(enrichRow).map(camelize) };
+}
+
+async function getStudentRecordingsBundle(context: Awaited<ReturnType<typeof createContext>>) {
+  try {
+    return await callRpc(context, 'student_recordings_bundle', { p_student_email: context.email });
+  } catch (error) {
+    if (error instanceof ApiClientError && /student_recordings_bundle/i.test(error.message)) {
+      return callRpc(context, 'student_dashboard_bundle', { p_student_email: context.email });
+    }
+    throw error;
+  }
 }
 
 async function getStudentRecordingProgress(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
@@ -3657,8 +4180,22 @@ function recordingScheduledTime(recording: Record<string, unknown>, fallback = N
 }
 
 async function getStudentResourcesList(context: Awaited<ReturnType<typeof createContext>>, query: ApiClientOptions['query']) {
-  const data = await callRpc(context, 'student_resources_view', { p_student_email: context.email });
-  const items = extractItems(data, ['resources', 'items']).map(enrichRow).map(camelize).filter((item) => matchesClientFilters(item, query));
+  const wantsPulse = String(query?.pulse ?? '').trim().toLowerCase() === 'true';
+  let data: unknown;
+  if (wantsPulse) {
+    try {
+      data = await callRpc(context, 'student_pulse_resources', { p_student_email: context.email });
+    } catch {
+      data = await callRpc(context, 'student_resources_view', { p_student_email: context.email });
+    }
+  } else {
+    data = await callRpc(context, 'student_resources_view', { p_student_email: context.email });
+  }
+  const items = extractItems(data, ['resources', 'items'])
+    .map(enrichRow)
+    .map(camelize)
+    .filter((item) => matchesClientFilters(item, query))
+    .filter((item) => !wantsPulse || (isRecord(item) && item.availableOnPulse === true));
   const search = String(query?.search ?? '').trim().toLowerCase();
   const filtered = search ? items.filter((item) => JSON.stringify(item).toLowerCase().includes(search)) : items;
   const page = Number(query?.page ?? 1);
@@ -4034,23 +4571,56 @@ function normalizeSnapshotRows(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value) ? value.filter(isRecord) : [];
 }
 
+const SUPABASE_ROSTER_BATCH_SIZE = 1000;
+const SUPABASE_IN_FILTER_BATCH_SIZE = 500;
+
+async function fetchAllSupabaseRows(createRequest: () => SupabaseRangeRequest, errorPrefix: string, batchSize = SUPABASE_ROSTER_BATCH_SIZE) {
+  const rows: Record<string, unknown>[] = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + batchSize - 1;
+    const { data, error } = await createRequest().range(from, to);
+    if (error) throw new ApiClientError(`${errorPrefix}: ${error.message}`, 503);
+
+    const batch = (data ?? []).filter(isRecord);
+    rows.push(...batch);
+    if (batch.length < batchSize) break;
+    from += batchSize;
+  }
+
+  return rows;
+}
+
+function chunkArray<TItem>(items: TItem[], chunkSize: number) {
+  const chunks: TItem[][] = [];
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
 async function buildStudentRosterSnapshotPayload(context: Awaited<ReturnType<typeof createContext>>) {
-  const [studentsResult, cohortsResult, programsResult] = await Promise.all([
-    context.supabase.from('students').select('*').order('onboarding_sequence', { ascending: true }).order('created_at', { ascending: true }).limit(10000),
-    context.supabase.from('student_cohorts').select('student_id,cohort_id,cohort_name').limit(20000),
-    context.supabase.from('student_programs').select('student_id,program_key,student_name').limit(20000)
+  const [students, studentCohorts, studentPrograms] = await Promise.all([
+    fetchAllSupabaseRows(
+      () => context.supabase.from('students').select('*').order('onboarding_sequence', { ascending: true }).order('created_at', { ascending: true }),
+      'Student roster snapshot failed'
+    ),
+    fetchAllSupabaseRows(
+      () => context.supabase.from('student_cohorts').select('student_id,cohort_id,cohort_name'),
+      'Student cohort snapshot failed'
+    ),
+    fetchAllSupabaseRows(
+      () => context.supabase.from('student_programs').select('student_id,program_key,student_name'),
+      'Student program snapshot failed'
+    )
   ]);
 
-  if (studentsResult.error) throw new ApiClientError(`Student roster snapshot failed: ${studentsResult.error.message}`, 503);
-  if (cohortsResult.error) throw new ApiClientError(`Student cohort snapshot failed: ${cohortsResult.error.message}`, 503);
-  if (programsResult.error) throw new ApiClientError(`Student program snapshot failed: ${programsResult.error.message}`, 503);
-
-  const students = (studentsResult.data ?? []).filter(isRecord);
   return {
     capturedAt: new Date().toISOString(),
     scope: 'student_roster',
-    studentCohorts: (cohortsResult.data ?? []).filter(isRecord),
-    studentPrograms: (programsResult.data ?? []).filter(isRecord),
+    studentCohorts,
+    studentPrograms,
     students: students.map(pickSnapshotStudentFields),
     version: 1
   };
@@ -4084,12 +4654,34 @@ async function pruneStudentRosterSnapshots(context: Awaited<ReturnType<typeof cr
 }
 
 async function createStudentRosterSnapshot(context: Awaited<ReturnType<typeof createContext>>, snapshotDate = todayLocalDate()) {
-  const existing = await context.supabase.from('student_roster_snapshots').select('*').eq('snapshot_date', snapshotDate).limit(1).maybeSingle();
+  const [existing, currentStudentCount] = await Promise.all([
+    context.supabase.from('student_roster_snapshots').select('*').eq('snapshot_date', snapshotDate).limit(1).maybeSingle(),
+    countRows(context, 'students')
+  ]);
   if (existing.error) throw new ApiClientError(`Student roster snapshot lookup failed: ${existing.error.message}`, 503);
-  if (existing.data) return { created: false, item: camelize(studentRosterSnapshotSummary(existing.data)) };
+  if (existing.data && Number(existing.data.student_count ?? 0) === currentStudentCount) {
+    return { created: false, item: camelize(studentRosterSnapshotSummary(existing.data)) };
+  }
 
   const payload = await buildStudentRosterSnapshotPayload(context);
   const students = normalizeSnapshotRows((payload as Record<string, unknown>).students);
+  if (existing.data) {
+    const { data, error } = await context.supabase
+      .from('student_roster_snapshots')
+      .update({
+        created_by: context.email,
+        payload,
+        student_count: students.length
+      })
+      .eq('id', existing.data.id)
+      .select('*')
+      .single();
+    if (error) throw new ApiClientError(`Student roster snapshot could not be refreshed: ${error.message}`, 503);
+
+    await writeAuditLog(context, 'students', 'roster_snapshot_created', data, { snapshot_date: snapshotDate, student_count: students.length });
+    return { created: true, item: camelize(studentRosterSnapshotSummary(data)) };
+  }
+
   const { data, error } = await context.supabase
     .from('student_roster_snapshots')
     .insert({
@@ -4145,9 +4737,17 @@ async function restoreStudentRosterSnapshot(context: Awaited<ReturnType<typeof c
   const studentIds = uniqueStrings(students.map((student) => String(student.id ?? '')).filter(Boolean));
   if (studentIds.length === 0) throw new ApiClientError('Snapshot has no student roster rows to restore.', 400);
 
-  const currentStudentsResult = await context.supabase.from('students').select('id').in('id', studentIds).limit(10000);
-  if (currentStudentsResult.error) throw new ApiClientError(`Current roster lookup failed: ${currentStudentsResult.error.message}`, 503);
-  const existingIds = new Set((currentStudentsResult.data ?? []).map((student) => String(student.id ?? '')));
+  const currentStudents = (
+    await Promise.all(
+      chunkArray(studentIds, SUPABASE_IN_FILTER_BATCH_SIZE).map((ids) =>
+        fetchAllSupabaseRows(
+          () => context.supabase.from('students').select('id').in('id', ids),
+          'Current roster lookup failed'
+        )
+      )
+    )
+  ).flat();
+  const existingIds = new Set(currentStudents.map((student) => String(student.id ?? '')));
 
   let restoredStudents = 0;
   let skippedStudents = 0;
@@ -4162,8 +4762,10 @@ async function restoreStudentRosterSnapshot(context: Awaited<ReturnType<typeof c
     restoredStudents += 1;
   }
 
-  const deleteCohorts = await context.supabase.from('student_cohorts').delete().in('student_id', studentIds);
-  if (deleteCohorts.error) throw new ApiClientError(`Student cohort restore cleanup failed: ${deleteCohorts.error.message}`, 503);
+  for (const ids of chunkArray(studentIds, SUPABASE_IN_FILTER_BATCH_SIZE)) {
+    const deleteCohorts = await context.supabase.from('student_cohorts').delete().in('student_id', ids);
+    if (deleteCohorts.error) throw new ApiClientError(`Student cohort restore cleanup failed: ${deleteCohorts.error.message}`, 503);
+  }
   const snapshotCohorts = normalizeSnapshotRows(payload.studentCohorts)
     .filter((row) => existingIds.has(String(row.student_id ?? '')))
     .map((row) => ({
@@ -4171,13 +4773,15 @@ async function restoreStudentRosterSnapshot(context: Awaited<ReturnType<typeof c
       cohort_name: row.cohort_name,
       student_id: row.student_id
     }));
-  if (snapshotCohorts.length > 0) {
-    const { error } = await context.supabase.from('student_cohorts').insert(snapshotCohorts);
+  for (const rows of chunkArray(snapshotCohorts, SUPABASE_ROSTER_BATCH_SIZE)) {
+    const { error } = await context.supabase.from('student_cohorts').insert(rows);
     if (error) throw new ApiClientError(`Student cohort restore failed: ${error.message}`, 503);
   }
 
-  const deletePrograms = await context.supabase.from('student_programs').delete().in('student_id', studentIds);
-  if (deletePrograms.error) throw new ApiClientError(`Student program restore cleanup failed: ${deletePrograms.error.message}`, 503);
+  for (const ids of chunkArray(studentIds, SUPABASE_IN_FILTER_BATCH_SIZE)) {
+    const deletePrograms = await context.supabase.from('student_programs').delete().in('student_id', ids);
+    if (deletePrograms.error) throw new ApiClientError(`Student program restore cleanup failed: ${deletePrograms.error.message}`, 503);
+  }
   const snapshotPrograms = normalizeSnapshotRows(payload.studentPrograms)
     .filter((row) => existingIds.has(String(row.student_id ?? '')))
     .map((row) => ({
@@ -4185,8 +4789,8 @@ async function restoreStudentRosterSnapshot(context: Awaited<ReturnType<typeof c
       student_id: row.student_id,
       student_name: row.student_name
     }));
-  if (snapshotPrograms.length > 0) {
-    const { error } = await context.supabase.from('student_programs').insert(snapshotPrograms);
+  for (const rows of chunkArray(snapshotPrograms, SUPABASE_ROSTER_BATCH_SIZE)) {
+    const { error } = await context.supabase.from('student_programs').insert(rows);
     if (error) throw new ApiClientError(`Student program restore failed: ${error.message}`, 503);
   }
 
@@ -6716,7 +7320,7 @@ async function processQueuedStudentEmail(context: Awaited<ReturnType<typeof crea
     }
   });
   if (error) {
-    const message = getFunctionErrorMessage(data, error);
+    const message = await getFunctionErrorMessage(data, error);
     throw new ApiClientError(`Student was saved, but ${label} delivery failed: ${message}`, 503);
   }
   if (isRecord(data) && typeof data.error === 'string') {
@@ -6778,7 +7382,7 @@ async function recordSmartPortalUpdate(context: Awaited<ReturnType<typeof create
 }
 
 function applyCommonFilters<TQuery extends SupabaseQuery>(request: TQuery, query: ApiClientOptions['query'], endpoint: TableEndpoint): TQuery {
-  const ignored = new Set(['activeOnly', 'direction', 'includePast', 'limit', 'page', 'search', 'sort']);
+  const ignored = new Set(['activeOnly', 'direction', 'includePast', 'limit', 'page', 'pulse', 'search', 'sort']);
   Object.entries(query ?? {}).forEach(([key, value]) => {
     if (ignored.has(key) || value === undefined || value === '' || value === 'all' || value === 'any') return;
     if (key === 'submittedDate') {
@@ -6840,7 +7444,7 @@ function paginate(rawItems: unknown[], query: ApiClientOptions['query']) {
 function matchesClientFilters(item: unknown, query: ApiClientOptions['query']) {
   if (!isRecord(item)) return true;
 
-  const ignored = new Set(['activeOnly', 'direction', 'includePast', 'limit', 'page', 'search', 'sort']);
+  const ignored = new Set(['activeOnly', 'direction', 'includePast', 'limit', 'page', 'pulse', 'search', 'sort']);
   return Object.entries(query ?? {}).every(([key, value]) => {
     if (ignored.has(key) || value === undefined || value === '' || value === 'all' || value === 'any') return true;
 
@@ -7517,6 +8121,7 @@ function normalizeWorkshopWriteBody(payload: Record<string, unknown>) {
   return {
     ...payload,
     access_type: accessType,
+    available_on_pulse: payload.available_on_pulse === undefined ? undefined : payload.available_on_pulse === true,
     cohort_names: cohortNames,
     duration_minutes: payload.duration_minutes === '' || payload.duration_minutes === undefined ? undefined : Number(payload.duration_minutes),
     price: payload.price === '' || payload.price === undefined ? undefined : Number(payload.price),
@@ -7778,6 +8383,57 @@ function normalizeAnnouncementWriteBody(payload: Record<string, unknown>) {
   };
 }
 
+function normalizeBannerWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  const normalizeOptionalText = (key: string) => {
+    if (!has(key)) return undefined;
+    const value = payload[key];
+    if (value === null) return null;
+    const text = String(value ?? '').trim();
+    return text || null;
+  };
+  const normalizeOptionalDateTime = (key: string) => {
+    if (!has(key)) return undefined;
+    const value = payload[key];
+    if (value === null) return null;
+    const text = String(value ?? '').trim();
+    if (!text) return null;
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? text : parsed.toISOString();
+  };
+  const audience = has('audience') && typeof payload.audience === 'string' ? payload.audience.trim().toLowerCase() : payload.audience;
+  const bannerType = has('banner_type') && typeof payload.banner_type === 'string' ? payload.banner_type.trim().toLowerCase() : payload.banner_type;
+  const displayType = has('display_type') && typeof payload.display_type === 'string' ? payload.display_type.trim().toLowerCase() : payload.display_type;
+  const priority = has('priority') && typeof payload.priority === 'string' ? payload.priority.trim().toLowerCase() : payload.priority;
+  const programKeys = has('program_keys') ? uniqueStrings(asStringArray(payload.program_keys).map((key) => key.trim().toLowerCase()).filter(Boolean)) : undefined;
+  const cohortNames = has('cohort_names') ? uniqueStrings(asStringArray(payload.cohort_names).map((name) => name.trim()).filter(Boolean)) : undefined;
+  const studentEmails = has('student_emails') ? uniqueStrings(asStringArray(payload.student_emails).map(normalizeEmail).filter(Boolean)) : undefined;
+
+  return {
+    ...payload,
+    audience,
+    banner_id: has('banner_id') ? String(payload.banner_id ?? '').trim() : payload.banner_id,
+    banner_type: bannerType,
+    cohort_names: cohortNames,
+    cta_label: normalizeOptionalText('cta_label'),
+    cta_url: normalizeOptionalText('cta_url'),
+    custom_type: normalizeOptionalText('custom_type'),
+    display_type: displayType,
+    end_at: normalizeOptionalDateTime('end_at'),
+    message: has('message') && typeof payload.message === 'string' ? payload.message.trim() : payload.message,
+    priority,
+    program_keys: programKeys,
+    require_acknowledgement: has('require_acknowledgement') ? payload.require_acknowledgement === true : payload.require_acknowledgement,
+    start_at: normalizeOptionalDateTime('start_at'),
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    student_emails: studentEmails,
+    target_ats_credits: has('target_ats_credits') ? payload.target_ats_credits === true : payload.target_ats_credits,
+    target_paid_access: has('target_paid_access') ? payload.target_paid_access === true : payload.target_paid_access,
+    title: has('title') && typeof payload.title === 'string' ? payload.title.trim() : payload.title,
+    updated_by: normalizeOptionalText('updated_by')
+  };
+}
+
 function normalizeFeatureControlWriteBody(payload: Record<string, unknown>) {
   const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
   const normalizeOptionalText = (key: string) => {
@@ -7797,6 +8453,57 @@ function normalizeFeatureControlWriteBody(payload: Record<string, unknown>) {
     upcoming_message: normalizeOptionalText('upcoming_message'),
     settings: has('settings') && payload.settings && typeof payload.settings === 'object' && !Array.isArray(payload.settings) ? payload.settings : payload.settings,
     updated_by: normalizeOptionalText('updated_by')
+  };
+}
+
+function normalizeWebsiteCampusInquiryWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  const optionalText = (key: string) => {
+    if (!has(key)) return undefined;
+    const value = payload[key];
+    if (value === null) return null;
+    const text = String(value ?? '').trim();
+    return text || null;
+  };
+
+  return {
+    ...payload,
+    designation: has('designation') && typeof payload.designation === 'string' ? payload.designation.trim() : payload.designation,
+    email: has('email') ? normalizeEmail(payload.email) : payload.email,
+    institution_name: has('institution_name') && typeof payload.institution_name === 'string' ? payload.institution_name.trim() : payload.institution_name,
+    interested_in: has('interested_in') && typeof payload.interested_in === 'string' ? payload.interested_in.trim() : payload.interested_in,
+    message: optionalText('message'),
+    metadata: has('metadata') && isRecord(payload.metadata) ? payload.metadata : payload.metadata,
+    name: has('name') && typeof payload.name === 'string' ? payload.name.trim() : payload.name,
+    partner_type: has('partner_type') && typeof payload.partner_type === 'string' ? payload.partner_type.trim() : payload.partner_type,
+    phone: has('phone') && typeof payload.phone === 'string' ? payload.phone.trim() : payload.phone,
+    source_page: has('source_page') && typeof payload.source_page === 'string' ? payload.source_page.trim().toLowerCase() : payload.source_page,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    submitted_by_email: optionalText('submitted_by_email'),
+    updated_by: optionalText('updated_by')
+  };
+}
+
+function normalizeWebsiteNavModuleWriteBody(payload: Record<string, unknown>) {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(payload, key);
+  const optionalText = (key: string) => {
+    if (!has(key)) return undefined;
+    const value = payload[key];
+    if (value === null) return null;
+    const text = String(value ?? '').trim();
+    return text || null;
+  };
+
+  return {
+    ...payload,
+    label: has('label') && typeof payload.label === 'string' ? payload.label.trim() : payload.label,
+    module_key: has('module_key') && typeof payload.module_key === 'string' ? payload.module_key.trim().toLowerCase() : payload.module_key,
+    nav_group: has('nav_group') && typeof payload.nav_group === 'string' ? payload.nav_group.trim().toLowerCase() : payload.nav_group,
+    settings: has('settings') && isRecord(payload.settings) ? payload.settings : payload.settings,
+    slug: has('slug') && typeof payload.slug === 'string' ? payload.slug.trim().toLowerCase() : payload.slug,
+    status: has('status') && typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : payload.status,
+    sort_order: has('sort_order') ? Number(payload.sort_order) : payload.sort_order,
+    updated_by: optionalText('updated_by')
   };
 }
 
@@ -8257,6 +8964,50 @@ function validateAnnouncementWriteBody(payload: Record<string, unknown>, inserti
   if (linkUrl && !isHttpUrl(linkUrl)) throw new ApiClientError('Announcement link must start with http:// or https://.', 400);
 }
 
+function validateBannerWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+  const message = typeof payload.message === 'string' ? payload.message.trim() : '';
+  const audience = typeof payload.audience === 'string' ? payload.audience : undefined;
+  const priority = typeof payload.priority === 'string' ? payload.priority : undefined;
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  const bannerType = typeof payload.banner_type === 'string' ? payload.banner_type : undefined;
+  const customType = typeof payload.custom_type === 'string' ? payload.custom_type.trim() : '';
+  const displayType = typeof payload.display_type === 'string' ? payload.display_type : undefined;
+  const cohortNames = payload.cohort_names;
+  const programKeys = payload.program_keys;
+  const studentEmails = payload.student_emails;
+  const startAt = typeof payload.start_at === 'string' ? payload.start_at.trim() : '';
+  const endAt = typeof payload.end_at === 'string' ? payload.end_at.trim() : '';
+  const ctaLabel = typeof payload.cta_label === 'string' ? payload.cta_label.trim() : '';
+  const ctaUrl = typeof payload.cta_url === 'string' ? payload.cta_url.trim() : '';
+
+  if (inserting && !title) throw new ApiClientError('Banner title is required.', 400);
+  if (inserting && !message) throw new ApiClientError('Banner message is required.', 400);
+  if ('title' in payload && !title) throw new ApiClientError('Banner title is required.', 400);
+  if ('message' in payload && !message) throw new ApiClientError('Banner message is required.', 400);
+  if (title.length > 160) throw new ApiClientError('Banner title must be 160 characters or fewer.', 400);
+  if (message.length > 2500) throw new ApiClientError('Banner message must be 2500 characters or fewer.', 400);
+  if (audience && !['all', 'cohort', 'program', 'student', 'access'].includes(audience)) throw new ApiClientError('Banner audience is invalid.', 400);
+  if (priority && !['low', 'normal', 'high', 'urgent'].includes(priority)) throw new ApiClientError('Banner priority is invalid.', 400);
+  if (status && !['active', 'inactive', 'draft'].includes(status)) throw new ApiClientError('Banner status is invalid.', 400);
+  if (bannerType && !['general', 'launch', 'product', 'workshop', 'offer', 'maintenance', 'custom'].includes(bannerType)) throw new ApiClientError('Banner type is invalid.', 400);
+  if (bannerType === 'custom' && !customType) throw new ApiClientError('Add a custom Banner type.', 400);
+  if (displayType && !['login_popup', 'top_running', 'top_sticky', 'bottom_sticky', 'bottom_right_floating', 'floating_bell'].includes(displayType)) throw new ApiClientError('Banner display style is invalid.', 400);
+  if (cohortNames !== undefined && !Array.isArray(cohortNames)) throw new ApiClientError('Banner cohorts must be a list.', 400);
+  if (programKeys !== undefined && !Array.isArray(programKeys)) throw new ApiClientError('Banner programs must be a list.', 400);
+  if (studentEmails !== undefined && !Array.isArray(studentEmails)) throw new ApiClientError('Banner student emails must be a list.', 400);
+  if (audience === 'cohort' && Array.isArray(cohortNames) && cohortNames.length === 0) throw new ApiClientError('Select at least one cohort.', 400);
+  if (audience === 'program' && Array.isArray(programKeys) && programKeys.length === 0) throw new ApiClientError('Select at least one program.', 400);
+  if (audience === 'student' && Array.isArray(studentEmails) && studentEmails.length === 0) throw new ApiClientError('Add at least one student email.', 400);
+  if (audience === 'access' && payload.target_paid_access !== true && payload.target_ats_credits !== true) throw new ApiClientError('Select at least one access target.', 400);
+  if (startAt && Number.isNaN(new Date(startAt).getTime())) throw new ApiClientError('Banner start time is invalid.', 400);
+  if (endAt && Number.isNaN(new Date(endAt).getTime())) throw new ApiClientError('Banner end time is invalid.', 400);
+  if (startAt && endAt && new Date(endAt).getTime() < new Date(startAt).getTime()) throw new ApiClientError('Banner end time cannot be before the start time.', 400);
+  if (ctaLabel.length > 80) throw new ApiClientError('Banner CTA label must be 80 characters or fewer.', 400);
+  if (ctaUrl && !isHttpUrl(ctaUrl) && !ctaUrl.startsWith('/')) throw new ApiClientError('Banner CTA URL must start with http://, https://, or /.', 400);
+  if (ctaLabel && !ctaUrl) throw new ApiClientError('Add a CTA URL or clear the CTA label.', 400);
+}
+
 function validateFeatureControlWriteBody(payload: Record<string, unknown>, inserting: boolean) {
   const moduleId = typeof payload.module_id === 'string' ? payload.module_id.trim() : '';
   const label = typeof payload.student_label === 'string' ? payload.student_label.trim() : '';
@@ -8274,6 +9025,44 @@ function validateFeatureControlWriteBody(payload: Record<string, unknown>, inser
   if (message.length > 500) throw new ApiClientError('Upcoming message must be 500 characters or fewer.', 400);
   if (settings !== undefined && settings !== null && (typeof settings !== 'object' || Array.isArray(settings))) {
     throw new ApiClientError('Feature settings must be a valid object.', 400);
+  }
+}
+
+function validateWebsiteCampusInquiryWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const required = ['name', 'designation', 'institution_name', 'email', 'phone', 'partner_type', 'interested_in'] as const;
+  required.forEach((key) => {
+    if (inserting && !String(payload[key] ?? '').trim()) {
+      throw new ApiClientError('Please complete all required enquiry fields.', 400);
+    }
+  });
+
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  const sourcePage = typeof payload.source_page === 'string' ? payload.source_page : undefined;
+  const email = typeof payload.email === 'string' ? payload.email.trim() : '';
+  const message = typeof payload.message === 'string' ? payload.message.trim() : '';
+
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new ApiClientError('Enter a valid email address.', 400);
+  if (status && !['new', 'contacted', 'archived'].includes(status)) throw new ApiClientError('Website inquiry status is invalid.', 400);
+  if (sourcePage && !['campus-connect', 'business-connect'].includes(sourcePage)) throw new ApiClientError('Website inquiry source page is invalid.', 400);
+  if (message.length > 2000) throw new ApiClientError('Campus inquiry message must be 2000 characters or fewer.', 400);
+}
+
+function validateWebsiteNavModuleWriteBody(payload: Record<string, unknown>, inserting: boolean) {
+  const moduleKey = typeof payload.module_key === 'string' ? payload.module_key.trim() : '';
+  const label = typeof payload.label === 'string' ? payload.label.trim() : '';
+  const slug = typeof payload.slug === 'string' ? payload.slug.trim() : '';
+  const navGroup = typeof payload.nav_group === 'string' ? payload.nav_group.trim() : undefined;
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  const sortOrder = payload.sort_order;
+
+  if (inserting && !moduleKey) throw new ApiClientError('Website module key is required.', 400);
+  if (inserting && !label) throw new ApiClientError('Website module label is required.', 400);
+  if (inserting && !slug) throw new ApiClientError('Website module slug is required.', 400);
+  if (moduleKey && !/^[a-z0-9-]+$/.test(moduleKey)) throw new ApiClientError('Website module key is invalid.', 400);
+  if (status && !['visible', 'hidden'].includes(status)) throw new ApiClientError('Website module status is invalid.', 400);
+  if (navGroup && !['main', 'placement'].includes(navGroup)) throw new ApiClientError('Website nav group is invalid.', 400);
+  if (sortOrder !== undefined && (!Number.isInteger(Number(sortOrder)) || Number(sortOrder) < 0)) {
+    throw new ApiClientError('Website module sort order must be zero or a positive whole number.', 400);
   }
 }
 
@@ -8578,6 +9367,8 @@ async function writeAuditLog(
     table !== 'email_templates' &&
     table !== 'student_guidance_content' &&
     table !== 'career_readiness_content' &&
+    table !== 'website_campus_inquiries' &&
+    table !== 'website_nav_modules' &&
     table !== 'whatsapp_groups' &&
     table !== 'whatsapp_message_categories' &&
     table !== 'whatsapp_message_templates' &&
@@ -8610,6 +9401,10 @@ async function writeAuditLog(
                             ? 'student_guidance_content'
                             : table === 'career_readiness_content'
                               ? 'career_readiness_content'
+                              : table === 'website_campus_inquiries'
+                                ? 'website_campus_inquiry'
+                                : table === 'website_nav_modules'
+                                  ? 'website_nav_module'
                               : table.startsWith('whatsapp_')
                                 ? table
                                 : 'student';

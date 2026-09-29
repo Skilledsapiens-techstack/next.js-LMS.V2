@@ -11,6 +11,7 @@ export type CareerReadinessLinkButton = {
 };
 
 export type StudentCareerReadinessContent = {
+  availableOnPulse?: boolean;
   category: CareerReadinessCategory;
   cohortNames: string[];
   content?: string;
@@ -20,6 +21,10 @@ export type StudentCareerReadinessContent = {
   linkButtons?: CareerReadinessLinkButton[];
   linkLabel?: string;
   linkUrl?: string;
+  pulseCategory?: string | null;
+  pulseFeatured?: boolean;
+  pulseSummary?: string | null;
+  pulseVisibility?: 'all' | 'college' | 'program';
   programKeys: string[];
   sectionTitle?: string;
   sortOrder: number;
@@ -31,6 +36,7 @@ export type StudentCareerReadinessQuery = {
   category?: CareerReadinessCategory | '';
   limit?: number;
   page?: number;
+  pulse?: boolean;
   search?: string;
 };
 
@@ -50,10 +56,11 @@ export function useStudentCareerReadiness(query: StudentCareerReadinessQuery) {
           category,
           limit,
           page,
+          pulse: query.pulse ? 'true' : undefined,
           search
         }
       }),
-    queryKey: ['student-career-readiness', accessToken, page, limit, category, search],
+    queryKey: ['student-career-readiness', accessToken, page, limit, category, query.pulse === true, search],
     staleTime: 60_000
   });
 }

@@ -900,7 +900,7 @@ export function AdminRecordingCandidatesPage() {
   function startEditingPublishedRecording(workshop: AdminWorkshop) {
     setRecordingEditForm({
       ...buildRecordingEditForm(workshop),
-      alternateUrl: workshop.zoomRecordingUrl ?? (workshop.youtubeVideoUrl ? '' : recordingUrlFor(workshop))
+      alternateUrl: workshop.zoomRecordingUrl ?? ''
     });
   }
 

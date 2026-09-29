@@ -395,7 +395,7 @@ async function activeStudentByEmail(email: string) {
   return data ? asRecord(data) : null;
 }
 
-async function generateAuthActionLink(type: 'invite' | 'recovery', student: JsonRecord, redirectUrl: string): Promise<JsonRecord> {
+async function generateAuthActionLink(type: 'invite' | 'magiclink' | 'recovery', student: JsonRecord, redirectUrl: string): Promise<JsonRecord> {
   const payload: JsonRecord = {
     type,
     email: normalizeEmail(student.email),
@@ -430,6 +430,113 @@ async function generateAuthActionLink(type: 'invite' | 'recovery', student: Json
   }
   if (/already|registered|exists/i.test(bodyText)) return { status: 'existing', message: bodyText.slice(0, 300), type };
   return { status: 'failed', message: bodyText.slice(0, 300) || `Supabase link generation returned ${response.status}`, type };
+}
+
+async function handlePulseAuthLink(payload: JsonRecord) {
+  const email = normalizeEmail(payload.email);
+  if (!email) throw new Error('Enter your Pulse account email address.');
+  await enforceCooldown(email);
+
+  const rawRedirectUrl = text(payload.redirect_url || payload.redirectUrl);
+  const redirectUrl = /^https?:\/\//i.test(rawRedirectUrl)
+    ? rawRedirectUrl
+    : 'https://pulse.skilledsapiens.com/pulse/home';
+  const name = text(payload.name, 'Pulse member') || 'Pulse member';
+  const link = await generateAuthActionLink('magiclink', { email, full_name: name }, redirectUrl);
+
+  if (link.status !== 'generated') {
+    throw new Error(link.message || 'Could not generate Pulse sign-in link.');
+  }
+
+  const actionLink = text(link.actionLink);
+  const subject = 'Your secure SapiensPulse sign-in link';
+  const body = [
+    `Hi ${name},`,
+    '',
+    'Use this secure link to enter SapiensPulse:',
+    '',
+    actionLink,
+    '',
+    'If you did not request this email, you can ignore it.'
+  ].join('\n');
+  const htmlContent = adminEmailBodyToHtml(body);
+  const delivery = await sendBrevo(email, name, subject, htmlContent, htmlToPlainText(htmlContent), ['pulse', 'pulse-auth', 'magic-link']);
+
+  await logEmailQueue({
+    email_key: crypto.randomUUID(),
+    template_key: 'pulse_auth_link',
+    category: 'auth',
+    status: 'sent',
+    provider: 'brevo',
+    provider_message_id: delivery.messageId || null,
+    recipient_email: email,
+    recipient_name: name,
+    subject,
+    params: { redirect_url: redirectUrl },
+    tags: ['pulse', 'pulse-auth', 'magic-link'],
+    related_entity_type: 'pulse_auth',
+    related_entity_id: email,
+    scheduled_at: new Date().toISOString(),
+    sent_at: new Date().toISOString(),
+    failure_message: null,
+    created_by: 'pulse-public'
+  });
+
+  return { ok: true, email, messageId: delivery.messageId || '', status: 'sent' };
+}
+
+async function handlePulsePasswordSetup(payload: JsonRecord) {
+  const email = normalizeEmail(payload.email);
+  if (!email) throw new Error('Enter your Pulse account email address.');
+  await enforceCooldown(email);
+
+  const rawRedirectUrl = text(payload.redirect_url || payload.redirectUrl);
+  const redirectUrl = /^https?:\/\//i.test(rawRedirectUrl)
+    ? rawRedirectUrl
+    : 'https://login.skilledsapiens.com/login?mode=recovery&intent=forgot&portal=student&redirect=%2Fpulse%2Fhome';
+  const name = text(payload.name, 'Pulse member') || 'Pulse member';
+  const { actionLink, emailOtp, verificationType } = await passwordSetupLink({ email, full_name: name }, redirectUrl, redirectUrl, 'recovery');
+  const passwordPageUrl = passwordOtpPortalUrl(redirectUrl, email, verificationType, 'forgot');
+  const emailActionUrl = emailOtp ? passwordPageUrl : actionLink;
+
+  const subject = 'Set or reset your SapiensPulse password';
+  const body = [
+    `Hi ${name},`,
+    '',
+    'Use this secure link to set or reset your SapiensPulse password:',
+    '',
+    emailActionUrl,
+    ...(emailOtp ? ['', 'One-time password code:', emailOtp] : []),
+    '',
+    'After your password is updated, you can sign in to Pulse with your email and password.',
+    '',
+    'If you did not request this email, you can ignore it.'
+  ].join('\n');
+  const htmlContent = appendPasswordCodeHtml(adminEmailBodyToHtml(body), emailOtp, passwordPageUrl);
+  const textContent = appendPasswordCodeText(htmlToPlainText(htmlContent), emailOtp, passwordPageUrl);
+  const delivery = await sendBrevo(email, name, subject, htmlContent, textContent, ['pulse', 'pulse-auth', 'password-setup']);
+
+  await logEmailQueue({
+    email_key: crypto.randomUUID(),
+    template_key: 'pulse_password_setup',
+    category: 'auth',
+    status: 'sent',
+    provider: 'brevo',
+    provider_message_id: delivery.messageId || null,
+    recipient_email: email,
+    recipient_name: name,
+    subject,
+    params: { redirect_url: redirectUrl },
+    tags: ['pulse', 'pulse-auth', 'password-setup'],
+    related_entity_type: 'pulse_auth',
+    related_entity_id: email,
+    scheduled_at: new Date().toISOString(),
+    sent_at: new Date().toISOString(),
+    failure_message: null,
+    created_by: 'pulse-public'
+  });
+
+  return { ok: true, email, messageId: delivery.messageId || '', status: 'sent' };
 }
 
 async function passwordSetupLink(student: JsonRecord, createRedirectUrl: string, recoveryRedirectUrl?: string, preferredMode: 'invite' | 'recovery' = 'invite') {
@@ -1891,6 +1998,16 @@ Deno.serve(async (req) => {
       await assertPublicCaller(req);
       await assertEmailServiceEnabled();
       return json(200, await handlePasswordSetup(payload));
+    }
+    if (action === 'sendPulseAuthLink') {
+      await assertPublicCaller(req);
+      await assertEmailServiceEnabled();
+      return json(200, await handlePulseAuthLink(payload));
+    }
+    if (action === 'sendPulsePasswordSetup') {
+      await assertPublicCaller(req);
+      await assertEmailServiceEnabled();
+      return json(200, await handlePulsePasswordSetup(payload));
     }
     if (action === 'sendAdminStudentCommunication') {
       const actor = await assertAdminCaller(req, 'admin.email.manage');

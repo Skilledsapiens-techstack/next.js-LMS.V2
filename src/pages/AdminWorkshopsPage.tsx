@@ -34,6 +34,7 @@ type WorkshopTab = 'upcoming' | 'needs-completion' | 'cancelled';
 
 type WorkshopForm = {
   agenda: string;
+  availableOnPulse: boolean;
   cohortNames: string[];
   customJoinUrl: string;
   date: string;
@@ -53,6 +54,7 @@ type TopicResourceManager = {
 
 const emptyWorkshopForm: WorkshopForm = {
   agenda: '',
+  availableOnPulse: false,
   cohortNames: [],
   customJoinUrl: '',
   date: '',
@@ -151,6 +153,7 @@ function workshopToForm(item: AdminWorkshop): WorkshopForm {
   const zoomAccount = item.zoomAccount ?? 'Zoom Account 1';
   return {
     agenda: '',
+    availableOnPulse: item.availableOnPulse === true,
     cohortNames: item.cohortNames,
     customJoinUrl: zoomAccount === 'Custom Link' ? item.joinUrl ?? '' : '',
     date: toDateInput(item.date),
@@ -462,6 +465,7 @@ export function AdminWorkshopsPage() {
     }
 
     const payload = {
+      availableOnPulse: form.availableOnPulse,
       cohortNames: form.cohortNames,
       customJoinUrl: isCustomLinkSource(form.zoomAccount) ? form.customJoinUrl.trim() : undefined,
       date: form.date,
@@ -930,6 +934,13 @@ export function AdminWorkshopsPage() {
             <p className="workshop-field-note announcement-field--wide">
               {form.sessionType === 'doubt_session' ? 'Shown in the student Doubt Sessions module.' : 'Shown in the student Upcoming Workshops module.'}
             </p>
+            <label className="workshop-pulse-visibility announcement-field--wide">
+              <input checked={form.availableOnPulse} onChange={(event) => updateForm('availableOnPulse', event.target.checked)} type="checkbox" />
+              <span>
+                <strong>Visible on Pulse</strong>
+                <small>Checked workshops will appear in Pulse under Mentorship for students.</small>
+              </span>
+            </label>
             <label className="announcement-field">
               <span>
                 Time (IST) <b>*</b>

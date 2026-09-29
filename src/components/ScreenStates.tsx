@@ -1,13 +1,34 @@
-import { AlertCircle, EyeOff, Loader2, Lock, PlusCircle } from 'lucide-react';
+import { useMemo, type CSSProperties } from 'react';
+import { AlertCircle, EyeOff, Lock, PlusCircle } from 'lucide-react';
 import { ActionButton } from './ActionButton';
 
+const learningPathMessages = [
+  ['Start Small', 'Stay Curious', 'Keep Practicing', 'Grow Daily'],
+  ['Show Up', 'Learn Today', 'Try Again', 'Move Forward'],
+  ['Begin Here', 'Build Skills', 'Gain Confidence', 'Go Further'],
+  ['One Step', 'One Lesson', 'One Skill', 'One Win'],
+  ['Stay Ready', 'Keep Learning', 'Build Momentum', 'Reach Higher'],
+  ['Find Focus', 'Learn Deeply', 'Practice Often', 'Rise Strong'],
+  ['Start Fresh', 'Learn More', 'Do Better', 'Go Higher'],
+] as const;
+
 export function LoadingState() {
+  const learningPath = useMemo(() => {
+    return learningPathMessages[Math.floor(Math.random() * learningPathMessages.length)];
+  }, []);
+
   return (
-    <section className="screen-state">
-      <Loader2 size={22} />
-      <div>
-        <h2>Loading</h2>
-        <p>Please wait while we prepare this workspace.</p>
+    <section aria-busy="true" aria-live="polite" className="screen-state screen-state--loading" role="status">
+      <div className="screen-state-loading-copy">
+        <h2>Building your learning path</h2>
+        <p>Please wait while we connect your workspace.</p>
+      </div>
+      <div className="screen-state-learning-path" aria-hidden="true">
+        {learningPath.map((label, index) => (
+          <span className="screen-state-learning-path__step" key={label} style={{ '--step-index': index } as CSSProperties}>
+            <span>{label}</span>
+          </span>
+        ))}
       </div>
     </section>
   );

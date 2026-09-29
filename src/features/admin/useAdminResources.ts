@@ -8,6 +8,7 @@ export type AdminResourceAccessType = 'free' | 'paid';
 
 export type AdminResource = {
   accessType: AdminResourceAccessType;
+  availableOnPulse?: boolean;
   cohortNames: string[];
   currency: string;
   description?: string;
@@ -21,6 +22,10 @@ export type AdminResource = {
   id: string;
   phase?: string;
   paymentLink?: string;
+  pulseCategory?: string | null;
+  pulseFeatured?: boolean;
+  pulseSummary?: string | null;
+  pulseVisibility?: 'all' | 'college' | 'program';
   price?: number;
   programKeys: string[];
   resourceId?: string;
@@ -50,6 +55,7 @@ export type AdminResourceAuditLog = {
 
 export type AdminResourceWritePayload = {
   accessType: AdminResourceAccessType;
+  availableOnPulse?: boolean;
   cohortNames: string[];
   currency?: string;
   description?: string | null;
@@ -61,6 +67,10 @@ export type AdminResourceWritePayload = {
   guestCtaUrl?: string | null;
   guestRegistrationRequired?: boolean;
   paymentLink?: string | null;
+  pulseCategory?: string | null;
+  pulseFeatured?: boolean;
+  pulseSummary?: string | null;
+  pulseVisibility?: 'all' | 'college' | 'program';
   price?: number | null;
   programKeys: string[];
   resourceId: string;

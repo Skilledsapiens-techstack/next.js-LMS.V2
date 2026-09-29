@@ -38,6 +38,8 @@ export type AdminPermission =
   | 'admin.feature_control.manage'
   | 'admin.payments.view'
   | 'admin.paid_access.view'
+  | 'admin.website.view'
+  | 'admin.website.manage'
   | 'admin.ats.view'
   | 'admin.ats.manage';
 
@@ -56,6 +58,7 @@ const ADMIN_READ_PERMISSIONS: AdminPermission[] = [
   'admin.announcements.view',
   'admin.community.view',
   'admin.support.view',
+  'admin.website.view',
   'admin.observability.view'
 ];
 
@@ -95,6 +98,7 @@ export const ROLE_PERMISSIONS: Record<AdminRoleKey, AdminPermission[]> = {
     'admin.announcements.manage',
     'admin.community.manage',
     'admin.support.manage',
+    'admin.website.manage',
     'admin.email.view',
     'admin.email.manage',
     'admin.admin_users.view',
@@ -122,6 +126,7 @@ export const ROLE_PERMISSIONS: Record<AdminRoleKey, AdminPermission[]> = {
     'admin.announcements.manage',
     'admin.community.manage',
     'admin.support.manage',
+    'admin.website.manage',
     'admin.ats.view',
     'admin.ats.manage'
   ],
@@ -135,6 +140,7 @@ export const ROLE_PERMISSIONS: Record<AdminRoleKey, AdminPermission[]> = {
 
 export const MODULE_VIEW_PERMISSIONS: Record<string, AdminPermission> = {
   announcements: 'admin.announcements.view',
+  banners: 'admin.announcements.view',
   certificates: 'admin.certificates.view',
   cohorts: 'admin.cohorts.view',
   community: 'admin.community.view',
@@ -150,6 +156,13 @@ export const MODULE_VIEW_PERMISSIONS: Record<string, AdminPermission> = {
   'paid-access': 'admin.paid_access.view',
   'ats-resume-score': 'admin.ats.view',
   'payment-orders': 'admin.payments.view',
+  'pulse-colleges': 'admin.community.view',
+  'pulse-clubs': 'admin.community.view',
+  'pulse-mentorship': 'admin.community.view',
+  'pulse-moderation': 'admin.community.view',
+  'pulse-opportunities': 'admin.community.view',
+  'pulse-overview': 'admin.community.view',
+  'pulse-profiles': 'admin.community.view',
   programs: 'admin.programs.view',
   projects: 'admin.projects.view',
   'project-submissions': 'admin.submissions.view',
@@ -158,6 +171,7 @@ export const MODULE_VIEW_PERMISSIONS: Record<string, AdminPermission> = {
   students: 'admin.students.view',
   support: 'admin.support.view',
   workshops: 'admin.meetings.view',
+  'website-management': 'admin.website.view',
   'whatsapp-groups': 'admin.community.view'
 };
 
@@ -242,9 +256,57 @@ export const ADMIN_PERMISSION_MODULES: AdminPermissionModule[] = [
     permissions: ['admin.announcements.view', 'admin.announcements.manage']
   },
   {
-    description: 'Community groups, posts, and moderation.',
+    description: 'Student-facing popups, sticky bars, running strips, and floating Banner cards.',
+    id: 'banners',
+    label: 'Banners',
+    permissions: ['admin.announcements.view', 'admin.announcements.manage']
+  },
+  {
+    description: 'SapiensPulse student access, college spaces, posts, referrals, opportunities, and moderation.',
     id: 'community',
-    label: 'Community',
+    label: 'Pulse Management',
+    permissions: ['admin.community.view', 'admin.community.manage']
+  },
+  {
+    description: 'Pulse operating dashboard and health view.',
+    id: 'pulse-overview',
+    label: 'Pulse Overview',
+    permissions: ['admin.community.view', 'admin.community.manage']
+  },
+  {
+    description: 'Pulse college spaces and campus access controls.',
+    id: 'pulse-colleges',
+    label: 'Pulse College Spaces',
+    permissions: ['admin.community.view', 'admin.community.manage']
+  },
+  {
+    description: 'Pulse college clubs, committees, and club admin assignments.',
+    id: 'pulse-clubs',
+    label: 'Pulse Clubs & Committees',
+    permissions: ['admin.community.view', 'admin.community.manage']
+  },
+  {
+    description: 'Pulse student profiles, referrals, and interest signals.',
+    id: 'pulse-profiles',
+    label: 'Pulse Profiles',
+    permissions: ['admin.community.view', 'admin.community.manage']
+  },
+  {
+    description: 'Pulse posts, reports, and moderation workflows.',
+    id: 'pulse-moderation',
+    label: 'Pulse Feed & Moderation',
+    permissions: ['admin.community.view', 'admin.community.manage']
+  },
+  {
+    description: 'Pulse opportunity drops and application review.',
+    id: 'pulse-opportunities',
+    label: 'Pulse Opportunities',
+    permissions: ['admin.community.view', 'admin.community.manage']
+  },
+  {
+    description: 'Pulse mentorship sessions, approvals, RSVPs, and attendance.',
+    id: 'pulse-mentorship',
+    label: 'Pulse Mentorship',
     permissions: ['admin.community.view', 'admin.community.manage']
   },
   {
@@ -258,6 +320,12 @@ export const ADMIN_PERMISSION_MODULES: AdminPermissionModule[] = [
     id: 'support',
     label: 'Support',
     permissions: ['admin.support.view', 'admin.support.manage']
+  },
+  {
+    description: 'Explore website navigation visibility, Campus Connect entries, and future authorable website content.',
+    id: 'website-management',
+    label: 'Website Management',
+    permissions: ['admin.website.view', 'admin.website.manage']
   },
   {
     description: 'Email centre templates, queue, and delivery health.',

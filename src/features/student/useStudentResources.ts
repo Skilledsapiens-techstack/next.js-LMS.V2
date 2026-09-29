@@ -7,6 +7,7 @@ export type StudentResourceAccessType = 'free' | 'paid';
 
 export type StudentResource = {
   accessType: StudentResourceAccessType;
+  availableOnPulse?: boolean;
   cohortNames: string[];
   currency?: string;
   description?: string;
@@ -16,6 +17,10 @@ export type StudentResource = {
   lockReason?: string;
   paymentLink?: string;
   phase?: string;
+  pulseCategory?: string | null;
+  pulseFeatured?: boolean;
+  pulseSummary?: string | null;
+  pulseVisibility?: 'all' | 'college' | 'program';
   price?: number;
   programKeys: string[];
   resourceDomainKey?: string | null;
@@ -43,10 +48,12 @@ export type StudentResourcesResponse = PaginatedResponse<StudentResource> & {
 
 export type StudentResourcesQuery = {
   accessType?: StudentResourceAccessType | 'all';
+  enabled?: boolean;
   locked?: boolean | 'all';
   limit?: number;
   page?: number;
   programKey?: string;
+  pulse?: boolean;
   resourceDomainKey?: string;
   resourceType?: string;
   search?: string;
@@ -71,7 +78,7 @@ export function useStudentResources(query: StudentResourcesQuery) {
   const search = query.search?.trim();
 
   return useQuery({
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && query.enabled !== false,
     queryFn: () =>
       apiGet<StudentResourcesResponse>('/students/me/resources', {
         accessToken: accessToken ?? undefined,
@@ -81,12 +88,13 @@ export function useStudentResources(query: StudentResourcesQuery) {
           locked,
           page,
           programKey,
+          pulse: query.pulse ? 'true' : undefined,
           resourceDomainKey,
           resourceType,
           search
         }
       }),
-    queryKey: ['student-resources', accessToken, page, limit, accessType, locked, programKey, resourceDomainKey, resourceType, search],
+    queryKey: ['student-resources', accessToken, page, limit, accessType, locked, programKey, query.pulse === true, resourceDomainKey, resourceType, search],
     staleTime: 60_000
   });
 }

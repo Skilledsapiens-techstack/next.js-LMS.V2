@@ -27,6 +27,7 @@ type WorkshopPayload = {
   alternateDate?: string;
   alternateTime?: string;
   body?: {
+    availableOnPulse?: boolean;
     cohortNames?: string[];
     date?: string;
     durationMinutes?: number;
@@ -49,6 +50,7 @@ type WorkshopPayload = {
 type WorkshopRow = {
   id: string;
   cohort_names: string[];
+  available_on_pulse?: boolean;
   date: string;
   duration_minutes: number | null;
   join_url: string | null;
@@ -241,6 +243,7 @@ function buildWorkshopRow(body: NonNullable<WorkshopPayload['body']>, zoomMeetin
   const title = requireText(body.title, 'Meeting title is required.');
   return {
     cohort_names: Array.isArray(body.cohortNames) ? body.cohortNames.map(String).filter(Boolean) : [],
+    available_on_pulse: body.availableOnPulse === true,
     date,
     duration_minutes: readDurationMinutes(body.durationMinutes),
     join_url: typeof zoomMeeting.join_url === 'string' ? zoomMeeting.join_url : null,
@@ -260,6 +263,7 @@ function buildCustomWorkshopRow(body: NonNullable<WorkshopPayload['body']>) {
   const title = requireText(body.title, 'Meeting title is required.');
   return {
     cohort_names: Array.isArray(body.cohortNames) ? body.cohortNames.map(String).filter(Boolean) : [],
+    available_on_pulse: body.availableOnPulse === true,
     date,
     duration_minutes: readDurationMinutes(body.durationMinutes),
     join_url: requireHttpUrl(body.customJoinUrl, 'Add a valid custom meeting link before saving.'),
@@ -277,6 +281,7 @@ function buildCustomWorkshopRow(body: NonNullable<WorkshopPayload['body']>) {
 function buildWorkshopUpdateRow(body: NonNullable<WorkshopPayload['body']>, workshop: WorkshopRow, source: MeetingLinkSource, extra: Record<string, unknown> = {}) {
   return {
     cohort_names: Array.isArray(body.cohortNames) ? body.cohortNames.map(String).filter(Boolean) : workshop.cohort_names,
+    available_on_pulse: typeof body.availableOnPulse === 'boolean' ? body.availableOnPulse : workshop.available_on_pulse === true,
     date: requireText(body.date, 'Meeting date is required.'),
     duration_minutes: readDurationMinutes(body.durationMinutes, workshop.duration_minutes ?? 90),
     session_type: normalizeSessionType(body.sessionType ?? workshop.session_type),

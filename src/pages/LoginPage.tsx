@@ -5,16 +5,24 @@ import { useAuth } from '../auth/AuthProvider';
 import { StateBlock } from '../components/StateBlock';
 import { WhatsAppContactWidget } from '../components/WhatsAppContactWidget';
 import { getFeatureMessage, useGuestLoginFeatureControl, useLoginCreatePasswordFeatureControl, usePublicWhatsAppWidgetFeatureControl } from '../features/useFeatureControls';
-import { apiGet, ApiClientError } from '../lib/supabaseApi';
+import { apiGet } from '../lib/supabaseApi';
 
 type LoginPortal = 'admin' | 'student';
-type PortalDestination = LoginPortal | 'guest';
 type AuthIntent = 'forgot' | 'create';
 type RequestStatus = 'idle' | 'sending' | 'sent' | 'failed';
 type PasswordUpdateStatus = 'idle' | 'updating' | 'updated' | 'failed';
 
-function isProfileMismatch(error: unknown) {
-  return error instanceof ApiClientError && (error.status === 403 || error.status === 404);
+const preferredPortalStorageKey = 'skilled-sapiens-preferred-portal';
+
+function rememberPreferredPortal(portal: LoginPortal) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(preferredPortalStorageKey, portal);
+}
+
+function safeRedirectPath(value: string | null) {
+  if (!value) return null;
+  if (!value.startsWith('/') || value.startsWith('//')) return null;
+  return value;
 }
 
 function isExpiredEmailOtpMessage(message: string) {
@@ -36,47 +44,14 @@ function passwordActionErrorCopy(message: string) {
   };
 }
 
-async function canAccessPortal(path: string, accessToken: string) {
-  try {
-    await apiGet(path, { accessToken });
-    return true;
-  } catch (error) {
-    if (isProfileMismatch(error)) {
-      return false;
-    }
-
-    throw error;
-  }
-}
-
-async function resolveSignedInPortal(accessToken: string, requestedPortal: LoginPortal): Promise<PortalDestination> {
-  const portalChecks: Array<{ path: string; portal: PortalDestination }> =
-    requestedPortal === 'admin'
-      ? [
-          { path: '/admins/me', portal: 'admin' },
-          { path: '/students/me', portal: 'student' },
-          { path: '/guests/me', portal: 'guest' }
-        ]
-      : [
-          { path: '/students/me', portal: 'student' },
-          { path: '/guests/me', portal: 'guest' },
-          { path: '/admins/me', portal: 'admin' }
-        ];
-
-  for (const check of portalChecks) {
-    if (await canAccessPortal(check.path, accessToken)) {
-      return check.portal;
-    }
-  }
-
-  throw new ApiClientError(`No active ${requestedPortal} profile is linked to this account.`, 404);
-}
-
 export function LoginPage() {
   const { isConfigured, isPasswordRecovery, resetPasswordForEmail, session, signInWithPassword, status: authStatus, updatePassword, verifyPasswordOtpAndUpdatePassword } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const portal: LoginPortal = searchParams.get('portal') === 'admin' ? 'admin' : 'student';
+  const requestedPortal = searchParams.get('portal');
+  const portal: LoginPortal = requestedPortal === 'admin' ? 'admin' : 'student';
+  const hasExplicitPortal = requestedPortal === 'admin' || requestedPortal === 'student';
+  const redirectPath = safeRedirectPath(searchParams.get('redirect'));
   const urlIntent = searchParams.get('intent') === 'create' ? 'create' : 'forgot';
   const urlOtpType = searchParams.get('otp_type') === 'invite' ? 'invite' : 'recovery';
   const isPasswordActionRoute = searchParams.get('mode') === 'recovery';
@@ -121,11 +96,26 @@ export function LoginPage() {
         throw new Error('Sign-in completed, but no secure session token was returned.');
       }
 
-      const resolvedPortal = await resolveSignedInPortal(accessToken, portal);
-      navigate(`/${resolvedPortal}`, { replace: true });
+      if (!hasExplicitPortal) {
+        try {
+          await apiGet('/admins/me', { accessToken });
+          rememberPreferredPortal('admin');
+          navigate('/admin', { replace: true });
+          return;
+        } catch {
+          // Keep generic login safe for students if admin auto-detection is unavailable.
+        }
+      }
+
+      rememberPreferredPortal(portal);
+      if (redirectPath) {
+        navigate(redirectPath, { replace: true });
+        return;
+      }
+      navigate(`/${portal}`, { replace: true });
     } catch (error) {
       setStatus('failed');
-      setErrorMessage(error instanceof ApiClientError ? 'Signed in, but the LMS profile check could not complete. Please confirm the portal configuration and try again.' : error instanceof Error ? error.message : 'Unable to sign in.');
+      setErrorMessage(error instanceof Error ? error.message : 'Unable to sign in.');
     }
   }
 
@@ -208,8 +198,11 @@ export function LoginPage() {
       setConfirmPassword('');
 
       if (session?.access_token) {
-        const resolvedPortal = await resolveSignedInPortal(session.access_token, portal);
-        navigate(`/${resolvedPortal}`, { replace: true });
+        if (redirectPath) {
+          navigate(redirectPath, { replace: true });
+          return;
+        }
+        navigate(`/${portal}`, { replace: true });
         return;
       }
 
@@ -244,8 +237,11 @@ export function LoginPage() {
       setNewPassword('');
       setConfirmPassword('');
       if (session?.access_token) {
-        const resolvedPortal = await resolveSignedInPortal(session.access_token, portal);
-        navigate(`/${resolvedPortal}`, { replace: true });
+        if (redirectPath) {
+          navigate(redirectPath, { replace: true });
+          return;
+        }
+        navigate(`/${portal}`, { replace: true });
         return;
       }
       setNoticeMessage('Password updated. Sign in with your new password to continue.');

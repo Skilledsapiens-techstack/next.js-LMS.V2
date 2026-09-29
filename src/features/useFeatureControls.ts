@@ -43,6 +43,8 @@ export const defaultFeatureMessages: Record<string, string> = {
   resources: 'Resource Library will be available after onboarding.',
   schedule: 'Upcoming Workshops will be visible once sessions are planned.',
   support: 'Support will be available soon.',
+  'explore-pulse': 'Explore Pulse is currently unavailable.',
+  'explore-skilled-sapiens': 'Explore Skilled Sapiens is currently unavailable.',
   'login-create-password': 'Create password is currently unavailable.',
   'whatsapp-widget': 'Contact Program Coordinator'
 };
@@ -100,6 +102,15 @@ export function usePublicWhatsAppWidgetFeatureControl(query: { enabled?: boolean
     enabled: query.enabled !== false,
     queryFn: () => apiGet<FeatureControl>('/public/feature-controls/whatsapp-widget'),
     queryKey: ['public-feature-control', 'whatsapp-widget'],
+    staleTime: 120_000
+  });
+}
+
+export function usePublicExploreSkilledSapiensFeatureControl(query: { enabled?: boolean } = {}) {
+  return useQuery({
+    enabled: query.enabled !== false,
+    queryFn: () => apiGet<FeatureControl>('/public/feature-controls/explore-skilled-sapiens'),
+    queryKey: ['public-feature-control', 'explore-skilled-sapiens'],
     staleTime: 120_000
   });
 }

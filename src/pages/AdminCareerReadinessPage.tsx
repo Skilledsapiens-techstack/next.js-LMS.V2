@@ -17,6 +17,7 @@ import { useAdminPrograms } from '../features/admin/useAdminPrograms';
 import { CareerReadinessCategory } from '../features/student/useStudentCareerReadiness';
 
 type CareerReadinessFormState = {
+  availableOnPulse: boolean;
   category: CareerReadinessCategory;
   cohortNames: string[];
   content: string;
@@ -30,6 +31,10 @@ type CareerReadinessFormState = {
   linkButtons: Array<{ label: string; url: string }>;
   linkLabel: string;
   linkUrl: string;
+  pulseCategory: string;
+  pulseFeatured: boolean;
+  pulseSummary: string;
+  pulseVisibility: 'all' | 'college' | 'program';
   programKeys: string[];
   sectionTitle: string;
   sortOrder: string;
@@ -46,7 +51,16 @@ const categoryOptions: Array<{ label: string; value: CareerReadinessCategory }> 
   { label: 'CV Approval Process', value: 'cv_approval_process' }
 ];
 
+const pulseCareerCategoryOptions = [
+  { label: 'Resume readiness', value: 'resume_readiness' },
+  { label: 'Interview prep', value: 'interview_prep' },
+  { label: 'CV points', value: 'cv_points' },
+  { label: 'Placement process', value: 'placement_process' },
+  { label: 'Career clarity', value: 'career_clarity' }
+];
+
 const emptyForm: CareerReadinessFormState = {
+  availableOnPulse: false,
   category: 'cv_points_guide',
   cohortNames: [],
   content: '',
@@ -60,6 +74,10 @@ const emptyForm: CareerReadinessFormState = {
   linkButtons: [{ label: '', url: '' }],
   linkLabel: '',
   linkUrl: '',
+  pulseCategory: 'resume_readiness',
+  pulseFeatured: false,
+  pulseSummary: '',
+  pulseVisibility: 'all',
   programKeys: [],
   sectionTitle: 'CV Points Guide',
   sortOrder: '100',
@@ -118,6 +136,7 @@ function editableLinkButtons(item: AdminCareerReadinessContent) {
 
 function mapContentToForm(item: AdminCareerReadinessContent): CareerReadinessFormState {
   return {
+    availableOnPulse: item.availableOnPulse === true,
     category: item.category,
     cohortNames: item.cohortNames ?? [],
     content: item.content ?? '',
@@ -131,6 +150,10 @@ function mapContentToForm(item: AdminCareerReadinessContent): CareerReadinessFor
     linkButtons: editableLinkButtons(item),
     linkLabel: item.linkLabel ?? '',
     linkUrl: item.linkUrl ?? '',
+    pulseCategory: item.pulseCategory ?? 'resume_readiness',
+    pulseFeatured: item.pulseFeatured === true,
+    pulseSummary: item.pulseSummary ?? '',
+    pulseVisibility: item.pulseVisibility ?? 'all',
     programKeys: item.programKeys ?? [],
     sectionTitle: item.sectionTitle || readableCategory(item.category),
     sortOrder: String(item.sortOrder ?? 100),
@@ -308,6 +331,7 @@ export function AdminCareerReadinessPage() {
       return null;
     }
     return {
+      availableOnPulse: formState.availableOnPulse,
       category: formState.category,
       cohortNames: uniqueStrings(formState.cohortNames),
       content: formState.content.trim() || null,
@@ -321,6 +345,10 @@ export function AdminCareerReadinessPage() {
       linkButtons,
       linkLabel: firstLinkButton?.label ?? null,
       linkUrl: firstLinkButton?.url ?? null,
+      pulseCategory: formState.availableOnPulse ? formState.pulseCategory : null,
+      pulseFeatured: formState.availableOnPulse ? formState.pulseFeatured : false,
+      pulseSummary: formState.availableOnPulse ? formState.pulseSummary.trim() || null : null,
+      pulseVisibility: formState.availableOnPulse ? formState.pulseVisibility : 'all',
       programKeys: uniqueStrings(formState.programKeys),
       sectionTitle,
       sortOrder,
@@ -545,6 +573,50 @@ export function AdminCareerReadinessPage() {
               <input checked={formState.isPublished} onChange={(event) => updateForm('isPublished', event.target.checked)} type="checkbox" />
               <span>Publish to students who match the selected programs/cohorts</span>
             </label>
+            <fieldset className="admin-project-program-picker admin-career-target-picker">
+              <legend>Pulse visibility</legend>
+              <label className="admin-career-publish-toggle">
+                <input checked={formState.availableOnPulse} onChange={(event) => updateForm('availableOnPulse', event.target.checked)} type="checkbox" />
+                <span>Show this item inside Pulse Career Readiness</span>
+              </label>
+              <label className="admin-career-publish-toggle">
+                <input checked={formState.pulseFeatured} disabled={!formState.availableOnPulse} onChange={(event) => updateForm('pulseFeatured', event.target.checked)} type="checkbox" />
+                <span>Feature this guidance in Pulse</span>
+              </label>
+              <div className="admin-career-cta-row">
+                <label>
+                  <span>Pulse Category</span>
+                  <select disabled={!formState.availableOnPulse} value={formState.pulseCategory} onChange={(event) => updateForm('pulseCategory', event.target.value)}>
+                    {pulseCareerCategoryOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Pulse Audience</span>
+                  <select disabled={!formState.availableOnPulse} value={formState.pulseVisibility} onChange={(event) => updateForm('pulseVisibility', event.target.value as CareerReadinessFormState['pulseVisibility'])}>
+                    <option value="all">All matched students</option>
+                    <option value="college">College community</option>
+                    <option value="program">Program learners</option>
+                  </select>
+                </label>
+              </div>
+              <div className="admin-project-form__wide">
+                <label>
+                  <span>Pulse Summary</span>
+                  <textarea
+                    disabled={!formState.availableOnPulse}
+                    value={formState.pulseSummary}
+                    onChange={(event) => updateForm('pulseSummary', event.target.value)}
+                    placeholder="Short student-facing summary for Pulse cards."
+                    rows={3}
+                  />
+                </label>
+              </div>
+              <p className="admin-resource-validation-note">Pulse shows only published Career Readiness items that are checked here.</p>
+            </fieldset>
             <fieldset className="admin-project-program-picker admin-career-target-picker">
               <legend>Guest access controls</legend>
               <label className="admin-career-publish-toggle">
