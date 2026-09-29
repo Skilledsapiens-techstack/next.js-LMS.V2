@@ -1,0 +1,17 @@
+Hostinger deployment package - Pulse standalone
+
+Package: hostinger-pulse-workshop-samples-20260909
+Generated: 2026-09-09
+
+Includes the latest Pulse updates:
+- Mentorship nav alignment and dropdown behavior fixes
+- Become a Mentor typography/chip refinements
+- Sample mentorship/workshop listing cards
+- Workshop detail page route at /pulse/mentorship/:sessionId
+
+Upload the contents of this folder to the target Hostinger public_html folder for the Pulse domain or subdomain.
+
+Important:
+1. Keep .htaccess in place so direct routes like /pulse/mentorship/sample-resume-review-finance load correctly.
+2. Upload the contents of this folder, not the parent folder itself, unless Hostinger asks you to extract the zip into public_html.
+3. This package uses the standalone Pulse Vite build from dist-pulse.

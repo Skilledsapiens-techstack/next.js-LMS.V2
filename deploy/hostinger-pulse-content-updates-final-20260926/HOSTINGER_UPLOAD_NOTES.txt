@@ -1,0 +1,13 @@
+Pulse Hostinger package - final content updates
+
+What changed:
+- My Feed heading uses: "Campus conversations, discussions, shout-outs, and real projects collaborations."
+- Happening now line uses "community members".
+- People hero heading uses "Find Peers".
+- Resources hero heading uses the approved curated guides/templates/playbooks line.
+- Become Mentor hero heading size matches Get Mentorship.
+- Includes the earlier iPad/tablet sticky header and bottom navigation fixes.
+
+Upload:
+- Upload the contents of this folder to the Pulse Hostinger site root.
+- Keep the existing Supabase configuration unchanged.

@@ -1,0 +1,15 @@
+Student dashboard study-desk loading animation - 2026-08-25
+
+Deploy the contents of public_html to Hostinger public_html.
+
+Related changes only:
+- Replaced the Student Dashboard loading card with a progressive dashboard skeleton.
+- Replaced the simple loader icon with a lightweight CSS-only study desk animation: stacked books, notebook, and pencil.
+- Kept the animated progress rail and shimmer dashboard cards.
+- No external image, video, Lottie, or new dependency was added.
+- Animation respects prefers-reduced-motion.
+- Existing auth, unauthorized, expired-session, and unlinked-profile handling remains unchanged.
+
+Validated:
+- npm run typecheck
+- npm run build

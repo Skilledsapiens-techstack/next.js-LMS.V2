@@ -1,0 +1,8 @@
+Hostinger package: SapiensPulse
+Generated: 2026-09-23 20:16 IST
+
+Upload the contents of public_html to the Pulse Hostinger site root.
+
+This package includes the latest Pulse frontend build and SPA routing .htaccess.
+It must be deployed together with the matching LMS package for the My Learning
+handoff from Pulse to LMS to work correctly.

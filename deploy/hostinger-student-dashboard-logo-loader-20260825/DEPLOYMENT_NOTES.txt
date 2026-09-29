@@ -1,0 +1,16 @@
+Student dashboard full-screen logo loader - 2026-08-25
+
+Deploy the contents of public_html to Hostinger public_html.
+
+Related changes only:
+- Replaced the Student Dashboard loading screen with a full-screen branded animation.
+- Logo particles fly in from different directions and sync around the Skilled Sapiens logo.
+- The loader uses the existing /apple-touch-icon.png logo asset.
+- Added animated rings, sparks, and a progress rail.
+- No external animation library, video, Lottie, or new dependency was added.
+- Animation respects prefers-reduced-motion.
+- Existing auth, unauthorized, expired-session, and unlinked-profile handling remains unchanged.
+
+Validated:
+- npm run typecheck
+- npm run build

@@ -1,0 +1,18 @@
+Global branded loader update - 2026-08-25
+
+Scope:
+- Replaced the generic shared LoadingState card with a branded animated loader.
+- Uses the existing /apple-touch-icon.png mark, animated ring, subtle sheen, and progress sweep.
+- Keeps this as a compact global loader for shared module states. Student Dashboard keeps its full-screen cinematic logo loader.
+- Includes reduced-motion handling for accessibility.
+
+Source files changed:
+- src/components/ScreenStates.tsx
+- src/styles/global.css
+
+Validation:
+- npm run typecheck
+- npm run build
+
+Deploy:
+- Upload the contents of public_html/ to the live web root.

@@ -1,0 +1,20 @@
+Global full-width randomized Learning Path loader - 2026-08-25
+
+Scope:
+- Reworks the shared global LoadingState so the animation fills the whole loader card.
+- Places the heading and supporting copy at the top center.
+- Stretches the four inspirational path cards across the full width below the copy.
+- Randomly selects one complete inspirational 4-step sequence whenever the loader mounts.
+- Keeps earlier comparison packs untouched.
+- Student Dashboard keeps its existing full-screen cinematic logo loader.
+
+Source files changed:
+- src/components/ScreenStates.tsx
+- src/styles/global.css
+
+Validation:
+- npm run typecheck
+- npm run build
+
+Deploy:
+- Upload the contents of public_html/ to the live web root.

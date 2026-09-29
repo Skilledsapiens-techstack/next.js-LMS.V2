@@ -1,0 +1,12 @@
+Pulse package: mandatory profile completion popup
+
+Upload the contents of this folder to the Pulse hosting directory on Hostinger.
+
+Included updates:
+- Existing Pulse users with missing mandatory fields now see a blocking popup after login/refresh.
+- The popup asks for missing required data needed to keep the account active: display name, LinkedIn URL, and college.
+- If a college is not in the dropdown, users can select "Other" and type the college name manually.
+- The popup preserves existing profile details such as headline, bio, skills, interests, and avatar while saving the required fields.
+
+Related Supabase rule already pushed in the previous package:
+- 20260926135222_pulse_profiles_require_college.sql

@@ -1,0 +1,19 @@
+Global Learning Path loader variant - 2026-08-25
+
+Scope:
+- Replaces the shared module loading card with a Learning Path animation.
+- Four conceptual steps slide into a connected path: Profile, Program, Access, Content.
+- Keeps the previous branded loader build pack untouched for comparison.
+- Student Dashboard keeps its existing full-screen cinematic logo loader.
+- Includes reduced-motion handling for accessibility.
+
+Source files changed:
+- src/components/ScreenStates.tsx
+- src/styles/global.css
+
+Validation:
+- npm run typecheck
+- npm run build
+
+Deploy:
+- Upload the contents of public_html/ to the live web root.

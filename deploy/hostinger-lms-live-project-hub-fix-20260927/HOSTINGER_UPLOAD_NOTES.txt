@@ -1,0 +1,14 @@
+LMS package: Live Project Hub load fix
+
+Upload the contents of this folder to the LMS hosting directory on Hostinger.
+
+Included updates:
+- Live Project Hub no longer fails the whole page when secondary support data such as cohorts or submissions has a temporary access/load issue.
+- Project briefs can still load while support data refreshes.
+- Added an in-page notice for partial support-data loading instead of the full "Projects unavailable" error screen.
+
+Supabase migration already pushed:
+- 20260927052752_student_cohorts_own_read_policy.sql
+
+Database fix:
+- Students can now read their own student_cohorts rows, which supports cohort selection inside Live Project Hub.

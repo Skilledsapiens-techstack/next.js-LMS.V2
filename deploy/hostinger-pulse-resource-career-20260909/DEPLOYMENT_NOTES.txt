@@ -1,0 +1,13 @@
+Hostinger Pulse package: Resource Library + Career Readiness
+
+Built from dist-pulse after adding independent Pulse Resource Library and Career Readiness sections.
+
+Upload the contents of this folder to the Pulse Hostinger site root:
+- index.html
+- .htaccess
+- favicon files
+- apple-touch-icon.png
+- assets/
+
+Supabase note:
+Apply supabase/manual_sql/pulse_lms_content_visibility.sql before expecting admin-selected Resource/Career content to appear from the database.

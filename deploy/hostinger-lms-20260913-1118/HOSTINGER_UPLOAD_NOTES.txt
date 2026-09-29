@@ -1,0 +1,7 @@
+Hostinger upload package: LMS
+
+Upload the contents of this folder to the LMS domain/subdomain document root.
+Keep .htaccess in the upload so direct page refreshes work for routes like /student and /admin.
+
+Build created from:
+npm run build

@@ -1,0 +1,11 @@
+Pulse Hostinger package - iPad header and navigation fix
+
+What changed:
+- iPad/tablet portrait now gets a clean Pulse top header.
+- Current page label and action buttons stay on the first row.
+- Search moves to a full-width second row so it does not squeeze the header.
+- Tablet portrait also keeps the bottom app navigation visible.
+
+Upload:
+- Upload the contents of this folder to the Pulse Hostinger site root.
+- Keep the existing Supabase configuration unchanged.

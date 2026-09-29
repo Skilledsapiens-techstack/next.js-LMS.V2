@@ -1,0 +1,11 @@
+Hostinger deployment package - Pulse standalone
+
+Package: hostinger-pulse-mentorship-nav-20260909
+Generated: 2026-09-09
+
+Upload the contents of this folder to the target Hostinger public_html folder for the Pulse domain or subdomain.
+
+Important:
+1. Keep .htaccess in place so direct routes like /pulse/mentorship/become load correctly.
+2. Upload the contents of this folder, not the parent folder itself, unless Hostinger asks for a zip extraction folder.
+3. This package uses the standalone Pulse Vite build from dist-pulse.

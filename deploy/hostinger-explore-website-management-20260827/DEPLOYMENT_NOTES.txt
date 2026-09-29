@@ -1,0 +1,18 @@
+Hostinger package: Explore Skilled Sapiens + Website Management
+Build date: 2026-08-27
+
+Upload contents of this folder to the Hostinger public web root.
+
+Includes:
+- Explore Skilled Sapiens pages inside student and guest routes.
+- Campus Connect inquiry form.
+- Admin Website Management tab for form entries and Explore navbar visibility.
+- Feature Control support for Explore Skilled Sapiens show/upcoming/hide.
+- More visible Back to LMS button in Explore header.
+
+Required Supabase migrations before/with deployment:
+- supabase/migrations/20260827060148_website_management_campus_connect.sql
+- supabase/migrations/20260827065445_explore_skilled_sapiens_feature_control.sql
+
+Verification performed:
+- npm run build

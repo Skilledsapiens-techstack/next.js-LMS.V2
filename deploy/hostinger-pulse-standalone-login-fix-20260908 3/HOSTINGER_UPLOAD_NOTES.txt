@@ -1,0 +1,8 @@
+The .htaccess file is included in this package but may be hidden because its name starts with a dot.
+
+If Hostinger does not show .htaccess after upload:
+1. Create a new file named .htaccess in the same folder as index.html.
+2. Paste the contents from HTACCESS_COPY.txt into that .htaccess file.
+3. Save it.
+
+This rewrite rule is required so direct links and refreshed Pulse pages such as /pulse/login, /pulse/home, and /pulse/opportunities work correctly.

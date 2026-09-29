@@ -1,0 +1,22 @@
+Hostinger deployment package - Skilled Sapiens Pulse
+
+Package created: 26 Sep 2026, IST
+
+Build source:
+- npm run build:pulse
+- Output copied from dist-pulse/
+
+Verified in compiled assets:
+- Pulse account creation includes LinkedIn URL.
+- Profile completion/edit includes LinkedIn URL.
+- LinkedIn URL validation error is included.
+- People/profile pages include LinkedIn profile access.
+- Official email label is Official email (College/Company).
+
+Upload:
+1. Upload/extract the contents of this folder to the Pulse Hostinger site root.
+2. Replace existing frontend files, including .htaccess.
+3. Clear Hostinger/browser cache or hard refresh after upload.
+
+Database:
+- Supabase migrations for linkedin_url and invite ambiguity have already been pushed.

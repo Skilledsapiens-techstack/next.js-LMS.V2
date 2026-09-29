@@ -1,0 +1,26 @@
+Hostinger package - LMS/Admin + Pulse platform
+Prepared: 2026-09-11 12:02 IST
+
+Scope:
+- LMS/Admin frontend rebuild with recent Pulse management/admin updates.
+- Pulse platform frontend rebuild with Mentorship, Resource Library, and Career Readiness updates.
+- Pulse Resources now uses a dedicated Pulse resource reader.
+- Admin scheduled workshops can be marked "Visible on Pulse" and shown under Pulse Mentorship.
+
+Upload:
+- Upload public_html/ contents to the LMS/Admin Hostinger public_html directory.
+- Upload pulse_public_html/ contents to the Pulse Hostinger public directory or subdomain root.
+
+Supabase SQL:
+- Apply supabase-manual-sql/pulse_resources_public_rpc.sql in Supabase SQL Editor.
+- Apply supabase-manual-sql/pulse_workshops_visible_on_pulse.sql in Supabase SQL Editor.
+- These files add the Pulse visibility paths for Resources and Workshops.
+
+Supabase Edge Function:
+- Redeploy the zoom-meetings function after this package.
+- Source included at supabase-functions/zoom-meetings/index.ts.
+- This is needed so the admin "Visible on Pulse" workshop checkbox persists.
+
+Verification completed before packaging:
+- npm run build
+- VITE_LMS_APP_URL=https://login.skilledsapiens.com npm run build:pulse

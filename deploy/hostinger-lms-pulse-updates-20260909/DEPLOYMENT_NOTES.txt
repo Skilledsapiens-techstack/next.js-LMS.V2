@@ -1,0 +1,16 @@
+Hostinger LMS package - Pulse content visibility updates
+Date: 2026-09-09
+
+What is included:
+- Latest LMS/admin production build.
+- Admin controls to mark Resource Library and Career Readiness items as visible in Pulse.
+- The Supabase SQL reference file for Pulse visibility columns and student views.
+
+Upload instructions:
+1. Open the public_html folder in this package.
+2. Upload everything inside public_html to the LMS Hostinger public_html directory.
+3. Keep the included .htaccess file in the Hostinger public_html root so direct links and refreshes work.
+
+Database note:
+- The SQL file is included at supabase-sql/pulse_lms_content_visibility.sql for reference.
+- Apply it only if it has not already been applied to the live Supabase database.

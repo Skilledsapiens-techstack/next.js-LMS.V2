@@ -1,0 +1,14 @@
+Student dashboard load fix - 2026-08-25
+
+Scope:
+- Frontend/API bundle rebuild for the student dashboard load optimization.
+- The dashboard endpoint now reuses the already-fetched student profile when loading guidance content, avoiding a duplicate profile lookup.
+
+Deployment:
+- Upload the contents of public_html/ to the Hostinger public_html directory.
+- No Supabase migration is included.
+- No Supabase Edge Function deployment is required.
+
+Verification completed before packaging:
+- npm run typecheck
+- npm run build

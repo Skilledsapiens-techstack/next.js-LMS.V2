@@ -1,0 +1,22 @@
+Admin login portal redirect fix - 2026-08-25
+
+Issue:
+- Admin users could land on /student after login or refresh.
+- The student route then checked the admin session against student LMS profile data and showed "LMS access not linked".
+
+Fix:
+- Generic /login now auto-detects an admin profile after sign-in and redirects admins to /admin.
+- If an authenticated account lands on the wrong portal and the current portal profile is missing, the route checks the opposite portal and redirects when a matching profile exists.
+- Admin/student permission checks remain unchanged.
+- Final global loading state remains locked as the full-width randomized Learning Path loader.
+
+Source files changed:
+- src/pages/LoginPage.tsx
+- src/auth/ProtectedPortalRoute.tsx
+
+Validation:
+- npm run typecheck
+- npm run build
+
+Deploy:
+- Upload the contents of public_html/ to the live web root.

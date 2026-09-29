@@ -1,0 +1,13 @@
+Pulse package: college required + profile label cleanup
+
+Upload the contents of this folder to the Pulse hosting directory on Hostinger.
+
+Included updates:
+- College is mandatory while creating or editing a Pulse profile.
+- If the college is not listed, users can select "Other" and type the college name manually.
+- People cards no longer show the generic "College community" fallback when older profiles are missing college data.
+- "Open profile" is relabeled to "Open Pulse Profile".
+- Pulse default display names now prefer real auth profile names before falling back to the email username.
+
+Supabase migration already pushed:
+- 20260926135222_pulse_profiles_require_college.sql

@@ -1,0 +1,19 @@
+Student dashboard progressive load fix - 2026-08-25
+
+Scope:
+- Adds a lightweight /students/me/dashboard-core API path for the student dashboard first paint.
+- Student dashboard now renders after core profile/dashboard data is available.
+- Resources, projects, certificates, and guidance content load after the core dashboard succeeds.
+- Existing /students/me/dashboard behavior remains available for compatibility.
+
+Deployment:
+- Upload the contents of public_html/ to the Hostinger public_html directory.
+- No Supabase migration is included.
+- No Supabase Edge Function deployment is required.
+
+Verification completed before packaging:
+- npm run typecheck
+- npm run build
+
+Live timing note:
+- A read-only live EXPLAIN measured the bundled student dashboard database calls at roughly 110 ms for a sampled active student, so the visible delay is likely from blocking the first render on secondary data rather than one slow database function alone.

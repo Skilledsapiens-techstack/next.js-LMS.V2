@@ -1,0 +1,15 @@
+Package: hostinger-pulse-only-20260911-1232
+Prepared: 11 Sept 2026, 12:32 IST
+
+Included:
+- public_html/
+  Pulse-only production build.
+
+Upload:
+- Upload the contents of public_html/ to the Pulse Hostinger public directory or subdomain root.
+- Keep the included .htaccess file in the upload root.
+
+Latest Pulse UI changes included:
+- Sticky filters for Resources and Career Readiness.
+- Light category colors for Resource and Career Readiness category chips.
+- Pulse resource, career readiness, mentorship, and workshop visibility UI updates from the latest build.

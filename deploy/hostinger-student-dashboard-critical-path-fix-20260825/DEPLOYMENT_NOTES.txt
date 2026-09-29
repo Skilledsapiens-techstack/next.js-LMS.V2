@@ -1,0 +1,15 @@
+Student dashboard critical-path loading fix - 2026-08-25
+
+Deploy the contents of public_html to Hostinger public_html.
+
+Related changes only:
+- Student dashboard refresh/login now uses /students/me/dashboard-core as the route access check and the page's first data source.
+- Removed the extra /students/me profile request from the /student dashboard critical path.
+- Dashboard core returns only profile plus immediate dashboard data first.
+- Resources, projects, certificates, and guidance load after the dashboard shell is ready.
+- Supabase API context reads stable user id/email claims from the access token and avoids an extra Auth getUser network call unless the token claims are missing or expired.
+- Login redirects directly to the signed-in portal instead of doing a second portal resolution request after sign-in.
+
+Validated:
+- npm run typecheck
+- npm run build

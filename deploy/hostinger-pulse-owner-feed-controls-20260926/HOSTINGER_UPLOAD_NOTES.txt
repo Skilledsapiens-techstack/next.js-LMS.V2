@@ -1,0 +1,16 @@
+Pulse Hostinger package - owner feed controls
+
+What changed:
+- Post owners now see Edit on their own Pulse feed posts.
+- Post owners now see Hide on their own posts. This archives the post and removes it from the feed instead of hard deleting it.
+- Comment owners now see Edit on their own comments.
+- Comment owners now see Delete on their own comments.
+- Owner controls also work for anonymous posts/comments because ownership is checked by profile id, not display name.
+- Includes the earlier Pulse content updates and iPad/tablet navigation/header fixes.
+
+Supabase:
+- Migration 20260926070709_pulse_owner_feed_controls.sql was pushed to the linked Supabase project.
+- Verified remote comment DELETE grant and owner/admin delete policy are present.
+
+Upload:
+- Upload the contents of this folder to the Pulse Hostinger site root.

@@ -1,0 +1,25 @@
+Admin login production redirect fix - 2026-08-25
+
+Issue:
+- Production could still show "LMS access not linked" at /student for an admin session.
+- The earlier fallback depended only on live admin profile probing after the student route failed.
+- On production refresh/direct navigation, the browser could remain on /student with an admin session.
+
+Fix:
+- Successful login now remembers the selected portal in localStorage.
+- Generic /login still auto-detects admin profile and routes admins to /admin.
+- If a remembered admin session lands on /student and no student profile exists, it redirects to /admin.
+- /admin still performs the real admin profile and permission checks, so access security is unchanged.
+- Final global loading state remains the full-width randomized Learning Path loader.
+
+Source files changed:
+- src/pages/LoginPage.tsx
+- src/auth/ProtectedPortalRoute.tsx
+
+Validation:
+- npm run typecheck
+- npm run build
+
+Deploy:
+- Upload the contents of public_html/ to the live web root.
+- After upload, hard refresh the browser once because older JS/CSS assets may be cached.

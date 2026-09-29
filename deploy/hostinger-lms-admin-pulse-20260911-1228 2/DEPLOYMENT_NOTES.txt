@@ -1,0 +1,23 @@
+Package: hostinger-lms-admin-pulse-20260911-1228
+Prepared: 11 Sept 2026, 12:28 IST
+
+Included builds:
+- public_html/
+  LMS/Admin production build from npm run build.
+- pulse_public_html/
+  Pulse production build from VITE_LMS_APP_URL=https://login.skilledsapiens.com npm run build:pulse.
+
+Upload:
+- Upload the contents of public_html/ to the LMS/Admin Hostinger public_html directory.
+- Upload the contents of pulse_public_html/ to the Pulse Hostinger public directory or subdomain root.
+- Keep the included .htaccess file in each upload root.
+
+Also included for backend/database deployment reference:
+- supabase-manual-sql/pulse_resources_public_rpc.sql
+- supabase-manual-sql/pulse_workshops_visible_on_pulse.sql
+- supabase-functions/zoom-meetings/index.ts
+
+Latest UI changes included:
+- Sticky Pulse filters for Resources and Career Readiness.
+- Light category colors for Resource and Career Readiness category chips.
+- Existing Pulse resource, career readiness, and workshop visibility updates.

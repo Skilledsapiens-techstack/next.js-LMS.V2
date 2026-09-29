@@ -1,0 +1,28 @@
+Final loading state package - 2026-08-25
+
+Locked final loader:
+- Full-width randomized Learning Path global loader.
+- Heading and support copy are centered at the top.
+- Four animated inspirational cards stretch across the loader card.
+- One complete message sequence is selected randomly whenever the loader mounts.
+- Student Dashboard keeps its existing full-screen cinematic logo loader.
+
+Configured message sequences:
+1. Start Small -> Stay Curious -> Keep Practicing -> Grow Daily
+2. Show Up -> Learn Today -> Try Again -> Move Forward
+3. Begin Here -> Build Skills -> Gain Confidence -> Go Further
+4. One Step -> One Lesson -> One Skill -> One Win
+5. Stay Ready -> Keep Learning -> Build Momentum -> Reach Higher
+6. Find Focus -> Learn Deeply -> Practice Often -> Rise Strong
+7. Start Fresh -> Learn More -> Do Better -> Go Higher
+
+Source files changed:
+- src/components/ScreenStates.tsx
+- src/styles/global.css
+
+Validation:
+- npm run typecheck
+- npm run build
+
+Deploy:
+- Upload the contents of public_html/ to the live web root.

@@ -1,0 +1,10 @@
+Pulse Hostinger package - iPad portrait navigation fix
+
+What changed:
+- Pulse now shows the bottom app navigation on tablet/iPad portrait widths.
+- The desktop sidebar still remains for wider laptop/desktop screens.
+- Smaller mobile screens keep the existing compact mobile navigation.
+
+Upload:
+- Upload the contents of this folder to the Pulse Hostinger site root.
+- Keep the existing Supabase configuration unchanged.

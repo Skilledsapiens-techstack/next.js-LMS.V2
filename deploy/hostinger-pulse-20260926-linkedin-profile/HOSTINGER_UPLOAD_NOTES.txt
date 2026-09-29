@@ -1,0 +1,24 @@
+Hostinger deployment package - Skilled Sapiens Pulse
+
+Package created: 26 Sep 2026, IST
+
+Build source:
+- npm run build:pulse
+- Output copied from dist-pulse/
+
+What's included:
+- Pulse account creation requires LinkedIn URL.
+- LinkedIn URL is validated and saved to Pulse profiles.
+- People cards and profile pages show LinkedIn access.
+- Official email label updated to Official email (College/Company).
+
+Required before/with deployment:
+1. Apply Supabase migration:
+   supabase/migrations/20260926042147_pulse_profile_linkedin_required.sql
+2. Upload the contents of this folder to the Pulse Hostinger site root.
+3. Replace existing frontend files, including .htaccess.
+4. Hard refresh the browser after upload.
+
+Notes:
+- This is a Pulse frontend build package.
+- The database migration is not executed by uploading this package.

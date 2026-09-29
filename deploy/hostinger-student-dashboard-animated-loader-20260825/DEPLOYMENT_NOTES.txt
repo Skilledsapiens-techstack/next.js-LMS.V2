@@ -1,0 +1,14 @@
+Student dashboard animated loading state - 2026-08-25
+
+Deploy the contents of public_html to Hostinger public_html.
+
+Related changes only:
+- Replaced the Student Dashboard's generic loading card with a dashboard-shaped progressive skeleton.
+- Added a lightweight animated loading hero, shimmer profile fields, action cards, and learning panels.
+- The app shell continues to appear first for authenticated /student refresh/login flows.
+- Existing unauthorized, expired-session, and unlinked-profile handling remains unchanged.
+- Animation respects prefers-reduced-motion.
+
+Validated:
+- npm run typecheck
+- npm run build

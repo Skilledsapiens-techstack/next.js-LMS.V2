@@ -1,0 +1,11 @@
+Pulse Hostinger package - 2026-09-24
+
+Upload the contents of this folder to the Pulse site document root.
+
+Includes:
+- Latest Pulse production build from npm run build:pulse.
+- Current Pulse UI polish, lighter typography, compact sidebar, profile updates, Opportunities hero aligned with Resources/Career Readiness hero style with right-side count panel, opportunities/resources/career card polish, Become a Mentor page refresh, Pulse Login link in the public nav, and targeted iPhone/mobile card alignment fixes for Pulse feed, opportunities, resources, and career readiness modules.
+- Existing Pulse session/workshop hosting flow preserved.
+- .htaccess for SPA route fallback.
+
+After upload, hard refresh Pulse before testing.

@@ -1,0 +1,11 @@
+Pulse Hostinger package - iPad/tablet sticky header fix
+
+What changed:
+- On iPad/tablet widths, the top Pulse header is sticky at the top while scrolling.
+- The search bar is no longer part of the sticky header on tablet.
+- Search appears below the header and scrolls normally with page content.
+- Bottom app navigation remains visible on iPad/tablet portrait.
+
+Upload:
+- Upload the contents of this folder to the Pulse Hostinger site root.
+- Keep the existing Supabase configuration unchanged.

@@ -1,0 +1,16 @@
+My Programs deferred resources loading fix - 2026-08-25
+
+Deploy the contents of public_html to Hostinger public_html.
+
+Related changes:
+- My Programs no longer blocks initial render on /students/me/cohorts.
+- /students/me/recordings now returns cohort/program data from the same dashboard bundle used for recordings.
+- Initial /students/me/recordings no longer enriches every recording with related resources.
+- Related resources are loaded lazily only when a student opens Resources for a specific recording.
+- Student route shell can mount while the student access check is still loading, so the bare "Checking secure session" screen is avoided for student subpages.
+- Recordings, progress, and resource queries now use short client cache windows instead of forced refetch on every remount.
+- Existing Student Dashboard performance and full-screen logo loader changes are included in this compiled build.
+
+Validated:
+- npm run typecheck
+- npm run build

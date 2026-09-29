@@ -1,0 +1,10 @@
+LMS Hostinger package - 2026-09-24
+
+Upload the contents of this folder to the LMS site document root.
+
+Includes:
+- Latest LMS production build from npm run build.
+- Current learning-access, login, recovery, and student/admin updates.
+- .htaccess for SPA route fallback.
+
+After upload, hard refresh login.skilledsapiens.com before testing.

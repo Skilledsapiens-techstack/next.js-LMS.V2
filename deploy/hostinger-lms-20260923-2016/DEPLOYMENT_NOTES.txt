@@ -1,0 +1,9 @@
+Hostinger package: Skilled Sapiens LMS
+Generated: 2026-09-23 20:16 IST
+
+Upload the contents of public_html to the LMS Hostinger site root for:
+https://login.skilledsapiens.com
+
+This package includes the latest LMS frontend build and SPA routing .htaccess.
+It must be deployed together with the matching Pulse package for the My Learning
+handoff from Pulse to LMS to work correctly.

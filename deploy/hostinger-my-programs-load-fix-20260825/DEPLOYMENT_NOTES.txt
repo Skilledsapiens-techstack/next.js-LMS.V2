@@ -1,0 +1,14 @@
+My Programs loading optimization - 2026-08-25
+
+Deploy the contents of public_html to Hostinger public_html.
+
+Related changes:
+- My Programs no longer makes a separate /students/me/cohorts request on initial load.
+- /students/me/recordings now returns the student's cohort/program data from the same dashboard bundle already used to prepare recordings.
+- Student recordings, recording progress, and recording resources no longer force refetch-on-mount every time the page/component remounts.
+- Short client cache windows were added for recordings/progress/resources to avoid repeated network waits during normal navigation.
+- Existing Student Dashboard performance and full-screen logo loader changes are included in this compiled build.
+
+Validated:
+- npm run typecheck
+- npm run build

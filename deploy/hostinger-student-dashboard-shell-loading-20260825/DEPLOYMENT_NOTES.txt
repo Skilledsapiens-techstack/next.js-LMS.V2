@@ -1,0 +1,13 @@
+Student dashboard shell-first loading fix - 2026-08-25
+
+Deploy the contents of public_html to Hostinger public_html.
+
+Related changes only:
+- On /student refresh or login, authenticated students now enter the app shell while dashboard data loads inside the dashboard page.
+- The bare "Checking secure session" screen is skipped for the authenticated /student dashboard data-loading phase.
+- Unauthorized, expired-session, and unlinked-profile handling remains in the protected route.
+- Previous critical-path improvements are included: the dashboard route uses /students/me/dashboard-core as the single first dashboard/access request, details load progressively, and duplicate auth/profile requests are avoided.
+
+Validated:
+- npm run typecheck
+- npm run build

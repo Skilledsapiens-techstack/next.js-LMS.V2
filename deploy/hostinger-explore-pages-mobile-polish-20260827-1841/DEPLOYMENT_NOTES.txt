@@ -1,0 +1,21 @@
+Explore Skilled Sapiens mobile polish - 2026-08-27 18:41 IST
+
+Scope:
+- Updates the Explore Skilled Sapiens topbar CTA visual treatment.
+- Keeps CTA label as "Explore Skilled Sapiens" with the sparkles icon.
+- Adds yellow hover state for the CTA.
+- Compacts mobile and tablet Explore navigation, dropdown menu, sticky switches, program filters, and inquiry forms.
+- Adds mobile-safe dropdown behavior for Placement Mentorship.
+- Includes latest Explore page updates for workshops, leadership, business connect, campus connect, live projects, and related pages.
+
+Deployment:
+- Upload the contents of public_html/ to the Hostinger public_html directory.
+- The included .htaccess supports SPA route refreshes.
+- No Supabase Edge Function deployment is required.
+
+Database:
+- Existing Website Management and inquiry features require the previously prepared Supabase migrations to be applied.
+- This Hostinger package only contains frontend build assets.
+
+Verification completed before packaging:
+- npm run build

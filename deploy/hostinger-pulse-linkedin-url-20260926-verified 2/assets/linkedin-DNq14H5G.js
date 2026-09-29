@@ -1,0 +1,1 @@
+function i(r){const n=r.trim();if(!n)return"";const o=/^https?:\/\//i.test(n)?n:`https://${n}`;try{const t=new URL(o),e=t.hostname.toLowerCase().replace(/^www\./,"");return e!=="linkedin.com"&&!e.endsWith(".linkedin.com")||!/^\/in\/[A-Za-z0-9._%-]+\/?$/i.test(t.pathname)?"":(t.protocol="https:",t.hash="",t.search="",t.toString())}catch{return""}}export{i as n};

@@ -1,0 +1,15 @@
+Email Marketing planner filters - 2026-09-08
+
+Scope:
+- Adds admin-driven Program scope, Domain scope, and Cohort scope controls to Email Marketing daily planner defaults.
+- Applies the selected planner scope before cohort grouping so Same program/domain no longer locks onto one recurring anchor by accident.
+- Saves the planner scope in plan metadata and warns when today's saved plan does not match the current dropdowns.
+- Keeps recipient preview, upcoming plan previews, auto-drafts, smart suggestions, and copy actions aligned with the selected planner scope.
+
+Deployment:
+- Upload the contents of public_html/ to the Hostinger public_html directory.
+- No Supabase migration is included.
+- No Supabase Edge Function deployment is required.
+
+Verification completed before packaging:
+- npm run build

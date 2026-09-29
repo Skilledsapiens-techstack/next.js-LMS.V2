@@ -1,0 +1,7 @@
+Hostinger upload package: Pulse
+
+Upload the contents of this folder to the Pulse domain/subdomain document root.
+Keep .htaccess in the upload so direct page refreshes work for routes like /pulse/home.
+
+Build created from:
+npm run build:pulse

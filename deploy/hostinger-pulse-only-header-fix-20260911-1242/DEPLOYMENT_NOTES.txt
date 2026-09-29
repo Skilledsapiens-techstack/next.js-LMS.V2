@@ -1,0 +1,14 @@
+Package: hostinger-pulse-only-header-fix-20260911-1242
+Prepared: 11 Sept 2026, 12:42 IST
+
+Included:
+- public_html/
+  Pulse-only production build.
+
+Upload:
+- Upload the contents of public_html/ to the Pulse Hostinger public directory or subdomain root.
+- Keep the included .htaccess file in the upload root.
+
+Fix included:
+- Corrected Pulse header spacing so search, navigation, and action buttons do not overlap on desktop widths.
+- Keeps sticky filters and light category colors from the previous Pulse package.

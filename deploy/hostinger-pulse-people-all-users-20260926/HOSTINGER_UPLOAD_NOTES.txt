@@ -1,0 +1,17 @@
+Pulse Hostinger package - People shows all users
+
+What changed:
+- Removed the user-facing "Who can see your profile" option from onboarding and profile edit.
+- New/updated profiles are saved as visible on Pulse internally.
+- People tab now shows all active Pulse users, with the existing "Everyone on Pulse" and "My college only" filters retained.
+- People/profile cards no longer show public/college/private profile visibility labels.
+- Cleaned related copy from People and profile detail screens.
+- Includes previous Pulse owner feed controls, content updates, and iPad/tablet fixes.
+
+Supabase:
+- Migration 20260926133333_pulse_profiles_visible_to_all.sql was pushed to the linked Supabase project.
+- Verified all current Pulse profiles are public internally.
+- Verified the active profile SELECT policy is "Pulse profiles are readable by signed in Pulse users".
+
+Upload:
+- Upload the contents of this folder to the Pulse Hostinger site root.

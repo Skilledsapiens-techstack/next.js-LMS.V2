@@ -1,0 +1,11 @@
+LMS Hostinger package - 2026-09-24 16:57 IST
+
+Upload the contents of this folder to the LMS site document root.
+
+Includes:
+- Latest LMS production build.
+- Current admin updates, including Pulse admin routes in the LMS admin panel.
+- Latest shared platform updates used by LMS and Pulse handoff flows.
+- .htaccess for SPA route fallback.
+
+After upload, hard refresh the LMS/login site before testing.

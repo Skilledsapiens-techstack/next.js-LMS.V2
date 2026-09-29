@@ -1,0 +1,10 @@
+Hostinger package: Skilled Sapiens LMS
+Generated: 2026-09-23 20:22 IST
+
+Upload the contents of public_html to the LMS Hostinger site root for:
+https://login.skilledsapiens.com
+
+This LMS-only package includes the My Learning handoff landing update:
+eligible LMS users now land on Dashboard instead of My Programs.
+
+Pulse does not need redeployment for this specific change.

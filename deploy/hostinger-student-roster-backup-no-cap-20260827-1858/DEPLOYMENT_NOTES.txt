@@ -1,0 +1,18 @@
+Hostinger deployment package - Student roster backup no-cap fix
+
+Package created: 27 Aug 2026, 6:58 PM IST
+
+What changed:
+- Student roster backups now fetch all student rows in paginated Supabase batches.
+- Backup payloads also capture all student cohort and program tag rows without a total max cap.
+- Restore flow now handles large rosters by chunking lookups, deletes, and inserts safely.
+- If today's backup was previously capped at 1000 students, it will refresh when the real student count is higher.
+
+Upload steps:
+1. Upload the contents of this folder, or the matching zip file, to the Hostinger site root for the LMS.
+2. Replace the existing frontend files.
+3. Open Admin > Students and click "Create today's backup", or reload the Students page.
+4. Confirm the latest Student roster backup count now shows the full student count.
+
+Database migration:
+- Not required for this fix.
